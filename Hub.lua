@@ -12875,11 +12875,11 @@ function _makeTwoColumns()
     wrapper.ZIndex = 1   -- ZIndex standard
 
     -- == SEARCH BAR (GLITCH REDESIGN) ============================
-    local SEARCH_H = 32
+    local SEARCH_H = 44
     local searchBar = Instance.new("Frame", wrapper)
     searchBar.Name = "SearchBar"
     searchBar.Size = UDim2.new(1, -12, 0, SEARCH_H)
-    searchBar.Position = UDim2.new(0, 6, 0, 12)
+    searchBar.Position = UDim2.new(0, 6, 0, 10)
     -- Color igual al fondo del hub teal
     searchBar.BackgroundColor3 = ThemeColors.Background
     searchBar.BackgroundTransparency = 0.15
@@ -12925,8 +12925,8 @@ function _makeTwoColumns()
 
     -- Icono lupa
     local lupaIcon2 = Instance.new("ImageLabel", searchBar)
-    lupaIcon2.Size = UDim2.new(0, 14, 0, 14)
-    lupaIcon2.Position = UDim2.new(0, 8, 0.5, -7)
+    lupaIcon2.Size = UDim2.new(0, 20, 0, 20)
+    lupaIcon2.Position = UDim2.new(0, 10, 0.5, -10)
     lupaIcon2.BackgroundTransparency = 1
     lupaIcon2.Image = "rbxassetid://3926305904"
     lupaIcon2.ImageColor3 = ThemeColors.Primary
@@ -12935,26 +12935,26 @@ function _makeTwoColumns()
 
     local searchInput2 = Instance.new("TextBox", searchBar)
     searchInput2.Name = "SearchInput"
-    searchInput2.Size = UDim2.new(1, -50, 1, 0)
-    searchInput2.Position = UDim2.new(0, 26, 0, 0)
+    searchInput2.Size = UDim2.new(1, -56, 1, 0)
+    searchInput2.Position = UDim2.new(0, 36, 0, 0)
     searchInput2.BackgroundTransparency = 1
     searchInput2.Text = ""
     searchInput2.PlaceholderText = ""
     searchInput2.PlaceholderColor3 = Color3.fromRGB(200, 20, 100)
     searchInput2.TextColor3 = ThemeColors.Primary
-    searchInput2.TextSize = 14
+    searchInput2.TextSize = 17
     searchInput2.FontFace = Font.fromEnum(Enum.Font.GothamBold)
     searchInput2.TextXAlignment = Enum.TextXAlignment.Left
     searchInput2.ClearTextOnFocus = false
     searchInput2.ZIndex = 21
 
     local clearBtn2 = Instance.new("TextButton", searchBar)
-    clearBtn2.Size = UDim2.new(0, 18, 0, 18)
-    clearBtn2.Position = UDim2.new(1, -22, 0.5, -9)
+    clearBtn2.Size = UDim2.new(0, 22, 0, 22)
+    clearBtn2.Position = UDim2.new(1, -26, 0.5, -11)
     clearBtn2.BackgroundTransparency = 1
     clearBtn2.Text = "?"
     clearBtn2.TextColor3 = ThemeColors.Accent
-    clearBtn2.TextSize = 11
+    clearBtn2.TextSize = 14
     clearBtn2.FontFace = Font.fromEnum(Enum.Font.Arimo)
     clearBtn2.ZIndex = 21
     clearBtn2.Visible = false
@@ -12962,13 +12962,13 @@ function _makeTwoColumns()
 
     -- Label de placeholder manual (se oculta al hacer focus)
     local placeholderLabel = Instance.new("TextLabel", searchBar)
-    placeholderLabel.Size = UDim2.new(1, -50, 1, 0)
-    placeholderLabel.Position = UDim2.new(0, 26, 0, 0)
+    placeholderLabel.Size = UDim2.new(1, -56, 1, 0)
+    placeholderLabel.Position = UDim2.new(0, 36, 0, 0)
     placeholderLabel.BackgroundTransparency = 1
-    placeholderLabel.Text = "buscar..."
+    placeholderLabel.Text = "buscar opciones..."
     placeholderLabel.TextColor3 = ThemeColors.Primary
     placeholderLabel.TextTransparency = 0.45
-    placeholderLabel.TextSize = 13
+    placeholderLabel.TextSize = 16
     placeholderLabel.FontFace = Font.fromEnum(Enum.Font.GothamBold)
     placeholderLabel.TextXAlignment = Enum.TextXAlignment.Left
     placeholderLabel.ZIndex = 20
@@ -64794,18 +64794,20 @@ task.spawn(function()
     end
 
     -- ----------------------------------------------------------------
-    -- BOTON LANZAR
+    -- BOTON LANZAR (v5 - SOLO ANIMACION)
     --
-    -- FIX-4: replica el flujo del KnifeClient:
-    --   1. Setea _throwHoldActive = true (equivale a v_u_22 = true)
-    --   2. Espera ThrowSpeed (el juego usa ~0.5s de carga)
-    --   3. Llama executeThrow() directamente (no espera el tap)
-    --      porque nosotros queremos silent aim automatico.
+    -- El boton Lanzar SOLO reproduce la animacion final ThrowKnife
+    -- (la finalizacion del lanzamiento visual). NO hace FireServer.
     --
-    -- Si el usuario quiere que el brazo quede levantado y tire con tap:
-    --   simplemente no llames executeThrow() aqui y deja que el
-    --   InputBegan lo dispare. Elegimos el flujo automatico porque
-    --   es el objetivo del silent aim.
+    -- El throw real es manejado por KnifeSA via workspace.ChildAdded
+    -- (cuando el juego crea el ThrowingKnife, SA lo intercepta y
+    -- redirige al target). Esto evita el doble-disparo y garantiza
+    -- que el silent aim funcione correctamente en mobile.
+    --
+    -- Flujo correcto:
+    --   1. Boton Lanzar -> reproduce ThrowCharge + ThrowKnife (visual)
+    --   2. KnifeClient nativo hace FireServer(KnifeThrown) -> crea ThrowingKnife
+    --   3. KnifeSA intercepta ThrowingKnife via workspace.ChildAdded -> redirige
     -- ----------------------------------------------------------------
     local function doThrow()
         local now = os.clock()
@@ -64815,23 +64817,40 @@ task.spawn(function()
         local knife, loc = findKnife()
         if not knife or loc ~= "char" then return end
 
-        _throwBusy      = true
-        _lastThrowT     = now
+        _throwBusy  = true
+        _lastThrowT = now
 
         task.spawn(function()
-            -- FIX-4: activar ThrowHold (brazo levantado)
-            _throwHoldActive = true
+            local hum      = getHum()
+            local animator = hum and hum:FindFirstChildOfClass("Animator")
 
-            -- Esperar la carga (ThrowSpeed del KnifeClient ~0.5s)
-            -- Durante este tiempo, si el usuario toca la pantalla tambien dispara
-            task.wait(0.5)
+            -- Detener animaciones de carga previas que puedan estar activas
+            stopChargeAnims(animator)
 
-            -- Si sigue activo (no fue disparado por touch), disparar ahora
-            if _throwHoldActive then
-                executeThrow()
-            else
-                _throwBusy = false
+            -- Reproducir SOLO la animacion final de lanzamiento (ThrowKnife)
+            -- Esta es la animacion de finalizacion del throw que el juego
+            -- reproduce cuando el jugador suelta el knife.
+            -- NO hacemos FireServer - dejamos que KnifeClient y KnifeSA lo manejen.
+            if animator then
+                local kc = knife:FindFirstChild("KnifeClient")
+                -- Intentar ThrowKnife primero, luego ThrowCharge como fallback visual
+                local animObj = (kc and kc:FindFirstChild("ThrowKnife"))
+                    or (kc and kc:FindFirstChild("ThrowCharge"))
+                    or knife:FindFirstChild("ThrowKnife", true)
+                if animObj and animObj:IsA("Animation") then
+                    pcall(function()
+                        local track = animator:LoadAnimation(animObj)
+                        if track.IsPlaying then track:Stop(0) end
+                        track.Priority = Enum.AnimationPriority.Action
+                        track:Play(0.05, 6, 1)
+                    end)
+                end
             end
+
+            -- Limpiar estado (no hay FireServer aqui)
+            _throwHoldActive = false
+            task.wait(0.3)
+            _throwBusy = false
         end)
     end
 
@@ -64888,35 +64907,22 @@ task.spawn(function()
     end)
 
     -- ----------------------------------------------------------------
-    -- FIX-1 + FIX-5: Touch en pantalla
+    -- Touch en pantalla (v5 - BLOQUEADO)
     --
-    -- SOLO dispara si _throwHoldActive == true, es decir, si el boton
-    -- Lanzar fue presionado y el KnifeClient esta esperando el tap.
-    -- Cualquier otro toque en la pantalla es IGNORADO completamente.
-    --
-    -- Esto replica exactamente:
-    --   UIS.TouchTapInWorld:Connect(function(p53, p54)
-    --       if p53 and not p54 then
-    --           if v_u_22 then  -- ThrowHold activo
-    --               throwKnife(...)
-    --           end
-    --       end
-    --   end)
+    -- El touch en pantalla NO dispara el knife directamente.
+    -- KnifeSA maneja el throw via workspace.ChildAdded (ThrowingKnife).
+    -- Este handler solo resetea el flag _throwHoldActive para evitar
+    -- estados inconsistentes si el KnifeClient nativo procesa el tap.
     -- ----------------------------------------------------------------
     UIS.InputBegan:Connect(function(inp, gp)
         if gp then return end
         if inp.UserInputType ~= Enum.UserInputType.Touch then return end
-
-        -- FIX-1: solo actuar si el brazo esta levantado (boton Lanzar fue presionado)
-        if not _throwHoldActive then return end
-        if _throwBusy and not _throwHoldActive then return end
-
-        -- Marcar como disparado por touch para que doThrow() no lo duplique
-        _throwHoldActive = false
-
-        task.spawn(function()
-            executeThrow()
-        end)
+        -- Solo limpiar el flag, NO ejecutar throw desde aqui.
+        -- KnifeSA intercepta el ThrowingKnife en workspace.ChildAdded
+        -- y redirige al target correcto sin necesidad de duplicar el disparo.
+        if _throwHoldActive then
+            _throwHoldActive = false
+        end
     end)
 end)
 -- ================================================================
