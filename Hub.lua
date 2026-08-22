@@ -6601,64 +6601,13 @@ function _KnifeSA_setupKnife(knife)
     local function addConn(c) table.insert(conns, c) end  -- FIX COMBAT #1: local para no contaminar el env global
 
     -- --------------------------------------------------------------
-    -- SISTEMA DE ANIMACIONES v3 ? CACHEADO
-    -- Carga cada AnimationTrack UNA sola vez al equipar y lo reutiliza.
-    -- Evita: stacking de tracks, jitter, animaciones que no terminan.
-    -- Busca animaciones en: knife.Animations, knife directo, recursivo.
+    -- SISTEMA DE ANIMACIONES SIMPLIFICADO
+    -- Anim 1 (ThrowCharge): knife.KnifeClient.ThrowCharge
+    -- Anim 2 (ThrowKnife):  knife.KnifeClient.ThrowKnife
+    -- Al tocar pantalla se reproduce ThrowKnife y sale el knife volando.
     -- --------------------------------------------------------------
 
-    -- Recopilar todos los objetos Animation disponibles en el knife
-    local function _findAllAnims()
-        local found = {}
-        -- 1. Folder "Animations" (MM2 estandar)
-        local animFolder = knife:FindFirstChild("Animations")
-        if animFolder then
-            for _, v in ipairs(animFolder:GetChildren()) do
-                if v:IsA("Animation") then found[v.Name] = v end
-            end
-        end
-        -- 2. Hijos directos del Tool
-        for _, v in ipairs(knife:GetChildren()) do
-            if v:IsA("Animation") and not found[v.Name] then found[v.Name] = v end
-        end
-        -- 3. KnifeClient especificamente (MM2: ThrowCharge/ThrowHold/ThrowKnife viven ahi)
-        local kc = knife:FindFirstChild("KnifeClient")
-        if kc then
-            for _, v in ipairs(kc:GetChildren()) do
-                if v:IsA("Animation") and not found[v.Name] then found[v.Name] = v end
-            end
-            -- Sub-carpetas dentro de KnifeClient
-            for _, v in ipairs(kc:GetDescendants()) do
-                if v:IsA("Animation") and not found[v.Name] then found[v.Name] = v end
-            end
-        end
-        -- 4. Busqueda recursiva completa como fallback final
-        for _, v in ipairs(knife:GetDescendants()) do
-            if v:IsA("Animation") and not found[v.Name] then found[v.Name] = v end
-        end
-        return found
-    end
-
-    local _animObjs   = _findAllAnims()   -- tabla nombre->Animation
-    -- FIX: KnifeClient puede cargar sus animaciones con un frame de delay.
-    -- Re-escanear despues de un momento para capturar ThrowKnife/ThrowCharge/ThrowHold.
-    task.spawn(function()
-        task.wait(0.5)
-        local fresh = _findAllAnims()
-        for k, v in pairs(fresh) do
-            if not _animObjs[k] then
-                _animObjs[k] = v
-            end
-        end
-        -- Debug actualizado
-        local _n2 = {}; for k in pairs(_animObjs) do table.insert(_n2, k) end
-        print("[KnifeSA] Anims tras re-scan:", table.concat(_n2, ", "))
-    end)
-    local _animTracks = {}                -- tabla nombre?AnimationTrack (cacheado)
-
-    -- Debug en consola
-    local _names = {}; for k in pairs(_animObjs) do table.insert(_names, k) end
-    print("[KnifeSA] Anims encontradas:", #_names > 0 and table.concat(_names, ", ") or "(ninguna)")
+    local _animTracks = {}   -- nombre -> AnimationTrack cacheado
 
     local function _getAnimator()
         local char = LocalPlayer.Character
@@ -6666,88 +6615,104 @@ function _KnifeSA_setupKnife(knife)
         return hum and hum:FindFirstChildOfClass("Animator")
     end
 
-    -- Precarga todos los tracks al equipar (evita lag en el primer disparo)
-    local function _preloadTracks()
-        local animator = _getAnimator()
-        if not animator then return end
-        for name, animObj in pairs(_animObjs) do
-            if not _animTracks[name] then
-                local ok, track = pcall(function() return animator:LoadAnimation(animObj) end)
-                if ok and track then
-                    track.Name     = name
-                    track.Priority = Enum.AnimationPriority.Action
-                    _animTracks[name] = track
-                end
-            end
-        end
+    -- Obtiene el objeto Animation desde KnifeClient del knife actual
+    local function _getAnimObj(name)
+        local kc = knife:FindFirstChild("KnifeClient")
+        if not kc then return nil end
+        return kc:FindFirstChild(name)
     end
 
-    -- Reproduce un track cacheado.
-    -- Si el Animator cambi? (respawn), recarga el track autom?ticamente.
-    local function _playKnifeAnim(animName, speed)
-        speed = speed or 1.0
+    -- Carga o reutiliza un AnimationTrack
+    local function _loadTrack(name)
         local animator = _getAnimator()
-        if not animator then return false end
-
-        local animObj = _animObjs[animName]
-        if not animObj then return false end
-
-        -- Invalidar cache si el track ya no tiene parent v?lido (respawn)
-        local cached = _animTracks[animName]
-        if cached and not pcall(function() return cached.IsPlaying end) then
-            _animTracks[animName] = nil; cached = nil
+        if not animator then return nil end
+        local cached = _animTracks[name]
+        if cached then
+            local ok = pcall(function() return cached.IsPlaying end)
+            if not ok then _animTracks[name] = nil; cached = nil end
         end
-
-        -- Cargar o reutilizar track
         if not cached then
+            local animObj = _getAnimObj(name)
+            if not animObj then return nil end
             local ok, track = pcall(function() return animator:LoadAnimation(animObj) end)
-            if not ok or not track then return false end
-            track.Name     = animName
+            if not ok or not track then return nil end
+            track.Name     = name
             track.Priority = Enum.AnimationPriority.Action
-            _animTracks[animName] = track
-            cached = track
+            _animTracks[name] = track
         end
+        return _animTracks[name]
+    end
 
-        -- Detener si ya estaba reproduci?ndose (evita stack)
-        if cached.IsPlaying then
-            pcall(function() cached:Stop(0) end)
+    -- Reproduce una animacion. Devuelve el track si tuvo exito.
+    local function _playKnifeAnim(name)
+        local track = _loadTrack(name)
+        if not track then return nil end
+        if track.IsPlaying then
+            pcall(function() track:Stop(0) end)
             task.wait()
         end
-
-        pcall(function()
-            cached:Play(0.05)
-            cached:AdjustSpeed(speed)
-        end)
-
-        return true
+        pcall(function() track:Play(0.05); track:AdjustSpeed(1.0) end)
+        return track
     end
 
-    -- Stop limpio de un track (si existe y est? playing)
-    local function _stopKnifeAnim(animName)
-        local t = _animTracks[animName]
-        if t and t.IsPlaying then pcall(function() t:Stop(0.08) end) end
+    -- Para una animacion si esta reproduciendose
+    local function _stopKnifeAnim(name)
+        local t = _animTracks[name]
+        if t then pcall(function() if t.IsPlaying then t:Stop(0.08) end end) end
     end
 
-    -- FIX DEFINITIVO: guard post-throw que bloquea ThrowHold replicado por el servidor.
-    -- Despues de FireServer(KnifeThrown), el servidor MM2 manda al Animator del cliente
-    -- que reproduzca ThrowHold via replicacion. Nuestros Stop() ocurren ANTES del FireServer
-    -- pero el servidor responde DESPUES, volviendo a levantar el brazo.
-    -- Solucion: hookeamos Animator.AnimationPlayed para interceptar y cancelar
-    -- cualquier ThrowHold que se intente reproducir durante _throwHoldBlocked=true.
-    local _throwHoldBlocked = false  -- se activa justo antes de FireServer, dura ~1.5s
-    local _animPlayedConn   = nil    -- conexion al Animator.AnimationPlayed
+    local _slashAnimNames = {"SlashKnife", "Slash", "Stab", "Hit", "Animation1"}
+    local _throwAnimNames  = {"ThrowCharge", "ThrowKnife"}
 
+    -- Exponer sistema al estado global
+    KnifeSAState._animTracks = _animTracks
+
+    KnifeSAState._playThrowAnim = function()
+        local track = _playKnifeAnim("ThrowCharge")
+        KnifeSAState._lastThrowTrackName = track and "ThrowCharge" or nil
+    end
+
+    KnifeSAState._playThrowHoldAnim = function()
+        -- Sin ThrowHold real: fase 2 es solo delay visual en _ksaDoThrow
+        KnifeSAState._lastThrowHoldTrackName = nil
+    end
+
+    KnifeSAState._playThrowKnifeAnim = function()
+        _playKnifeAnim("ThrowKnife")
+    end
+
+    KnifeSAState._getThrowTrack = function()
+        local name = KnifeSAState._lastThrowTrackName
+        return name and _animTracks[name] or nil
+    end
+
+    KnifeSAState._lastThrowTrackName     = nil
+    KnifeSAState._lastThrowHoldTrackName = nil
+
+    -- Desktop path: ThrowCharge + espera + ThrowKnife
+    KnifeSAState._waitThrowHold = function()
+        local track = _playKnifeAnim("ThrowCharge")
+        KnifeSAState._lastThrowTrackName = track and "ThrowCharge" or nil
+        if track then
+            local t0 = os.clock()
+            repeat task.wait(0.033) until (track.IsPlaying and (track.Length or 0) > 0.05)
+                or (os.clock() - t0 > 0.5)
+            local len = track.Length or 0
+            task.wait(len > 0.05 and len or 0.8)
+        end
+        _playKnifeAnim("ThrowKnife")
+    end
+
+    -- Bloquear ThrowHold replicado por servidor (post-FireServer)
+    local _throwHoldBlocked = false
+    local _animPlayedConn   = nil
     local function _hookAnimatorBlock()
         local animator = _getAnimator()
         if not animator then return end
-        if _animPlayedConn then
-            pcall(function() _animPlayedConn:Disconnect() end)
-            _animPlayedConn = nil
-        end
+        if _animPlayedConn then pcall(function() _animPlayedConn:Disconnect() end); _animPlayedConn = nil end
         _animPlayedConn = animator.AnimationPlayed:Connect(function(track)
             if not _throwHoldBlocked then return end
             local n = (track.Name or ""):lower()
-            -- Bloquear ThrowHold replicated. Permitir ThrowKnife (es la anim de lanzamiento).
             if n == "throwhold" or n == "throw_hold" then
                 task.defer(function()
                     if track and track.IsPlaying then
@@ -6759,285 +6724,42 @@ function _KnifeSA_setupKnife(knife)
         end)
         addConn(_animPlayedConn)
     end
-
-    -- Activar el bloqueo justo ANTES de FireServer y mantenerlo 1.5s
-    -- (tiempo suficiente para que el servidor responda y nosotros lo bloqueemos)
-    local function _blockThrowHoldAfterThrow()
+    KnifeSAState._blockThrowHoldAfterThrow = function()
         _throwHoldBlocked = true
-        -- Asegurarse de que el hook esta activo
-        if not _animPlayedConn then
-            pcall(_hookAnimatorBlock)
-        end
-        -- Desactivar bloqueo despues de 1.5s (el throw ya termino)
-        task.delay(1.5, function()
-            _throwHoldBlocked = false
-        end)
+        task.delay(1.5, function() _throwHoldBlocked = false end)
+        _hookAnimatorBlock()
     end
-
-    -- Exponer para que _waitThrowHold y el path mobile lo llamen antes del FireServer
-    KnifeSAState._blockThrowHoldAfterThrow = _blockThrowHoldAfterThrow
-
-    -- Inicializar el hook al equipar
     pcall(_hookAnimatorBlock)
 
-    -- Precargar al equipar (async, no bloquea)
-    task.spawn(_preloadTracks)
+    -- Precargar ThrowCharge y ThrowKnife al equipar
+    task.spawn(function()
+        task.wait(0.3)
+        _loadTrack("ThrowCharge")
+        _loadTrack("ThrowKnife")
+    end)
 
-    -- Nombres de throw y slash seg?n estructura real de MM2:
-    -- FIX: ThrowCharge primero porque es la animacion correcta en KnifeClient de MM2.
-    -- Animation1 es SOLO slash ? no usarla para throw.
-    -- ThrowHold se reproduce DESPUES de ThrowCharge (secuencia real de MM2)
-    -- _playThrowAnim reproduce ThrowCharge; _playThrowHoldAnim reproduce ThrowHold
-    local _throwAnimNames     = {"ThrowCharge", "ThrowHold", "ThrowKnife", "Throw", "Animation2"}
-    local _throwHoldAnimNames = {"ThrowHold"}
-    local _slashAnimNames = {"SlashKnife", "Slash", "Stab", "Hit", "Animation1"}
-
-    -- Reproduce ThrowCharge (carga del lanzamiento)
-    -- Cuando termina, _ksaDoThrow llama a _playThrowHoldAnim antes de FireServer
-    local function _playThrowAnim()
-        KnifeSAState._playThrowAnim = _playThrowAnim  -- exponer para _ksaDoThrow mobile
-        KnifeSAState._lastThrowTrackName = nil
-        -- Intentar ThrowCharge primero (animacion de carga real de MM2)
-        if _animObjs["ThrowCharge"] then
-            if _playKnifeAnim("ThrowCharge", 1.0) then
-                KnifeSAState._lastThrowTrackName = "ThrowCharge"
-                return
-            end
-        end
-        -- Fallback secuencial
-        for _, name in ipairs(_throwAnimNames) do
-            if _animObjs[name] then
-                if _playKnifeAnim(name, 1.0) then
-                    KnifeSAState._lastThrowTrackName = name
-                    return
-                end
-            end
-        end
-        -- Fallback: cualquier anim que no sea de slash ni Animation1
-        local slashSet = {SlashKnife=true, Slash=true, Stab=true, Hit=true, Animation1=true}
-        for name in pairs(_animObjs) do
-            if not slashSet[name] then
-                if _playKnifeAnim(name, 1.0) then
-                    KnifeSAState._lastThrowTrackName = name
-                    return
-                end
-            end
-        end
-    end
-
-    -- Reproduce ThrowHold (animacion de sostener el knife antes de lanzar)
-    -- Se llama justo DESPUES de que ThrowCharge termina y ANTES de FireServer
-    -- FIX: forzar Looped=false en el track DESPUES de Play para que el Animator
-    -- no lo reactive automaticamente cuando otra animacion termina.
-    local function _playThrowHoldAnim()
-        KnifeSAState._playThrowHoldAnim = _playThrowHoldAnim
-        KnifeSAState._lastThrowHoldTrackName = nil
-        if _animObjs["ThrowHold"] then
-            if _playKnifeAnim("ThrowHold", 1.0) then
-                KnifeSAState._lastThrowHoldTrackName = "ThrowHold"
-                -- FIX: desactivar loop inmediatamente despues de reproducir
-                -- El asset MM2 tiene Looped=true; al setearlo false aqui el track
-                -- termina naturalmente en vez de reiniciarse, y Stop(0) lo mata definitivo
-                pcall(function()
-                    local th = _animTracks["ThrowHold"]
-                    if th then th.Looped = false end
-                end)
-                return true
-            end
-        end
-        return false  -- ThrowHold no existe en este knife, no bloquear el throw
-    end
-    KnifeSAState._playThrowHoldAnim = _playThrowHoldAnim
-
-    -- Helper: reproduce ThrowHold y lo detiene cuando el juego detecta el lanzamiento.
-    -- FIX v3: ThrowHold es Looped=true en el asset de MM2. Despues de Stop(0) el Animator
-    -- lo puede reanudar cuando ThrowKnife termina. Solucion: Stop(0) + Looped=false + invalidar
-    -- cache del track para que no pueda ser reanudado, luego reproducir ThrowKnife y hacer
-    -- un segundo Stop de ThrowHold justo cuando ThrowKnife finaliza.
-    local function _waitThrowHold()
-        if not _animObjs["ThrowHold"] then return end  -- no existe, salir rapido
-        local played = _playThrowHoldAnim()
-        if not played then return end
-
-        local holdName  = KnifeSAState._lastThrowHoldTrackName
-        local holdTrack = holdName and _animTracks[holdName]
-        if not holdTrack then return end
-
-        local throwDetected = false
-        local _conns = {}
-
-        -- DETECCION 1: ThrowingKnife aparece en workspace = el juego ejecuto el lanzamiento
-        local _wsConn = game:GetService("Workspace").ChildAdded:Connect(function(child)
-            if child.Name == "ThrowingKnife" then
-                throwDetected = true
-            end
-        end)
-        table.insert(_conns, _wsConn)
-
-        -- DETECCION 2: OnClientEvent de KnifeThrown (backup por latencia de workspace)
-        pcall(function()
-            local knifeEvents = knife:FindFirstChild("Events") or knife
-            local knifeRemote = knifeEvents:FindFirstChild("KnifeThrown")
-            if knifeRemote then
-                local _remConn = knifeRemote.OnClientEvent:Connect(function()
-                    throwDetected = true
-                end)
-                table.insert(_conns, _remConn)
-            end
-        end)
-
-        -- TIMEOUT de seguridad: maximo 3 segundos sosteniendo el knife
-        local _timeout = 3.0
-        local _t0 = os.clock()
-
-        repeat
-            task.wait(0.016)
-        until throwDetected or (os.clock() - _t0 > _timeout)
-
-        -- Limpiar conexiones de deteccion
-        for _, c in ipairs(_conns) do
-            pcall(function() c:Disconnect() end)
-        end
-
-        -- FIX v3 BRAZO: el asset ThrowHold de MM2 tiene Looped=true.
-        -- Al hacer Stop el Animator lo puede reanudar cuando otra anim termina.
-        -- Solucion en 3 pasos:
-        -- 1) Looped=false para que el motor no lo reactive automaticamente
-        -- 2) Stop(0) inmediato
-        -- 3) Invalidar el cache (_animTracks["ThrowHold"] = nil) para que
-        --    _playKnifeAnim tenga que recargar el track desde cero si se llama de nuevo
-        pcall(function()
-            holdTrack.Looped = false
-        end)
-        pcall(function()
-            if holdTrack.IsPlaying then holdTrack:Stop(0) end
-        end)
-        -- Invalidar cache: fuerza recarga en el proximo uso (evita reanudacion implicita)
-        _animTracks["ThrowHold"] = nil
-        KnifeSAState._lastThrowHoldTrackName = nil
-
-        -- Reproducir ThrowKnife con fadeIn (0.25s) para interpolar brazo hacia abajo
-        local throwKnifeTrack = _animTracks["ThrowKnife"]
-        if not throwKnifeTrack and _animObjs["ThrowKnife"] then
-            -- Cargar track si no estaba cacheado
-            pcall(function()
-                local animator = _getAnimator()
-                if not animator then return end
-                local tk = animator:LoadAnimation(_animObjs["ThrowKnife"])
-                if tk then
-                    tk.Name     = "ThrowKnife"
-                    tk.Priority = Enum.AnimationPriority.Action
-                    tk.Looped   = false  -- nunca debe loopear
-                    _animTracks["ThrowKnife"] = tk
-                    throwKnifeTrack = tk
-                end
-            end)
-        end
-
-        if throwKnifeTrack then
-            pcall(function()
-                if throwKnifeTrack.IsPlaying then throwKnifeTrack:Stop(0) end
-                throwKnifeTrack.Looped = false
-                throwKnifeTrack:Play(0.25)
-                throwKnifeTrack:AdjustSpeed(1.0)
-            end)
-            -- Cuando ThrowKnife termine: hacer un segundo Stop de ThrowHold por si acaso
-            -- el Animator lo reanimod durante ThrowKnife (doble seguro)
-            task.spawn(function()
-                task.wait()
-                local tkLen = throwKnifeTrack.Length or 0
-                if tkLen > 0.05 then
-                    task.wait(tkLen + 0.05)
-                end
-                -- Parar ThrowKnife limpiamente
-                if throwKnifeTrack.IsPlaying then
-                    pcall(function() throwKnifeTrack:Stop(0.15) end)
-                end
-                -- Segundo barrido: matar ThrowHold si de alguna manera volvio a aparecer
-                pcall(function()
-                    local animator = _getAnimator()
-                    if not animator then return end
-                    for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                        local n = (t.Name or ""):lower()
-                        if n == "throwhold" or n == "throw_hold" then
-                            t.Looped = false
-                            pcall(function() t:Stop(0) end)
-                        end
-                    end
-                end)
-            end)
-        else
-            -- Sin ThrowKnife: re-play instantaneo + fadeOut largo para blend hacia idle
-            pcall(function()
-                -- Recargar ThrowHold solo para hacer el fadeOut (ya invalidamos cache arriba)
-                local animator = _getAnimator()
-                if not animator and _animObjs["ThrowHold"] then return end
-                local th2 = animator:LoadAnimation(_animObjs["ThrowHold"])
-                if th2 then
-                    th2.Looped = false
-                    th2:Play(0)
-                    th2:Stop(0.35)  -- fadeOut largo: Roblox interpola hacia idle
-                end
-            end)
-        end
-    end
-    KnifeSAState._waitThrowHold = _waitThrowHold
-
-    -- Exponer _animTracks para que _ksaDoThrow pueda acceder a los tracks cacheados
-    KnifeSAState._animTracks = _animTracks
-
-    -- Exponer _getThrowTrack para que _ksaDoThrow pueda esperar el fin del track
-    KnifeSAState._getThrowTrack = function()
-        local name = KnifeSAState._lastThrowTrackName
-        return name and _animTracks[name] or nil
-    end
-
-    -- _playThrowKnifeAnim: reproduce ThrowKnife (la animacion del lanzamiento real)
-    -- Es la TERCERA animacion de la secuencia: ThrowCharge -> ThrowHold -> ThrowKnife
-    local _lastThrowKnifeTrackName = nil
-    local function _playThrowKnifeAnim()
-        _lastThrowKnifeTrackName = nil
-        -- Prioridad: ThrowKnife del KnifeClient
-        if _animObjs["ThrowKnife"] then
-            if _playKnifeAnim("ThrowKnife", 1.0) then
-                _lastThrowKnifeTrackName = "ThrowKnife"
-                return
-            end
-        end
-        -- Fallback: ThrowCharge si no hay ThrowKnife (knife sin la animacion separada)
-        if _animObjs["ThrowCharge"] then
-            if _playKnifeAnim("ThrowCharge", 1.0) then
-                _lastThrowKnifeTrackName = "ThrowCharge"
-                return
-            end
-        end
-    end
-    KnifeSAState._playThrowKnifeAnim = _playThrowKnifeAnim
-    KnifeSAState._lastThrowHoldTrackName = nil  -- se setea por _playThrowHoldAnim
-
-    -- Exponer _playSlashAnim para hook de touch mobile
+    -- _playSlashAnim se define abajo y se expone via KnifeSAState
     KnifeSAState._playSlashAnim = nil  -- se asigna abajo
 
+
     local function _playSlashAnim()
-        KnifeSAState._playSlashAnim = _playSlashAnim  -- exponer para hook touch mobile
-        -- Fast Slash activo: slider va de 1-10, dividir por 10 para obtener multiplicador correcto.
-        -- FIX: antes dividia por 100 (rango 1-100), rompiendo la animacion con valores 1-10.
-        --   intensity=5 -> animSpeed = 5/10 = 0.5x (mas lento) .. 10 -> 1.0x (normal)
+        KnifeSAState._playSlashAnim = _playSlashAnim
         local animSpeed = 1.0
         if KnifeSAState.fastSlash then
             local pct = math.max(0.1, (KnifeSAState.fastSlashSpeed or 5) / 10)
-            animSpeed = pct  -- ej: speed=10 -> animSpeed=1.0; speed=5 -> 0.5 (mas rapido el cooldown)
+            animSpeed = pct
         end
+        -- Buscar animacion de slash en KnifeClient
+        local kc = knife:FindFirstChild("KnifeClient")
         for _, name in ipairs(_slashAnimNames) do
-            if _animObjs[name] then
-                if _playKnifeAnim(name, animSpeed) then return end
-            end
-        end
-        -- Fallback: cualquier anim que no sea de throw
-        local throwSet = {ThrowKnife=true, Throw=true, ThrowCharge=true}
-        for name in pairs(_animObjs) do
-            if not throwSet[name] then
-                if _playKnifeAnim(name, animSpeed) then return end
+            local animObj = kc and kc:FindFirstChild(name)
+            if animObj then
+                local track = _loadTrack(name)
+                if track then
+                    if track.IsPlaying then pcall(function() track:Stop(0) end); task.wait() end
+                    pcall(function() track:Play(0.05); track:AdjustSpeed(animSpeed) end)
+                    return
+                end
             end
         end
     end
@@ -7049,18 +6771,18 @@ function _KnifeSA_setupKnife(knife)
         for _, part in ipairs(knife:GetDescendants()) do
             if part:IsA("BasePart") then pcall(function() part.CanCollide = false end) end
         end
-        -- Al equipar: invalidar cache de tracks y recargar (Animator puede haber cambiado tras respawn)
+        -- Al equipar: invalidar cache y recargar ThrowCharge/ThrowKnife
         _animTracks = {}
-        task.spawn(_preloadTracks)
-        -- FIX EQUIP COOLDOWN: registrar el momento de equip para que _ksaDoThrow
-        -- no se dispare inmediatamente despues de equipar desde el backpack.
-        -- Sin esto, el touch en el boton Equipar podia llegar al hook del throw
-        -- y reproducir ThrowCharge justo al poner el knife en mano.
+        KnifeSAState._animTracks = _animTracks
+        task.spawn(function()
+            task.wait(0.3)
+            _loadTrack("ThrowCharge")
+            _loadTrack("ThrowKnife")
+        end)
         KnifeSAState._lastEquipTime = os.clock()
     end))
     addConn(knife.Unequipped:Connect(function()
         equipped = false; stabbing = false
-        -- Detener todas las animaciones del knife al desequipar
         for name in pairs(_animTracks) do _stopKnifeAnim(name) end
     end))
 
