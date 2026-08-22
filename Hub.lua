@@ -49727,6 +49727,10 @@ function CreateCombatTab()
 
                     -- FASE 3: ThrowKnife (animacion de lanzamiento) + FireServer
                     _mobileThrowState = "idle"
+                    -- FIX: marcar el timestamp AHORA para que el workspace watcher
+                    -- (_ksaOnThrowingKnifeAdded) no re-dispare _ksaDoThrow cuando
+                    -- ThrowingKnife llega desde el servidor con delay de red.
+                    _lastMobileSAThrow = os.clock()
 
                     -- Detener ThrowHold: FIX Looped=false + Stop(0) + invalidar cache
                     local function _killThrowHold()
@@ -49818,12 +49822,17 @@ function CreateCombatTab()
                     -- Cooldown
                     local now = os.clock()
                     if now - _lastMobileSAThrow < 0.35 then return end
-                    _lastMobileSAThrow = now
                     -- Si estamos en ThrowHold esperando touch, disparar la fase 3 ahora
                     if _mobileThrowState == "holding" and _mobileTouchRelease then
+                        _lastMobileSAThrow = now
                         _mobileTouchRelease()
                     elseif _mobileThrowState == "idle" then
-                        -- SA activo pero el throw fue iniciado sin nuestro boton (edge case)
+                        -- FIX: ThrowingKnife puede aparecer en workspace con delay de red
+                        -- DESPUES de que _ksaDoThrow ya completo la fase 3 y reseteo a "idle".
+                        -- Cooldown largo (2s) para no re-disparar ThrowCharge por el mismo knife.
+                        if now - _lastMobileSAThrow < 2.0 then return end
+                        _lastMobileSAThrow = now
+                        -- SA activo pero el throw fue iniciado sin nuestro boton (edge case real)
                         task.spawn(_ksaDoThrow)
                     end
                 end
