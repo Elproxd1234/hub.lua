@@ -64794,21 +64794,34 @@ task.spawn(function()
     end
 
     -- ----------------------------------------------------------------
-    -- BOTON LANZAR (v5 - SOLO ANIMACION)
+    -- BOTON LANZAR (v6 - ANIMACION COMPLETA CON ESPERA)
     --
-    -- El boton Lanzar SOLO reproduce la animacion final ThrowKnife
-    -- (la finalizacion del lanzamiento visual). NO hace FireServer.
-    --
-    -- El throw real es manejado por KnifeSA via workspace.ChildAdded
-    -- (cuando el juego crea el ThrowingKnife, SA lo intercepta y
-    -- redirige al target). Esto evita el doble-disparo y garantiza
-    -- que el silent aim funcione correctamente en mobile.
-    --
-    -- Flujo correcto:
-    --   1. Boton Lanzar -> reproduce ThrowCharge + ThrowKnife (visual)
-    --   2. KnifeClient nativo hace FireServer(KnifeThrown) -> crea ThrowingKnife
-    --   3. KnifeSA intercepta ThrowingKnife via workspace.ChildAdded -> redirige
+    -- Flujo:
+    --   1. Reproduce ThrowCharge (brazo levantandose) a velocidad normal
+    --   2. Espera que ThrowCharge termine via evento Stopped
+    --   3. Reproduce ThrowKnife (lanzamiento final) a velocidad normal
+    --   4. Espera que ThrowKnife termine via evento Stopped
+    --   5. Recien ahi KnifeSA intercepta el ThrowingKnife y redirige
+    -- NO hace FireServer - el KnifeClient nativo lo maneja.
     -- ----------------------------------------------------------------
+    local function _waitTrackStopped(track, maxWait)
+        -- Espera a que el track termine o hasta maxWait segundos
+        if not track then return end
+        task.wait()  -- 1 frame para que .Length se popule
+        local len = track.Length or 0
+        if len < 0.05 then return end  -- track vacio, no esperar
+        local done = false
+        local conn
+        conn = track.Stopped:Connect(function()
+            done = true
+            if conn then conn:Disconnect(); conn = nil end
+        end)
+        local limit = maxWait or (len + 0.5)
+        local t0 = os.clock()
+        repeat task.wait(0.016) until done or (os.clock() - t0 > limit)
+        if conn then conn:Disconnect(); conn = nil end
+    end
+
     local function doThrow()
         local now = os.clock()
         if now - _lastThrowT < THROW_CD then return end
@@ -64824,32 +64837,41 @@ task.spawn(function()
             local hum      = getHum()
             local animator = hum and hum:FindFirstChildOfClass("Animator")
 
-            -- Detener animaciones de carga previas que puedan estar activas
+            -- Detener animaciones de carga previas
             stopChargeAnims(animator)
 
-            -- Reproducir SOLO la animacion final de lanzamiento (ThrowKnife)
-            -- Esta es la animacion de finalizacion del throw que el juego
-            -- reproduce cuando el jugador suelta el knife.
-            -- NO hacemos FireServer - dejamos que KnifeClient y KnifeSA lo manejen.
             if animator then
                 local kc = knife:FindFirstChild("KnifeClient")
-                -- Intentar ThrowKnife primero, luego ThrowCharge como fallback visual
-                local animObj = (kc and kc:FindFirstChild("ThrowKnife"))
-                    or (kc and kc:FindFirstChild("ThrowCharge"))
-                    or knife:FindFirstChild("ThrowKnife", true)
-                if animObj and animObj:IsA("Animation") then
+
+                -- PASO 1: ThrowCharge (brazo levantandose) a velocidad normal
+                local chargeObj = kc and (kc:FindFirstChild("ThrowCharge") or kc:FindFirstChild("ThrowHold"))
+                if chargeObj and chargeObj:IsA("Animation") then
                     pcall(function()
-                        local track = animator:LoadAnimation(animObj)
+                        local track = animator:LoadAnimation(chargeObj)
                         if track.IsPlaying then track:Stop(0) end
                         track.Priority = Enum.AnimationPriority.Action
-                        track:Play(0.05, 6, 1)
+                        track:Play(0.08, 1, 1)  -- velocidad 1 = normal
+                        _waitTrackStopped(track, 1.5)
+                    end)
+                end
+
+                -- PASO 2: ThrowKnife (animacion final de lanzamiento) a velocidad normal
+                local throwObj = kc and kc:FindFirstChild("ThrowKnife")
+                    or knife:FindFirstChild("ThrowKnife", true)
+                if throwObj and throwObj:IsA("Animation") then
+                    pcall(function()
+                        local track = animator:LoadAnimation(throwObj)
+                        if track.IsPlaying then track:Stop(0) end
+                        track.Priority = Enum.AnimationPriority.Action
+                        track:Play(0.05, 1, 1)  -- velocidad 1 = normal
+                        _waitTrackStopped(track, 1.5)
                     end)
                 end
             end
 
-            -- Limpiar estado (no hay FireServer aqui)
+            -- Limpiar estado (sin FireServer - KnifeSA maneja el throw real)
             _throwHoldActive = false
-            task.wait(0.3)
+            task.wait(0.1)
             _throwBusy = false
         end)
     end
