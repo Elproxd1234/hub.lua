@@ -49323,25 +49323,22 @@ function CreateCombatTab()
                 -- El estado siempre vuelve a "idle" (timeout garantizado).
                 -- ----------------------------------------------------------------
                 local function _ksaDoThrow()
-                    -- ================================================================
-                    -- FIX v2: Guard atomico + reset garantizado con pcall total.
-                    -- Problema original: despues del 1er lanzamiento, _mobileThrowState
-                    -- quedaba en "throwing" si _ksaOnThrowingKnifeAdded no llegaba,
-                    -- bloqueando todos los lanzamientos siguientes indefinidamente.
-                    -- Ahora el timeout es 1.2s (era 2s) y se wrappea todo en pcall
-                    -- para que cualquier error interno no deje el estado atascado.
-                    -- ================================================================
+                    -- Guard: ya hay un throw en curso
                     if _mobileThrowState ~= "idle" then return end
                     _mobileThrowState = "waiting"
 
-                    -- FIX: wrap completo en pcall para garantizar reset aunque explote algo interno
-                    local _throwOk, _throwErr = pcall(function()
+                    -- Helper local: resetear todo y salir limpio
+                    local function _abortThrow()
+                        _killAllThrowAnims()
+                        _mobileThrowState = "idle"
+                        _lastMobileSAThrow = -999
+                    end
 
                     local myChar = LocalPlayer.Character
                     local hum    = myChar and myChar:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health <= 0 then _mobileThrowState = "idle"; return end
+                    if not hum or hum.Health <= 0 then _abortThrow(); return end
                     if KnifeSAState._lastEquipTime and (os.clock() - KnifeSAState._lastEquipTime) < 0.4 then
-                        _mobileThrowState = "idle"; return
+                        _abortThrow(); return
                     end
 
                     -- Asegurar knife en mano
@@ -49362,7 +49359,6 @@ function CreateCombatTab()
                             end
                         end
                     end
-                    -- FIX: si sigue sin knife, esperar maximo 1.5s (era 2s) para no bloquear tanto
                     if not knife then
                         local _t0knife = os.clock()
                         repeat
@@ -49380,9 +49376,9 @@ function CreateCombatTab()
                             end
                         until knife or (os.clock() - _t0knife > 1.5)
                     end
-                    if not knife then _mobileThrowState = "idle"; return end
+                    if not knife then _abortThrow(); return end
 
-                    -- FIX: refrescar myChar por si el character cambio durante la espera
+                    -- Refrescar myChar por si cambio durante la espera
                     myChar = LocalPlayer.Character
                     local _knifeInChar = myChar and myChar:FindFirstChild(knife.Name)
                     if not _knifeInChar then
@@ -49390,18 +49386,17 @@ function CreateCombatTab()
                         myChar = LocalPlayer.Character
                         _knifeInChar = myChar and myChar:FindFirstChild(knife.Name)
                     end
-                    if not _knifeInChar then _mobileThrowState = "idle"; return end
+                    if not _knifeInChar then _abortThrow(); return end
                     knife = _knifeInChar
 
                     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHRP then _mobileThrowState = "idle"; return end
+                    if not myHRP then _abortThrow(); return end
 
-                    -- FIX: buscar eventos tanto en Events como directamente en el knife
                     local events      = knife:FindFirstChild("Events") or knife
                     local throwRemote = events:FindFirstChild("Throw")
                     local knifeThrown = events:FindFirstChild("KnifeThrown")
                         or knife:FindFirstChildWhichIsA("RemoteEvent")
-                    if not knifeThrown then _mobileThrowState = "idle"; return end
+                    if not knifeThrown then _abortThrow(); return end
 
                     -- Limpiar tracks del lanzamiento anterior
                     _killAllThrowAnims()
@@ -49417,7 +49412,7 @@ function CreateCombatTab()
                     end
                     KnifeSAState._lastThrowHoldTrackName = nil
 
-                    -- FIX: helper para cargar anim custom - reutiliza Animator fresco cada vez
+                    -- Helper: cargar anim custom por ID (siempre Animator fresco)
                     local function _loadCustomTrack(animId)
                         local char2  = LocalPlayer.Character
                         local hum2   = char2 and char2:FindFirstChildOfClass("Humanoid")
@@ -49431,28 +49426,21 @@ function CreateCombatTab()
                         return track
                     end
 
-                    -- FIX: helper para cargar ThrowKnife del KnifeClient - siempre busca el knife fresco
+                    -- Helper: cargar ThrowKnife desde KnifeClient (knife fresco, sin pcall externo)
+                    -- FIX v3: NO habilitar/deshabilitar KnifeClient aqui — eso causaba que
+                    -- el KnifeClient tomara control brevemente y reprodujera su propia animacion,
+                    -- interfiriendo con el lanzamiento. En su lugar buscamos el Animation object
+                    -- directamente con KnifeClient desactivado (los hijos siguen accesibles).
                     local function _loadKnifeClientTrack(animName)
                         local char2  = LocalPlayer.Character
                         local hum2   = char2 and char2:FindFirstChildOfClass("Humanoid")
                         local animr2 = hum2 and hum2:FindFirstChildOfClass("Animator")
                         if not animr2 then return nil end
-                        -- FIX: buscar el knife fresco en el character, no el knife capturado en el closure
                         local freshKnife2 = char2:FindFirstChild("Knife") or char2:FindFirstChildOfClass("Tool")
-                        local kc2 = freshKnife2 and freshKnife2:FindFirstChild("KnifeClient")
-                        -- FIX: habilitar temporalmente KnifeClient para acceder a la animacion
-                        local kcWasDisabled = false
-                        if kc2 and kc2.Disabled then
-                            kcWasDisabled = true
-                            pcall(function() kc2.Disabled = false end)
-                            task.wait()
-                        end
+                        local kc2    = freshKnife2 and freshKnife2:FindFirstChild("KnifeClient")
+                        -- Buscar el Animation object directamente (KnifeClient.Disabled no bloquea FindFirstChild)
                         local animObj = (kc2 and kc2:FindFirstChild(animName, true))
                             or (freshKnife2 and freshKnife2:FindFirstChild(animName, true))
-                        -- FIX: restaurar KnifeClient desactivado inmediatamente
-                        if kcWasDisabled and kc2 then
-                            pcall(function() kc2.Disabled = true end)
-                        end
                         if not animObj or not animObj:IsA("Animation") then return nil end
                         local ok, track = pcall(function() return animr2:LoadAnimation(animObj) end)
                         if not ok or not track then return nil end
@@ -49489,47 +49477,59 @@ function CreateCombatTab()
                         end
                     end
 
-                    -- FASE 1: Animacion de carga breve
+                    -- ----------------------------------------------------------------
+                    -- FASE 1: ThrowCharge breve (animacion visual de carga)
+                    -- ----------------------------------------------------------------
                     _mobileThrowState = "charging"
                     _startSrvBlock()
                     local chargeTrack = _loadCustomTrack("rbxassetid://1957618848")
                     _activeChargeTrack = chargeTrack
                     if chargeTrack then pcall(function() chargeTrack:Play(0) end) end
 
-                    -- Pausa visual minima
-                    task.wait(0.18)
+                    task.wait(0.18)  -- pausa visual minima
 
                     -- Guard: murio durante la pausa
                     do
                         local _c = LocalPlayer.Character
                         local _h = _c and _c:FindFirstChildOfClass("Humanoid")
                         if not _h or _h.Health <= 0 then
-                            _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
+                            _stopSrvBlock(); _abortThrow(); return
                         end
                     end
 
-                    -- FASE 2->3: directo al lanzamiento
+                    -- ----------------------------------------------------------------
+                    -- FASE 2->3: lanzamiento directo (sin esperar segundo toque)
+                    -- ----------------------------------------------------------------
                     _mobileThrowState = "holding"
-                    _activeHoldTrack = nil
-
+                    _activeHoldTrack  = nil
                     _mobileThrowState = "throwing"
                     _stopSrvBlock()
 
+                    -- Parar chargeTrack antes de reproducir ThrowKnife
+                    if chargeTrack then
+                        pcall(function() chargeTrack.Looped = false end)
+                        pcall(function() chargeTrack:Stop(0) end)
+                    end
+
                     local _now3 = os.clock()
-                    _lastMobileSAThrow            = _now3
+                    _lastMobileSAThrow                = _now3
                     KnifeSAState._lastMobileThrowTime = _now3
 
-                    -- FIX: cargar ThrowKnife con knife fresco del character
+                    -- ThrowKnife del KnifeClient (obligatorio para que el servidor valide)
                     local throwKnifeTrack = _loadKnifeClientTrack("ThrowKnife")
                     _activeKnifeTrack = throwKnifeTrack
                     if throwKnifeTrack then
-                        pcall(function() throwKnifeTrack:Play(0.1) end)
+                        -- Parar cualquier instancia previa del mismo track antes de reproducir
+                        pcall(function()
+                            if throwKnifeTrack.IsPlaying then throwKnifeTrack:Stop(0) end
+                        end)
+                        pcall(function() throwKnifeTrack:Play(0.05) end)
                     end
 
                     -- Espera minima para que el servidor registre la animacion
                     task.wait(0.05)
 
-                    -- Construir CFrames con HRP fresco
+                    -- Resolver HRP y knife frescos para el FireServer
                     local myChar3 = LocalPlayer.Character
                     local myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
                     if not myHRP3 then
@@ -49540,8 +49540,8 @@ function CreateCombatTab()
                             myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
                         until myHRP3 or (os.clock() - _t0hrp > 0.3)
                     end
+                    if not myHRP3 then _abortThrow(); return end
 
-                    -- FIX: resolver knife/remote siempre desde el character actual
                     local freshKnife = myChar3 and (
                         myChar3:FindFirstChild("Knife") or myChar3:FindFirstChildOfClass("Tool")
                     )
@@ -49557,23 +49557,14 @@ function CreateCombatTab()
 
                     _ksaFireKnife(resolvedKT, resolvedTR, hcf, tcf)
 
-                    end) -- fin pcall
-
-                    -- FIX: reset garantizado siempre, independientemente de errores
-                    -- Timeout reducido a 1.2s (era 2s) para respuesta mas rapida entre throws
+                    -- Reset garantizado: si _ksaOnThrowingKnifeAdded no llega en 1.2s, liberar igual
                     task.delay(1.2, function()
                         if _mobileThrowState == "throwing" then
                             _killAllThrowAnims()
-                            _mobileThrowState = "idle"
+                            _mobileThrowState  = "idle"
                             _lastMobileSAThrow = -999
                         end
                     end)
-                    -- FIX: si el pcall fallo, resetear inmediatamente en lugar de esperar el timeout
-                    if not _throwOk then
-                        _killAllThrowAnims()
-                        _mobileThrowState = "idle"
-                        _lastMobileSAThrow = -999
-                    end
                 end
 
                 -- ================================================================
