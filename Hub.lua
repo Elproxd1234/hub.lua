@@ -49328,17 +49328,29 @@ function CreateCombatTab()
                     return finalHandleCF, finalTargetCF
                 end
 
-                -- Helper: FireServer con multiples firmas de KnifeThrown
+                -- Helper: FireServer con multiples firmas
+                -- FIX LANZAMIENTO MOBILE: el servidor de MM2 en mobile valida el throw
+                -- a traves del remote "Throw" (Events.Throw:FireServer()) que el KnifeClient
+                -- nativo dispara al finalizar ThrowKnife. Como KnifeClient esta Disabled,
+                -- debemos disparar ese remote manualmente. El hook __namecall lo intercepta
+                -- y lo redirige a KnifeThrown con CFrames SA si hay target, o lo deja pasar
+                -- como throw normal. Ademas disparamos KnifeThrown directamente como respaldo.
                 local function _ksaFireKnife(freshKnifeThrown, freshThrowRemote, finalHandleCF, finalTargetCF)
-                    -- FIX: bloquear ThrowHold replicado por servidor ANTES de disparar
+                    -- Bloquear ThrowHold replicado por servidor ANTES de disparar
                     if KnifeSAState._blockThrowHoldAfterThrow then
                         pcall(KnifeSAState._blockThrowHoldAfterThrow)
                     end
-                    -- CORRECCION BUG FIRESERVER:
-                    -- La rama original con freshThrowRemote:FireServer() sin argumentos
-                    -- no lanza el knife — el servidor espera CFrames. Esa llamada marcaba
-                    -- fired=true y bloqueaba el KnifeThrown:FireServer(handleCF, targetCF) real.
-                    -- Solución: siempre usar KnifeThrown con los CFrames correctos.
+
+                    -- VIA 1: Events.Throw:FireServer() — simula el remote nativo del KnifeClient.
+                    -- El hook __namecall lo intercepta: si hay target SA -> KnifeThrown(handleCF, targetCF).
+                    -- Si no hay target -> pasa al servidor como throw normal (knife vuela al frente).
+                    -- Esta via es la que el servidor ESPERA para procesar el lanzamiento.
+                    if freshThrowRemote then
+                        pcall(function() freshThrowRemote:FireServer() end)
+                    end
+
+                    -- VIA 2: KnifeThrown directo como respaldo (por si el hook no intercepta Throw).
+                    -- Intentar con los CFrames en el orden que MM2 acepta.
                     local fired = false
                     if freshKnifeThrown and finalHandleCF and finalTargetCF then
                         pcall(function() freshKnifeThrown:FireServer(finalHandleCF, finalTargetCF); fired = true end)
@@ -49582,12 +49594,33 @@ function CreateCombatTab()
                         pcall(KnifeSAState._releaseThrowHoldAnim)
                     end
                     task.wait(0.016)  -- un frame para que el Animator procese el Stop
+
+                    -- FIX LANZAMIENTO: re-habilitar KnifeClient brevemente para que el
+                    -- servidor acepte el throw. MM2 verifica que KnifeClient este activo
+                    -- cuando llega el FireServer. Lo deshabilitamos de nuevo en 0.5s.
+                    local _knifeForFire = myChar and myChar:FindFirstChild("Knife")
+                    local _kcForFire = _knifeForFire and _knifeForFire:FindFirstChild("KnifeClient")
+                    if _kcForFire then
+                        pcall(function() _kcForFire.Disabled = false end)
+                    end
+
                     if KnifeSAState._playThrowKnifeAnim then
                         pcall(KnifeSAState._playThrowKnifeAnim)
                     end
 
                     -- Espera minima para sincronizar ThrowKnife con el servidor
                     task.wait(0.05)
+
+                    -- Re-deshabilitar KnifeClient despues de que el throw ya se proceso
+                    -- (si SA sigue activo). Lo hacemos via task.delay para no bloquear
+                    -- el FireServer que viene inmediatamente despues.
+                    if _kcForFire then
+                        task.delay(0.4, function()
+                            if KnifeSAState.enabled and _kcForFire and _kcForFire.Parent then
+                                pcall(function() _kcForFire.Disabled = true end)
+                            end
+                        end)
+                    end
 
                     -- FASE 3: FireServer
                     local _now = os.clock()
