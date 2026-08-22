@@ -49196,7 +49196,7 @@ function CreateCombatTab()
                 -- _mobileThrowState controla en que fase estamos para evitar
                 -- que un segundo tap en la pantalla reinicie todo desde cero.
                 -- ================================================================
-                local _mobileThrowState = "idle"  -- "idle" | "charging" | "holding"
+                local _mobileThrowState = "idle"  -- "idle" | "waiting" | "charging" | "holding" | "throwing"
                 local _mobileTouchRelease = nil    -- funcion que se llama al tocar en fase "holding"
                 local _lastMobileSAThrow  = -999
 
@@ -49454,30 +49454,39 @@ function CreateCombatTab()
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 2: ThrowHold (fadeTime = 0.9861) — se queda frenada
-                    -- La animacion se reproduce pero NO avanzamos hasta que el jugador
-                    -- haga touch en la pantalla (cualquier touch dispara la Fase 3).
+                    -- FASE 2: ThrowHold (fadeTime = 0.9861) — se queda frenada (Looped)
+                    -- esperando un NUEVO touch del jugador (no el mismo del boton Lanzar).
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "holding"
                     local holdTrack = _loadFreshTrack("ThrowHold")
                     _activeHoldTrack = holdTrack
                     if holdTrack then
-                        pcall(function() holdTrack.Looped = true end)  -- loopeada para que no termine sola
+                        pcall(function() holdTrack.Looped = true end)
                         pcall(function() holdTrack:Play(0.9861) end)
                     end
 
-                    -- Esperar touch del jugador en pantalla (cualquier zona)
-                    -- Se resuelve con un BindableEvent para salir del yield limpiamente
+                    -- Esperar un frame para que el touch del boton Lanzar ya no este activo
+                    -- antes de conectar el listener del siguiente touch.
+                    task.wait(0.1)
+
+                    -- Guard: si murio o lo cancelaron mientras esperabamos ese frame
+                    if _mobileThrowState ~= "holding" then
+                        _killAllThrowAnims(); return
+                    end
+
+                    -- Esperar NUEVO touch en pantalla (distinto al del boton Lanzar)
                     local _touchFired  = false
                     local _touchSignal = Instance.new("BindableEvent")
-                    local _touchConn   = game:GetService("UserInputService").TouchStarted:Connect(function()
+                    local UIS = game:GetService("UserInputService")
+
+                    local _touchConn = UIS.TouchStarted:Connect(function()
                         if _mobileThrowState == "holding" and not _touchFired then
                             _touchFired = true
                             pcall(function() _touchSignal:Fire() end)
                         end
                     end)
-                    -- Tambien aceptar MouseButton1 (para tests en PC/emulador)
-                    local _clickConn = game:GetService("UserInputService").InputBegan:Connect(function(inp)
+                    -- Aceptar MouseButton1 tambien (para tests en PC/emulador)
+                    local _clickConn = UIS.InputBegan:Connect(function(inp)
                         if inp.UserInputType == Enum.UserInputType.MouseButton1 then
                             if _mobileThrowState == "holding" and not _touchFired then
                                 _touchFired = true
@@ -49486,54 +49495,54 @@ function CreateCombatTab()
                         end
                     end)
 
-                    -- Timeout de seguridad: si el jugador no toca en 8s, abortar
-                    local _timeoutConn
-                    _timeoutConn = task.delay(8, function()
+                    -- Timeout de seguridad: 8s sin touch -> abortar
+                    task.delay(8, function()
                         if _mobileThrowState == "holding" and not _touchFired then
                             _touchFired = true
                             pcall(function() _touchSignal:Fire() end)
                         end
                     end)
 
-                    -- Bloquear hasta que llegue el touch (o timeout)
                     pcall(function() _touchSignal.Event:Wait() end)
-
-                    -- Limpiar conexiones del touch
                     pcall(function() _touchConn:Disconnect() end)
                     pcall(function() _clickConn:Disconnect() end)
                     pcall(function() _touchSignal:Destroy() end)
 
-                    -- Guard: si el estado cambio mientras esperabamos (murio, cancelo)
+                    -- Guard: murio o cancelo mientras esperaba el touch
                     if _mobileThrowState ~= "holding" then
                         _killAllThrowAnims(); return
                     end
 
                     -- ----------------------------------------------------------------
                     -- FASE 3: ThrowKnife (fadeTime = 0.5975) + FireServer
+                    -- ThrowKnife baja el brazo. _ksaOnThrowingKnifeAdded mata todo
+                    -- en cuanto el servidor confirma el lanzamiento.
                     -- ----------------------------------------------------------------
-                    _mobileThrowState = "idle"
-                    local _now3 = os.clock()
-                    _lastMobileSAThrow = _now3
-                    KnifeSAState._lastMobileThrowTime = _now3
+                    _mobileThrowState = "throwing"
 
-                    -- Detener ThrowHold antes de arrancar ThrowKnife
+                    -- Detener ThrowHold limpiamente
                     if holdTrack then
                         pcall(function() holdTrack.Looped = false end)
                         pcall(function() holdTrack:Stop(0) end)
                     end
                     _activeHoldTrack = nil
 
-                    -- Reproducir ThrowKnife
+                    -- Marcar timestamps antes del FireServer
+                    local _now3 = os.clock()
+                    _lastMobileSAThrow = _now3
+                    KnifeSAState._lastMobileThrowTime = _now3
+
+                    -- Reproducir ThrowKnife (baja el brazo)
                     local knifeTrack = _loadFreshTrack("ThrowKnife")
                     _activeKnifeTrack = knifeTrack
                     if knifeTrack then pcall(function() knifeTrack:Play(0.5975) end) end
 
-                    -- FireServer (las anims seran matadas por _ksaOnThrowingKnifeAdded
-                    -- en cuanto ThrowingKnife aparezca en workspace)
-                    local myChar3        = LocalPlayer.Character
-                    local myHRP3         = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
-                    local freshKnife     = myChar3 and myChar3:FindFirstChild("Knife")
-                    local freshEvents    = freshKnife and (freshKnife:FindFirstChild("Events") or freshKnife)
+                    -- FireServer — el servidor lanza el knife y ThrowingKnife aparece
+                    -- en workspace, lo que dispara _ksaOnThrowingKnifeAdded que mata todo
+                    local myChar3          = LocalPlayer.Character
+                    local myHRP3           = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
+                    local freshKnife       = myChar3 and myChar3:FindFirstChild("Knife")
+                    local freshEvents      = freshKnife and (freshKnife:FindFirstChild("Events") or freshKnife)
                     local freshKnifeThrown = freshEvents and (
                         freshEvents:FindFirstChild("KnifeThrown")
                         or freshKnife:FindFirstChildWhichIsA("RemoteEvent")
@@ -49567,7 +49576,12 @@ function CreateCombatTab()
                     local handle = handleLink.Value
                     if not handle:IsDescendantOf(myChar) then return end
 
-                    -- ThrowingKnife detectado: matar las 3 animaciones activas inmediatamente
+                    -- ThrowingKnife del jugador detectado en workspace:
+                    -- matar las 3 animaciones activas y volver a idle
+                    -- (aplica en estado "throwing"; en "idle" con cooldown, ignorar re-triggers)
+                    if _mobileThrowState == "idle" then
+                        if os.clock() - _lastMobileSAThrow < 2.0 then return end
+                    end
                     _killAllThrowAnims()
                     _mobileThrowState = "idle"
                     _lastMobileSAThrow = os.clock()
