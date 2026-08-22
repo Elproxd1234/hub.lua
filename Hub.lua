@@ -49555,31 +49555,26 @@ function CreateCombatTab()
                     end
                 end
 
-                -- Helper: esperar que un AnimationTrack termine (evento Stopped + timeout)
-                -- FIX: esperar a que el track este realmente reproduciendose ANTES de
-                -- conectar el listener de Stopped. Sin esto, el Stop(0) que hace
-                -- _playKnifeAnim para resetear el track puede emitir Stopped de forma
-                -- diferida y disparar done=true antes de que la animacion siquiera empiece.
+                -- Helper: esperar que un AnimationTrack termine.
+                -- FIX DEFINITIVO: NO usar track.Stopped porque _playKnifeAnim hace
+                -- Stop(0)+Play() y el evento Stopped del Stop anterior puede llegar
+                -- despues de que Play() inicio, causando que la espera termine antes
+                -- de que ThrowCharge realmente termine.
+                -- En cambio: esperar IsPlaying=true, leer Length, esperar esa duracion.
                 local function _waitTrackStopped(track, extraTimeout)
                     if not track then return end
-                    -- Esperar hasta 0.2s a que el track empiece a reproducirse
+                    -- Esperar hasta 0.3s a que el track empiece a reproducirse
                     local t_start = os.clock()
-                    repeat task.wait(0.016) until track.IsPlaying or (os.clock() - t_start > 0.2)
-                    if not track.IsPlaying then return end  -- nunca empezo, nada que esperar
+                    repeat task.wait(0.016) until track.IsPlaying or (os.clock() - t_start > 0.3)
+                    if not track.IsPlaying then return end  -- nunca empezo
                     local len = track.Length or 0
                     if len < 0.05 then return end
-                    local done = false
-                    local _c
-                    _c = track.Stopped:Connect(function()
-                        done = true
-                        if _c then _c:Disconnect(); _c = nil end
-                    end)
-                    task.delay(len + (extraTimeout or 0.3), function()
-                        done = true
-                        if _c then _c:Disconnect(); _c = nil end
-                    end)
-                    local t0 = os.clock()
-                    repeat task.wait(0.016) until done or (os.clock() - t0 > len + 0.6)
+                    -- Esperar la duracion real de la animacion + margen
+                    task.wait(len + (extraTimeout or 0.1))
+                    -- Si por algun motivo todavia esta playing, esperar un poco mas
+                    if track.IsPlaying then
+                        task.wait(0.2)
+                    end
                 end
 
                 -- ----------------------------------------------------------------
