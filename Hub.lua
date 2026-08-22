@@ -49413,61 +49413,72 @@ function CreateCombatTab()
                     end
                     KnifeSAState._lastThrowHoldTrackName = nil
 
-                    -- ----------------------------------------------------------------
-                    -- Helper: cargar ThrowKnife desde KnifeClient SIN tocar Disabled.
-                    -- KnifeClient.Disabled no impide FindFirstChild ni LoadAnimation.
-                    -- ----------------------------------------------------------------
-                    local function _loadKnifeClientTrack(animName)
-                        local char2  = LocalPlayer.Character
-                        local hum2   = char2 and char2:FindFirstChildOfClass("Humanoid")
-                        local animr2 = hum2 and hum2:FindFirstChildOfClass("Animator")
-                        if not animr2 then return nil end
-                        local freshKnife2 = char2:FindFirstChild("Knife") or char2:FindFirstChildOfClass("Tool")
-                        local kc2    = freshKnife2 and freshKnife2:FindFirstChild("KnifeClient")
-                        local animObj = (kc2 and kc2:FindFirstChild(animName, true))
-                            or (freshKnife2 and freshKnife2:FindFirstChild(animName, true))
-                        if not animObj or not animObj:IsA("Animation") then return nil end
-                        local ok, track = pcall(function() return animr2:LoadAnimation(animObj) end)
-                        if not ok or not track then return nil end
-                        track.Priority = Enum.AnimationPriority.Action
-                        return track
+                    -- ================================================================
+                    -- FLUJO IDENTICO A PC (RMB):
+                    --   FASE 1: ThrowCharge  -> esperar evento Stopped (igual que PC)
+                    --   FASE 2: ThrowKnife   -> reproducir (igual que PC)
+                    --   FASE 3: FireServer
+                    -- Usamos KnifeSAState._playThrowAnim / _playThrowKnifeAnim
+                    -- que son las mismas funciones que usa el sistema de PC.
+                    -- ================================================================
+                    _mobileThrowState = "charging"
+
+                    -- FASE 1: ThrowCharge (igual que task.spawn(_playThrowAnim) en PC)
+                    if KnifeSAState._playThrowAnim then
+                        pcall(KnifeSAState._playThrowAnim)
                     end
 
-                    -- ----------------------------------------------------------------
-                    -- LANZAMIENTO: reproducir ThrowKnife y disparar FireServer.
-                    -- NO usamos animacion de carga (ThrowCharge custom) porque:
-                    --   - Su duracion variable causaba que el lanzamiento se "vea completo"
-                    --     antes del FireServer, confundiendo al jugador.
-                    --   - El servidor valida ThrowKnife, no ThrowCharge.
-                    -- Flujo: ThrowKnife -> wait(0.05) -> FireServer -> idle en 1.2s
-                    -- ----------------------------------------------------------------
-                    _mobileThrowState = "throwing"
-
-                    local _now = os.clock()
-                    _lastMobileSAThrow                = _now
-                    KnifeSAState._lastMobileThrowTime = _now
-
-                    -- Reproducir ThrowKnife del KnifeClient (lo que el servidor valida)
-                    local throwKnifeTrack = _loadKnifeClientTrack("ThrowKnife")
-                    _activeKnifeTrack = throwKnifeTrack
-                    if throwKnifeTrack then
-                        pcall(function()
-                            if throwKnifeTrack.IsPlaying then throwKnifeTrack:Stop(0) end
-                            throwKnifeTrack:Play(0.05)
-                        end)
+                    -- Esperar que ThrowCharge termine — misma logica que el RMB de PC:
+                    --   conectar t.Stopped, hacer loop con maxWait como backstop.
+                    local animFinished = false
+                    local maxWait = 0.8  -- backstop igual que PC (len + 0.05, minimo 0.8)
+                    pcall(function()
+                        local animator = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                            and myChar:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
+                        if not animator then return end
+                        task.wait(0.016)  -- un frame para que el track arranque
+                        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                            local n = (t.Name or ""):lower()
+                            if n:find("throw") or n:find("charge") or n:find("knife") then
+                                local conn_anim
+                                conn_anim = t.Stopped:Connect(function()
+                                    animFinished = true
+                                    if conn_anim then conn_anim:Disconnect() end
+                                end)
+                                local len = t.Length or 0
+                                if len > 0.05 then maxWait = len + 0.05 end
+                                _activeChargeTrack = t
+                                break
+                            end
+                        end
+                    end)
+                    local t0 = os.clock()
+                    while not animFinished and (os.clock() - t0) < maxWait do
+                        task.wait()
                     end
 
-                    -- Espera minima para que el servidor registre la animacion
-                    task.wait(0.05)
-
-                    -- Guard post-yield: murio durante la espera
+                    -- Guard post-charge: murio o SA desactivado
                     do
                         local _c = LocalPlayer.Character
                         local _h = _c and _c:FindFirstChildOfClass("Humanoid")
                         if not _h or _h.Health <= 0 then _abortThrow(); return end
                     end
 
-                    -- Resolver knife/remote frescos del character actual
+                    -- FASE 2: ThrowKnife (igual que _waitThrowHold -> _playKnifeAnim("ThrowKnife") en PC)
+                    _mobileThrowState = "throwing"
+                    if KnifeSAState._playThrowKnifeAnim then
+                        pcall(KnifeSAState._playThrowKnifeAnim)
+                    end
+
+                    -- Espera minima para que el servidor registre la animacion (igual que PC: task.wait() tras _waitThrowHold)
+                    task.wait(0.05)
+
+                    -- FASE 3: FireServer
+                    local _now = os.clock()
+                    _lastMobileSAThrow                = _now
+                    KnifeSAState._lastMobileThrowTime = _now
+
+                    -- Resolver knife/remote frescos
                     local myChar3 = LocalPlayer.Character
                     local myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
                     if not myHRP3 then
@@ -49495,8 +49506,8 @@ function CreateCombatTab()
 
                     _ksaFireKnife(resolvedKT, resolvedTR, hcf, tcf)
 
-                    -- Reset garantizado: si _ksaOnThrowingKnifeAdded no llega en 1.2s, liberar igual
-                    task.delay(1.2, function()
+                    -- Reset garantizado: si _ksaOnThrowingKnifeAdded no llega en 1.5s, liberar igual
+                    task.delay(1.5, function()
                         if _mobileThrowState == "throwing" then
                             _killAllThrowAnims()
                             _mobileThrowState  = "idle"
