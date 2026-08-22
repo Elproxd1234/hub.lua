@@ -49494,6 +49494,82 @@ function CreateCombatTab()
                 -- por eso el approach anterior falla. Este metodo es 100% confiable:
                 -- cuando el juego crea un ThrowingKnife en workspace, confirmamos via
                 -- HandleLink.Value que pertenece al local player y ejecutamos SA.
+                -- ----------------------------------------------------------------
+                -- MOBILE THROW DELAY v1
+                -- Espera a que la animacion ThrowHold este reproduciendose antes
+                -- de ejecutar _ksaDoThrow. Esto hace que el lanzamiento ocurra
+                -- cuando el personaje tiene el brazo parado (ThrowHold), igual
+                -- que en desktop donde el jugador mantiene RMB y suelta.
+                -- ----------------------------------------------------------------
+                local _mobileThrowHoldPending = false
+
+                local function _mobileWaitForThrowHold(callback)
+                    -- Si el knife no tiene ThrowHold, ejecutar callback inmediatamente
+                    local knifeChar = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Knife")
+                    local kc = knifeChar and knifeChar:FindFirstChild("KnifeClient")
+                    local holdAnimObj = kc and kc:FindFirstChild("ThrowHold")
+                    if not holdAnimObj then
+                        -- No hay ThrowHold en este knife: delay minimo de seguridad (0.25s)
+                        task.delay(0.25, callback)
+                        return
+                    end
+
+                    -- Esperar a que ThrowHold empiece a reproducirse (max 1.5s)
+                    -- ThrowHold se activa DESPUES de ThrowCharge, cuando el brazo queda parado
+                    local _started = false
+                    local _t0 = os.clock()
+                    task.spawn(function()
+                        -- Buscar el Animator del personaje
+                        local animator = nil
+                        pcall(function()
+                            local myChar = LocalPlayer.Character
+                            local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                            animator = hum and hum:FindFirstChildOfClass("Animator")
+                        end)
+
+                        -- Esperar hasta que ThrowHold este en los tracks activos
+                        local holdTrack = nil
+                        repeat
+                            task.wait(0.05)
+                            if animator then
+                                pcall(function()
+                                    for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                                        if t.Name:lower():find("hold") then
+                                            holdTrack = t
+                                            _started = true
+                                            break
+                                        end
+                                    end
+                                end)
+                            end
+                        until _started or (os.clock() - _t0 > 1.5)
+
+                        if holdTrack then
+                            -- ThrowHold esta activo: esperar que termine (o timeout)
+                            local holdDone = false
+                            local _hconn
+                            pcall(function()
+                                _hconn = holdTrack.Stopped:Connect(function()
+                                    holdDone = true
+                                    if _hconn then _hconn:Disconnect(); _hconn = nil end
+                                end)
+                                local len = holdTrack.Length or 0
+                                task.delay(math.max(len + 0.2, 0.5), function()
+                                    holdDone = true
+                                    if _hconn then _hconn:Disconnect(); _hconn = nil end
+                                end)
+                            end)
+                            local _t1 = os.clock()
+                            repeat task.wait(0.016) until holdDone or (os.clock() - _t1 > 2.0)
+                        else
+                            -- ThrowHold no se detecto: delay de seguridad
+                            task.wait(0.3)
+                        end
+
+                        callback()
+                    end)
+                end
+
                 local _lastMobileSAThrow = -999
                 local function _ksaOnThrowingKnifeAdded(obj)
                     if not KnifeSAState.enabled then return end
@@ -49517,8 +49593,12 @@ function CreateCombatTab()
                     local now = os.clock()
                     if now - _lastMobileSAThrow < 0.35 then return end
                     _lastMobileSAThrow = now
-                    -- Redirigir con SA
-                    task.spawn(_ksaDoThrow)
+                    -- MOBILE THROW DELAY: esperar ThrowHold antes de redirigir con SA
+                    -- Esto hace que el knife se lance cuando el brazo esta parado (ThrowHold)
+                    -- en vez de lanzarse inmediatamente al tocar el boton
+                    _mobileWaitForThrowHold(function()
+                        task.spawn(_ksaDoThrow)
+                    end)
                 end
 
                 -- Hookear workspace.ChildAdded para detectar ThrowingKnife del local player
@@ -49555,7 +49635,12 @@ function CreateCombatTab()
                         pcall(function()
                             local c = obj.Activated:Connect(function()
                                 if not KnifeSAState.enabled then return end
-                                task.spawn(_ksaDoThrow)
+                                -- MOBILE THROW DELAY: esperar ThrowHold antes de lanzar
+                                -- El juego reproducira ThrowCharge -> ThrowHold al tocar el boton;
+                                -- solo lanzamos cuando el brazo queda parado (ThrowHold activo/terminado)
+                                _mobileWaitForThrowHold(function()
+                                    task.spawn(_ksaDoThrow)
+                                end)
                             end)
                             table.insert(KnifeSAState._mobileConns, c)
                             hookedActivated = true
@@ -49569,7 +49654,10 @@ function CreateCombatTab()
                                 local now = os.clock()
                                 if now - _lastMobileSAThrow < 0.35 then return end
                                 _lastMobileSAThrow = now
-                                task.spawn(_ksaDoThrow)
+                                -- MOBILE THROW DELAY: esperar ThrowHold antes de lanzar
+                                _mobileWaitForThrowHold(function()
+                                    task.spawn(_ksaDoThrow)
+                                end)
                             end)
                             table.insert(KnifeSAState._mobileConns, c)
                         end)
