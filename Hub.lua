@@ -6673,8 +6673,15 @@ function _KnifeSA_setupKnife(knife)
     end
 
     KnifeSAState._playThrowHoldAnim = function()
-        -- Sin ThrowHold real: fase 2 es solo delay visual en _ksaDoThrow
-        KnifeSAState._lastThrowHoldTrackName = nil
+        -- CORRECCION: reproducir ThrowHold si existe en KnifeClient.
+        -- Si no existe, solo limpiar la variable de estado (no-op visual aceptable).
+        local holdTrack = _loadTrack("ThrowHold")
+        if holdTrack then
+            pcall(function() holdTrack:Play(0.05); holdTrack:AdjustSpeed(1.0) end)
+            KnifeSAState._lastThrowHoldTrackName = "ThrowHold"
+        else
+            KnifeSAState._lastThrowHoldTrackName = nil
+        end
     end
 
     KnifeSAState._playThrowKnifeAnim = function()
@@ -6689,16 +6696,26 @@ function _KnifeSA_setupKnife(knife)
     KnifeSAState._lastThrowTrackName     = nil
     KnifeSAState._lastThrowHoldTrackName = nil
 
-    -- Desktop path: ThrowCharge + espera + ThrowKnife
+    -- Desktop path: ThrowHold (si existe) + ThrowKnife
+    -- CORRECCION: esta funcion se llama DESPUES de que ThrowCharge ya termino.
+    -- No debe reproducir ThrowCharge de nuevo. Solo reproduce ThrowHold (si existe
+    -- como objeto Animation en KnifeClient) y luego ThrowKnife.
+    -- Si ThrowHold no existe en el KnifeClient, reproduce ThrowKnife directamente.
     KnifeSAState._waitThrowHold = function()
-        local track = _playKnifeAnim("ThrowCharge")
-        KnifeSAState._lastThrowTrackName = track and "ThrowCharge" or nil
-        if track then
+        -- Intentar reproducir ThrowHold si existe en KnifeClient
+        local holdTrack = _loadTrack("ThrowHold")
+        if holdTrack then
+            pcall(function() holdTrack:Play(0.05); holdTrack:AdjustSpeed(1.0) end)
+            KnifeSAState._lastThrowHoldTrackName = "ThrowHold"
+            -- Esperar que ThrowHold termine (con timeout de seguridad)
             local t0 = os.clock()
-            repeat task.wait(0.033) until (track.IsPlaying and (track.Length or 0) > 0.05)
+            repeat task.wait(0.033) until (holdTrack.IsPlaying and (holdTrack.Length or 0) > 0.05)
                 or (os.clock() - t0 > 0.5)
-            local len = track.Length or 0
-            task.wait(len > 0.05 and len or 0.8)
+            local len = holdTrack.Length or 0
+            task.wait(len > 0.05 and len or 0.5)
+        else
+            -- ThrowHold no existe en este knife: pausa breve para que se vea natural
+            task.wait(0.15)
         end
         _playKnifeAnim("ThrowKnife")
     end
@@ -6863,7 +6880,9 @@ function _KnifeSA_setupKnife(knife)
                     task.wait(0.016)
                     for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
                         local n = t.Name:lower()
-                        if n:find("throw") or n:find("charge") or n:find("knife") then
+                        -- FIX: buscar especificamente ThrowCharge, no "throw" o "knife" generico
+                        -- para no matchear ThrowKnife o ThrowHold que se carguen en paralelo.
+                        if n == "throwcharge" or n == "throw_charge" or n == "charge" then
                             local conn_anim
                             conn_anim = t.Stopped:Connect(function()
                                 animFinished = true
@@ -6883,7 +6902,9 @@ function _KnifeSA_setupKnife(knife)
                     task.wait()
                 end
 
-                -- NUEVO: reproducir ThrowHold despues de ThrowCharge y antes de lanzar
+                -- ThrowHold: reproducir entre ThrowCharge y ThrowKnife.
+                -- _waitThrowHold ya NO reproduce ThrowCharge de nuevo (fix aplicado).
+                -- Solo reproduce ThrowHold (si existe) y luego ThrowKnife.
                 if KnifeSAState._waitThrowHold then
                     pcall(KnifeSAState._waitThrowHold)
                 end
@@ -49439,7 +49460,9 @@ function CreateCombatTab()
                         task.wait(0.016)  -- un frame para que el track arranque
                         for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
                             local n = (t.Name or ""):lower()
-                            if n:find("throw") or n:find("charge") or n:find("knife") then
+                            -- FIX: buscar especificamente ThrowCharge para no matchear
+                            -- ThrowKnife o ThrowHold que pueden estar precargados.
+                            if n == "throwcharge" or n == "throw_charge" or n == "charge" then
                                 local conn_anim
                                 conn_anim = t.Stopped:Connect(function()
                                     animFinished = true
@@ -49464,13 +49487,51 @@ function CreateCombatTab()
                         if not _h or _h.Health <= 0 then _abortThrow(); return end
                     end
 
-                    -- FASE 2: ThrowKnife (igual que _waitThrowHold -> _playKnifeAnim("ThrowKnife") en PC)
+                    -- FASE 2: ThrowHold — brazo en posicion de lanzamiento, espera tap
+                    _mobileThrowState = "holding"
+                    if KnifeSAState._playThrowHoldAnim then
+                        pcall(KnifeSAState._playThrowHoldAnim)
+                    end
+
+                    -- Esperar tap del jugador en pantalla para confirmar el lanzamiento.
+                    -- _mobileTouchRelease se llama desde el hook de TouchTap/Activated de la pantalla.
+                    -- Timeout de seguridad: 4 segundos maximo en "holding" para no quedar bloqueado.
+                    local _tapConfirmed = false
+                    _mobileTouchRelease = function()
+                        _tapConfirmed = true
+                    end
+                    local _holdStart = os.clock()
+                    local HOLD_TIMEOUT = 4.0
+                    while not _tapConfirmed and _mobileThrowState == "holding" do
+                        -- Guard: murio o SA desactivado durante la espera
+                        local _hc = LocalPlayer.Character
+                        local _hh = _hc and _hc:FindFirstChildOfClass("Humanoid")
+                        if not _hh or _hh.Health <= 0 then
+                            _mobileTouchRelease = nil
+                            _abortThrow(); return
+                        end
+                        if os.clock() - _holdStart > HOLD_TIMEOUT then
+                            -- Timeout: lanzar automaticamente para no bloquear al jugador
+                            break
+                        end
+                        task.wait(0.033)
+                    end
+                    _mobileTouchRelease = nil
+
+                    -- Guard post-hold: murio durante la espera
+                    do
+                        local _c = LocalPlayer.Character
+                        local _h = _c and _c:FindFirstChildOfClass("Humanoid")
+                        if not _h or _h.Health <= 0 then _abortThrow(); return end
+                    end
+
+                    -- FASE 3: ThrowKnife — animacion de lanzamiento
                     _mobileThrowState = "throwing"
                     if KnifeSAState._playThrowKnifeAnim then
                         pcall(KnifeSAState._playThrowKnifeAnim)
                     end
 
-                    -- Espera minima para que el servidor registre la animacion (igual que PC: task.wait() tras _waitThrowHold)
+                    -- Espera minima para sincronizar ThrowKnife con el servidor
                     task.wait(0.05)
 
                     -- FASE 3: FireServer
@@ -49561,6 +49622,35 @@ function CreateCombatTab()
                     task.spawn(_ksaOnThrowingKnifeAdded, obj)
                 end)
                 table.insert(KnifeSAState._mobileConns, wsConn)
+
+                -- ================================================================
+                -- HOOK DE CONFIRMACION DE LANZAMIENTO (FASE "holding")
+                -- Cuando el jugador toca la pantalla mientras esta en estado "holding",
+                -- se llama _mobileTouchRelease para confirmar el lanzamiento.
+                -- Este hook usa TouchTap (gesto rapido en pantalla) y tambien
+                -- UserInputService.InputBegan con Touch para mayor compatibilidad.
+                -- IMPORTANTE: se filtra gameProcessed=true para evitar que toques
+                -- sobre la UI (botones del hub, etc.) confirmen el lanzamiento.
+                -- ================================================================
+                local tapConn = UserInputService.TouchTap:Connect(function(positions, gameProcessed)
+                    if gameProcessed then return end
+                    if _mobileThrowState ~= "holding" then return end
+                    if type(_mobileTouchRelease) == "function" then
+                        _mobileTouchRelease()
+                    end
+                end)
+                table.insert(KnifeSAState._mobileConns, tapConn)
+
+                -- Respaldo via InputBegan Touch para executors que no exponen TouchTap correctamente
+                local inputTapConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                    if gameProcessed then return end
+                    if input.UserInputType ~= Enum.UserInputType.Touch then return end
+                    if _mobileThrowState ~= "holding" then return end
+                    if type(_mobileTouchRelease) == "function" then
+                        _mobileTouchRelease()
+                    end
+                end)
+                table.insert(KnifeSAState._mobileConns, inputTapConn)
 
                 -- SEGUNDA VIA: hookear el boton "throwig" (y variantes) como respaldo.
                 -- Acepta cualquier GuiObject (Frame, ImageLabel, etc.), no solo GuiButton.
