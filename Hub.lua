@@ -6788,9 +6788,11 @@ function _KnifeSA_setupKnife(knife)
     end
     KnifeSAState._playThrowHoldAnim = _playThrowHoldAnim
 
-    -- Helper: reproduce ThrowHold y lo detiene cuando el juego detecta el lanzamiento
-    -- FIX: antes esperaba el evento Stopped del track (que nunca llega en anims en loop).
-    -- Ahora detecta el throw real via ThrowingKnife en workspace + OnClientEvent del remote.
+    -- Helper: reproduce ThrowHold y lo detiene cuando el juego detecta el lanzamiento.
+    -- FIX v3: ThrowHold es Looped=true en el asset de MM2. Despues de Stop(0) el Animator
+    -- lo puede reanudar cuando ThrowKnife termina. Solucion: Stop(0) + Looped=false + invalidar
+    -- cache del track para que no pueda ser reanudado, luego reproducir ThrowKnife y hacer
+    -- un segundo Stop de ThrowHold justo cuando ThrowKnife finaliza.
     local function _waitThrowHold()
         if not _animObjs["ThrowHold"] then return end  -- no existe, salir rapido
         local played = _playThrowHoldAnim()
@@ -6803,7 +6805,7 @@ function _KnifeSA_setupKnife(knife)
         local throwDetected = false
         local _conns = {}
 
-        -- DETECCION 1: ThrowingKnife aparece en workspace = el juego lanzo el knife
+        -- DETECCION 1: ThrowingKnife aparece en workspace = el juego ejecuto el lanzamiento
         local _wsConn = game:GetService("Workspace").ChildAdded:Connect(function(child)
             if child.Name == "ThrowingKnife" then
                 throwDetected = true
@@ -6811,7 +6813,7 @@ function _KnifeSA_setupKnife(knife)
         end)
         table.insert(_conns, _wsConn)
 
-        -- DETECCION 2: KnifeThrown remote se activa en el cliente (backup)
+        -- DETECCION 2: OnClientEvent de KnifeThrown (backup por latencia de workspace)
         pcall(function()
             local knifeEvents = knife:FindFirstChild("Events") or knife
             local knifeRemote = knifeEvents:FindFirstChild("KnifeThrown")
@@ -6831,14 +6833,91 @@ function _KnifeSA_setupKnife(knife)
             task.wait(0.016)
         until throwDetected or (os.clock() - _t0 > _timeout)
 
-        -- Limpiar conexiones
+        -- Limpiar conexiones de deteccion
         for _, c in ipairs(_conns) do
             pcall(function() c:Disconnect() end)
         end
 
-        -- Detener ThrowHold limpiamente al detectar el lanzamiento
-        if holdTrack and holdTrack.IsPlaying then
-            pcall(function() holdTrack:Stop(0.05) end)
+        -- FIX v3 BRAZO: el asset ThrowHold de MM2 tiene Looped=true.
+        -- Al hacer Stop el Animator lo puede reanudar cuando otra anim termina.
+        -- Solucion en 3 pasos:
+        -- 1) Looped=false para que el motor no lo reactive automaticamente
+        -- 2) Stop(0) inmediato
+        -- 3) Invalidar el cache (_animTracks["ThrowHold"] = nil) para que
+        --    _playKnifeAnim tenga que recargar el track desde cero si se llama de nuevo
+        pcall(function()
+            holdTrack.Looped = false
+        end)
+        pcall(function()
+            if holdTrack.IsPlaying then holdTrack:Stop(0) end
+        end)
+        -- Invalidar cache: fuerza recarga en el proximo uso (evita reanudacion implicita)
+        _animTracks["ThrowHold"] = nil
+        KnifeSAState._lastThrowHoldTrackName = nil
+
+        -- Reproducir ThrowKnife con fadeIn (0.25s) para interpolar brazo hacia abajo
+        local throwKnifeTrack = _animTracks["ThrowKnife"]
+        if not throwKnifeTrack and _animObjs["ThrowKnife"] then
+            -- Cargar track si no estaba cacheado
+            pcall(function()
+                local animator = _getAnimator()
+                if not animator then return end
+                local tk = animator:LoadAnimation(_animObjs["ThrowKnife"])
+                if tk then
+                    tk.Name     = "ThrowKnife"
+                    tk.Priority = Enum.AnimationPriority.Action
+                    tk.Looped   = false  -- nunca debe loopear
+                    _animTracks["ThrowKnife"] = tk
+                    throwKnifeTrack = tk
+                end
+            end)
+        end
+
+        if throwKnifeTrack then
+            pcall(function()
+                if throwKnifeTrack.IsPlaying then throwKnifeTrack:Stop(0) end
+                throwKnifeTrack.Looped = false
+                throwKnifeTrack:Play(0.25)
+                throwKnifeTrack:AdjustSpeed(1.0)
+            end)
+            -- Cuando ThrowKnife termine: hacer un segundo Stop de ThrowHold por si acaso
+            -- el Animator lo reanimod durante ThrowKnife (doble seguro)
+            task.spawn(function()
+                task.wait()
+                local tkLen = throwKnifeTrack.Length or 0
+                if tkLen > 0.05 then
+                    task.wait(tkLen + 0.05)
+                end
+                -- Parar ThrowKnife limpiamente
+                if throwKnifeTrack.IsPlaying then
+                    pcall(function() throwKnifeTrack:Stop(0.15) end)
+                end
+                -- Segundo barrido: matar ThrowHold si de alguna manera volvio a aparecer
+                pcall(function()
+                    local animator = _getAnimator()
+                    if not animator then return end
+                    for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                        local n = (t.Name or ""):lower()
+                        if n == "throwhold" or n == "throw_hold" then
+                            t.Looped = false
+                            pcall(function() t:Stop(0) end)
+                        end
+                    end
+                end)
+            end)
+        else
+            -- Sin ThrowKnife: re-play instantaneo + fadeOut largo para blend hacia idle
+            pcall(function()
+                -- Recargar ThrowHold solo para hacer el fadeOut (ya invalidamos cache arriba)
+                local animator = _getAnimator()
+                if not animator and _animObjs["ThrowHold"] then return end
+                local th2 = animator:LoadAnimation(_animObjs["ThrowHold"])
+                if th2 then
+                    th2.Looped = false
+                    th2:Play(0)
+                    th2:Stop(0.35)  -- fadeOut largo: Roblox interpola hacia idle
+                end
+            end)
         end
     end
     KnifeSAState._waitThrowHold = _waitThrowHold
