@@ -49479,6 +49479,13 @@ function CreateCombatTab()
                         pcall(KnifeSAState._playThrowHoldAnim)
                     end
 
+                    -- Pequeno delay antes de escuchar el proximo touch,
+                    -- para evitar capturar el mismo tap que inicio el throw
+                    task.wait(0.15)
+
+                    -- Si durante ese delay el jugador murio o alguien cancelo, abortar
+                    if _mobileThrowState ~= "holding" then return end
+
                     -- Registrar una conexion one-shot de Touch para disparar la fase 3
                     -- Se cancela sola con timeout de 5s si el jugador no toca
                     local _releaseConn   = nil
@@ -49501,7 +49508,7 @@ function CreateCombatTab()
                         _doRelease()
                     end)
 
-                    -- Exponer funcion de release para que el watcher de ThrowingKnife pueda cancelar
+                    -- Exponer funcion de release para que el watcher de ThrowingKnife pueda usarla
                     _mobileTouchRelease = _doRelease
 
                     -- Esperar el touch del jugador (o timeout)
@@ -49641,21 +49648,17 @@ function CreateCombatTab()
                     local function _tryHookObj(obj)
                         if not obj then return end
                         -- Intentar Activated (GuiButton)
-                        local hookedActivated = false
                         pcall(function()
                             local c = obj.Activated:Connect(function()
                                 if not KnifeSAState.enabled then return end
-                                -- MOBILE THROW DELAY: esperar ThrowHold antes de lanzar
-                                -- El juego reproducira ThrowCharge -> ThrowHold al tocar el boton;
-                                -- solo lanzamos cuando el brazo queda parado (ThrowHold activo/terminado)
-                                _mobileWaitForThrowHold(function()
-                                    task.spawn(_ksaDoThrow)
-                                end)
+                                local now = os.clock()
+                                if now - _lastMobileSAThrow < 0.35 then return end
+                                _lastMobileSAThrow = now
+                                task.spawn(_ksaDoThrow)
                             end)
                             table.insert(KnifeSAState._mobileConns, c)
-                            hookedActivated = true
                         end)
-                        -- Siempre agregar InputBegan como respaldo (funciona en Frame/ImageLabel con Active=true)
+                        -- InputBegan como respaldo (Frame/ImageLabel con Active=true)
                         pcall(function()
                             local c = obj.InputBegan:Connect(function(inp)
                                 if inp.UserInputType ~= Enum.UserInputType.Touch
@@ -49664,10 +49667,7 @@ function CreateCombatTab()
                                 local now = os.clock()
                                 if now - _lastMobileSAThrow < 0.35 then return end
                                 _lastMobileSAThrow = now
-                                -- MOBILE THROW DELAY: esperar ThrowHold antes de lanzar
-                                _mobileWaitForThrowHold(function()
-                                    task.spawn(_ksaDoThrow)
-                                end)
+                                task.spawn(_ksaDoThrow)
                             end)
                             table.insert(KnifeSAState._mobileConns, c)
                         end)
