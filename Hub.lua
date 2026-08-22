@@ -6788,32 +6788,58 @@ function _KnifeSA_setupKnife(knife)
     end
     KnifeSAState._playThrowHoldAnim = _playThrowHoldAnim
 
-    -- Helper para esperar que ThrowHold termine (o timeout si no existe)
+    -- Helper: reproduce ThrowHold y lo detiene cuando el juego detecta el lanzamiento
+    -- FIX: antes esperaba el evento Stopped del track (que nunca llega en anims en loop).
+    -- Ahora detecta el throw real via ThrowingKnife en workspace + OnClientEvent del remote.
     local function _waitThrowHold()
         if not _animObjs["ThrowHold"] then return end  -- no existe, salir rapido
         local played = _playThrowHoldAnim()
         if not played then return end
-        -- Esperar que el track Stopped se dispare
-        local holdDone = false
-        pcall(function()
-            local holdName = KnifeSAState._lastThrowHoldTrackName
-            local holdTrack = holdName and _animTracks[holdName]
-            if not holdTrack then return end
-            task.wait()  -- frame para que Length se populate
-            local len = holdTrack.Length or 0
-            if len < 0.05 then return end
-            local _hconn
-            _hconn = holdTrack.Stopped:Connect(function()
-                holdDone = true
-                if _hconn then _hconn:Disconnect(); _hconn = nil end
-            end)
-            task.delay(len + 0.3, function()
-                holdDone = true
-                if _hconn then _hconn:Disconnect(); _hconn = nil end
-            end)
-            local _t0 = os.clock()
-            repeat task.wait(0.016) until holdDone or (os.clock() - _t0 > len + 0.5)
+
+        local holdName  = KnifeSAState._lastThrowHoldTrackName
+        local holdTrack = holdName and _animTracks[holdName]
+        if not holdTrack then return end
+
+        local throwDetected = false
+        local _conns = {}
+
+        -- DETECCION 1: ThrowingKnife aparece en workspace = el juego lanzo el knife
+        local _wsConn = game:GetService("Workspace").ChildAdded:Connect(function(child)
+            if child.Name == "ThrowingKnife" then
+                throwDetected = true
+            end
         end)
+        table.insert(_conns, _wsConn)
+
+        -- DETECCION 2: KnifeThrown remote se activa en el cliente (backup)
+        pcall(function()
+            local knifeEvents = knife:FindFirstChild("Events") or knife
+            local knifeRemote = knifeEvents:FindFirstChild("KnifeThrown")
+            if knifeRemote then
+                local _remConn = knifeRemote.OnClientEvent:Connect(function()
+                    throwDetected = true
+                end)
+                table.insert(_conns, _remConn)
+            end
+        end)
+
+        -- TIMEOUT de seguridad: maximo 3 segundos sosteniendo el knife
+        local _timeout = 3.0
+        local _t0 = os.clock()
+
+        repeat
+            task.wait(0.016)
+        until throwDetected or (os.clock() - _t0 > _timeout)
+
+        -- Limpiar conexiones
+        for _, c in ipairs(_conns) do
+            pcall(function() c:Disconnect() end)
+        end
+
+        -- Detener ThrowHold limpiamente al detectar el lanzamiento
+        if holdTrack and holdTrack.IsPlaying then
+            pcall(function() holdTrack:Stop(0.05) end)
+        end
     end
     KnifeSAState._waitThrowHold = _waitThrowHold
 
