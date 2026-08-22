@@ -49316,8 +49316,11 @@ function CreateCombatTab()
                 end
 
                 -- ----------------------------------------------------------------
-                -- FASE 1: el jugador toca el boton Throw del juego
-                -- Arranca ThrowCharge, luego pasa a ThrowHold y espera otro touch
+                -- _ksaDoThrow: secuencia completa de lanzamiento en mobile
+                --   FASE 1: Anim custom (rbxassetid://1957618848)  -> levanta brazo
+                --   FASE 2: Anim custom (rbxassetid://15478370930) -> frena brazo, espera touch
+                --   FASE 3: ThrowKnife del KnifeClient real        -> lanza + FireServer
+                -- El estado siempre vuelve a "idle" (timeout garantizado).
                 -- ----------------------------------------------------------------
                 local function _ksaDoThrow()
                     -- Guard: ya hay un throw en curso
@@ -49380,17 +49383,10 @@ function CreateCombatTab()
                     if not knifeThrown then _mobileThrowState = "idle"; return end
 
                     -- ================================================================
-                    -- SECUENCIA CELU (ANIMS PERSONALIZADAS):
-                    --   FASE 1: Anim1_Charge (rbxassetid://1957618848)       delay=0.0000s -> completa
-                    --   FASE 2: Anim2_Hold   (rbxassetid://15478370930)      delay=0.9865s -> looped, espera touch
-                    --   touch en pantalla -> Anim3_Throw (rbxassetid://112035104498952) delay=0.9997s + FireServer
-                    --   ThrowingKnife detectado en workspace -> mata las 3 anims y vuelve a idle
-                    -- ================================================================
-
                     -- Limpiar tracks stale del lanzamiento anterior
                     _killAllThrowAnims()
                     if KnifeSAState._animTracks then
-                        for _, _cn in ipairs({"Anim1_Charge","Anim2_Hold","Anim3_Throw","ThrowCharge","ThrowHold","ThrowKnife"}) do
+                        for _, _cn in ipairs({"ThrowCharge","ThrowHold","ThrowKnife"}) do
                             local _old = KnifeSAState._animTracks[_cn]
                             if _old then
                                 pcall(function() _old.Looped = false end)
@@ -49401,41 +49397,28 @@ function CreateCombatTab()
                     end
                     KnifeSAState._lastThrowHoldTrackName = nil
 
-                    -- ================================================================
-                    -- SECUENCIA DE ANIMACIONES PERSONALIZADAS CELULAR
-                    -- IDs y delays extraidos del log de ejecucion:
-                    --   Anim 1: rbxassetid://1957618848      delay=0.0000s (FASE 1 - charge)
-                    --   Anim 2: rbxassetid://15478370930     delay=0.9865s (FASE 2 - hold, looped)
-                    --   Anim 3: rbxassetid://112035104498952 delay=0.9997s (FASE 3 - throw + FireServer)
-                    -- ================================================================
-                    local _MOBILE_THROW_ANIMS = {
-                        { id = "rbxassetid://1957618848",      name = "Anim1_Charge" },
-                        { id = "rbxassetid://15478370930",     name = "Anim2_Hold"   },
-                        { id = "rbxassetid://112035104498952", name = "Anim3_Throw"  },
-                    }
-
-                    -- Carga un AnimationTrack fresco por ID directo (no depende de KnifeClient)
-                    local function _loadFreshTrack(animName)
+                    -- Helper: cargar anim por ID directo del animator del personaje
+                    local function _loadCustomTrack(animId)
                         local char  = LocalPlayer.Character
                         local animr = char and char:FindFirstChildOfClass("Humanoid")
                             and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
                         if not animr then return nil end
-                        -- Buscar en tabla de anims personalizadas primero
-                        for _, entry in ipairs(_MOBILE_THROW_ANIMS) do
-                            if entry.name == animName then
-                                local animObj = Instance.new("Animation")
-                                animObj.AnimationId = entry.id
-                                local ok, track = pcall(function() return animr:LoadAnimation(animObj) end)
-                                if ok and track then
-                                    track.Priority = Enum.AnimationPriority.Action
-                                    return track
-                                end
-                                return nil
-                            end
-                        end
-                        -- Fallback: buscar en KnifeClient por nombre legacy
-                        local kc      = knife:FindFirstChild("KnifeClient")
-                        local animObj = (kc and kc:FindFirstChild(animName))
+                        local animObj = Instance.new("Animation")
+                        animObj.AnimationId = animId
+                        local ok, track = pcall(function() return animr:LoadAnimation(animObj) end)
+                        if not ok or not track then return nil end
+                        track.Priority = Enum.AnimationPriority.Action
+                        return track
+                    end
+
+                    -- Helper: cargar anim por nombre desde KnifeClient (para ThrowKnife real)
+                    local function _loadKnifeClientTrack(animName)
+                        local char  = LocalPlayer.Character
+                        local animr = char and char:FindFirstChildOfClass("Humanoid")
+                            and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
+                        if not animr then return nil end
+                        local kc = knife:FindFirstChild("KnifeClient")
+                        local animObj = (kc and kc:FindFirstChild(animName, true))
                             or knife:FindFirstChild(animName, true)
                         if not animObj or not animObj:IsA("Animation") then return nil end
                         local ok, track = pcall(function() return animr:LoadAnimation(animObj) end)
@@ -49444,43 +49427,8 @@ function CreateCombatTab()
                         return track
                     end
 
-                    -- BUG FIX: bloquear cualquier anim de ThrowHold/ThrowCharge que el servidor
-                    -- replique al Animator mientras nuestra secuencia custom esta en curso.
-                    -- El bloqueador original solo filtra por nombre "throwhold"/"throw_hold";
-                    -- extendemos para que tambien bloquee durante la fase "charging"/"holding".
-                    local _serverAnimBlockConn = nil
-                    local function _startServerAnimBlock()
-                        local char  = LocalPlayer.Character
-                        local hum   = char and char:FindFirstChildOfClass("Humanoid")
-                        local animr = hum and hum:FindFirstChildOfClass("Animator")
-                        if not animr then return end
-                        if _serverAnimBlockConn then
-                            pcall(function() _serverAnimBlockConn:Disconnect() end)
-                        end
-                        _serverAnimBlockConn = animr.AnimationPlayed:Connect(function(track)
-                            -- Solo actuar mientras estamos en la secuencia de throw
-                            if _mobileThrowState ~= "charging" and _mobileThrowState ~= "holding" then return end
-                            local n = (track.Name or ""):lower()
-                            -- Bloquear anims del servidor que interfieren con nuestra secuencia
-                            if n:find("throwhold") or n:find("throw_hold") or n:find("throwcharge") or n:find("throw_charge") then
-                                task.defer(function()
-                                    if track and track.IsPlaying then
-                                        pcall(function() track.Looped = false end)
-                                        pcall(function() track:Stop(0) end)
-                                    end
-                                end)
-                            end
-                        end)
-                    end
-                    local function _stopServerAnimBlock()
-                        if _serverAnimBlockConn then
-                            pcall(function() _serverAnimBlockConn:Disconnect() end)
-                            _serverAnimBlockConn = nil
-                        end
-                    end
-
-                    -- Espera que un track recien disparado termine su duracion completa
-                    local function _waitFreshTrack(track, fallbackSecs)
+                    -- Helper: esperar que un track termine (con fallback)
+                    local function _waitTrack(track, fallbackSecs)
                         if not track then
                             if fallbackSecs and fallbackSecs > 0 then task.wait(fallbackSecs) end
                             return
@@ -49499,166 +49447,169 @@ function CreateCombatTab()
                         if track.IsPlaying then pcall(function() track:Stop(0) end) end
                     end
 
-                    -- ----------------------------------------------------------------
-                    -- FASE 1: Anim1_Charge (fadeTime=0, sin delay previo)
-                    -- rbxassetid://1957618848 — levanta el brazo
-                    -- ----------------------------------------------------------------
-                    _mobileThrowState = "charging"
-                    _startServerAnimBlock()  -- bloquear interferencia del servidor desde ya
-                    local chargeTrack = _loadFreshTrack("Anim1_Charge")
-                    _activeChargeTrack = chargeTrack
-                    if chargeTrack then pcall(function() chargeTrack:Play(0) end) end
-                    _waitFreshTrack(chargeTrack, 0.6)
-
-                    -- Guard: murio durante Anim1_Charge
-                    local myChar2 = LocalPlayer.Character
-                    local hum2    = myChar2 and myChar2:FindFirstChildOfClass("Humanoid")
-                    if not hum2 or hum2.Health <= 0 then
-                        _stopServerAnimBlock()
-                        _killAllThrowAnims()
-                        _mobileThrowState = "idle"; return
+                    -- Bloquear anims del servidor que interfieren durante charge/hold
+                    local _srvBlockConn = nil
+                    local function _startSrvBlock()
+                        local char  = LocalPlayer.Character
+                        local animr = char and char:FindFirstChildOfClass("Humanoid")
+                            and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
+                        if not animr then return end
+                        if _srvBlockConn then pcall(function() _srvBlockConn:Disconnect() end) end
+                        _srvBlockConn = animr.AnimationPlayed:Connect(function(t)
+                            if _mobileThrowState ~= "charging" and _mobileThrowState ~= "holding" then return end
+                            local n = (t.Name or ""):lower()
+                            if n:find("throwhold") or n:find("throw_hold")
+                            or n:find("throwcharge") or n:find("throw_charge") then
+                                task.defer(function()
+                                    if t and t.IsPlaying then
+                                        pcall(function() t.Looped = false end)
+                                        pcall(function() t:Stop(0) end)
+                                    end
+                                end)
+                            end
+                        end)
+                    end
+                    local function _stopSrvBlock()
+                        if _srvBlockConn then
+                            pcall(function() _srvBlockConn:Disconnect() end)
+                            _srvBlockConn = nil
+                        end
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 2: Anim2_Hold (fadeTime=0, Looped)
-                    -- rbxassetid://15478370930 — frena el brazo arriba, espera touch
-                    -- BUG FIX: fadeTime era 0.9865 -> causaba que el brazo BAJARA durante
-                    -- el blend de casi 1 segundo antes de llegar a la pose de hold.
-                    -- Ahora es 0 para snap instantaneo a la pose correcta.
+                    -- FASE 1: rbxassetid://1957618848 — levanta el brazo (fadeTime=0)
+                    -- ----------------------------------------------------------------
+                    _mobileThrowState = "charging"
+                    _startSrvBlock()
+                    local chargeTrack = _loadCustomTrack("rbxassetid://1957618848")
+                    _activeChargeTrack = chargeTrack
+                    if chargeTrack then pcall(function() chargeTrack:Play(0) end) end
+                    _waitTrack(chargeTrack, 0.6)
+
+                    -- Guard: murio durante FASE 1
+                    do
+                        local _c = LocalPlayer.Character
+                        local _h = _c and _c:FindFirstChildOfClass("Humanoid")
+                        if not _h or _h.Health <= 0 then
+                            _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
+                        end
+                    end
+
+                    -- ----------------------------------------------------------------
+                    -- FASE 2: rbxassetid://15478370930 — frena brazo, espera touch
+                    -- fadeTime=0 para snap inmediato (sin bajada visible del brazo)
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "holding"
-                    local holdTrack = _loadFreshTrack("Anim2_Hold")
+                    local holdTrack = _loadCustomTrack("rbxassetid://15478370930")
                     _activeHoldTrack = holdTrack
                     if holdTrack then
                         pcall(function() holdTrack.Looped = true end)
-                        pcall(function() holdTrack:Play(0) end)  -- fadeTime=0: snap inmediato, sin bajada de brazo
+                        pcall(function() holdTrack:Play(0) end)
                     end
 
-                    -- Esperar un frame para que el touch del boton Lanzar ya no este activo
-                    -- antes de conectar el listener del siguiente touch.
-                    task.wait(0.1)
+                    -- Esperar un frame para que el touch del boton Lanzar quede descartado
+                    task.wait(0.12)
 
-                    -- Guard: si murio o lo cancelaron mientras esperabamos ese frame
                     if _mobileThrowState ~= "holding" then
-                        _stopServerAnimBlock(); _killAllThrowAnims(); return
+                        _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
                     end
 
-                    -- Esperar NUEVO touch en pantalla (distinto al del boton Lanzar)
+                    -- Esperar NUEVO touch del jugador
                     local _touchFired  = false
                     local _touchSignal = Instance.new("BindableEvent")
-                    local UIS = game:GetService("UserInputService")
+                    local UIS2 = game:GetService("UserInputService")
 
-                    local _touchConn = UIS.TouchStarted:Connect(function()
+                    local _tc = UIS2.TouchStarted:Connect(function()
                         if _mobileThrowState == "holding" and not _touchFired then
-                            _touchFired = true
-                            pcall(function() _touchSignal:Fire() end)
+                            _touchFired = true; pcall(function() _touchSignal:Fire() end)
                         end
                     end)
-                    -- Aceptar MouseButton1 tambien (para tests en PC/emulador)
-                    local _clickConn = UIS.InputBegan:Connect(function(inp)
+                    local _cc = UIS2.InputBegan:Connect(function(inp)
                         if inp.UserInputType == Enum.UserInputType.MouseButton1 then
                             if _mobileThrowState == "holding" and not _touchFired then
-                                _touchFired = true
-                                pcall(function() _touchSignal:Fire() end)
+                                _touchFired = true; pcall(function() _touchSignal:Fire() end)
                             end
                         end
                     end)
-
-                    -- Timeout de seguridad: 8s sin touch -> abortar
+                    -- Timeout 8s
                     task.delay(8, function()
-                        if _mobileThrowState == "holding" and not _touchFired then
-                            _touchFired = true
-                            pcall(function() _touchSignal:Fire() end)
+                        if not _touchFired then
+                            _touchFired = true; pcall(function() _touchSignal:Fire() end)
                         end
                     end)
 
                     pcall(function() _touchSignal.Event:Wait() end)
-                    pcall(function() _touchConn:Disconnect() end)
-                    pcall(function() _clickConn:Disconnect() end)
+                    pcall(function() _tc:Disconnect() end)
+                    pcall(function() _cc:Disconnect() end)
                     pcall(function() _touchSignal:Destroy() end)
 
-                    -- Guard: murio o cancelo mientras esperaba el touch
                     if _mobileThrowState ~= "holding" then
-                        _stopServerAnimBlock(); _killAllThrowAnims(); return
+                        _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 3: Anim3_Throw (fadeTime=0.5975) + FireServer
-                    -- rbxassetid://112035104498952 — baja el brazo y lanza.
-                    -- _ksaOnThrowingKnifeAdded mata todo en cuanto el servidor confirma.
+                    -- FASE 3: ThrowKnife real del KnifeClient + FireServer
+                    -- Usar ThrowKnife del KnifeClient es OBLIGATORIO para que el servidor
+                    -- acepte el KnifeThrown:FireServer (valida que la animacion haya corrido).
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "throwing"
-                    _stopServerAnimBlock()  -- ya no necesitamos bloquear: estamos lanzando
+                    _stopSrvBlock()
 
-                    -- Detener Anim2_Hold limpiamente
                     if holdTrack then
                         pcall(function() holdTrack.Looped = false end)
                         pcall(function() holdTrack:Stop(0) end)
                     end
                     _activeHoldTrack = nil
 
-                    -- Marcar timestamps antes del FireServer
                     local _now3 = os.clock()
-                    _lastMobileSAThrow = _now3
+                    _lastMobileSAThrow    = _now3
                     KnifeSAState._lastMobileThrowTime = _now3
 
-                    -- Reproducir Anim3_Throw (baja el brazo y lanza)
-                    local knifeTrack = _loadFreshTrack("Anim3_Throw")
-                    _activeKnifeTrack = knifeTrack
-                    if knifeTrack then pcall(function() knifeTrack:Play(0.5975) end) end
+                    -- Reproducir ThrowKnife del KnifeClient real
+                    local throwKnifeTrack = _loadKnifeClientTrack("ThrowKnife")
+                    _activeKnifeTrack = throwKnifeTrack
+                    if throwKnifeTrack then
+                        pcall(function() throwKnifeTrack:Play(0.1) end)
+                    end
 
-                    -- BUG FIX FireServer: reconstruir todo desde cero en este frame exacto.
-                    -- El problema era que myHRP3 / freshKnife podian ser nil si el personaje
-                    -- habia sido recargado durante las FASES 1-2, haciendo que _ksaBuildCFrames
-                    -- devolviera nil y _ksaFireKnife fallara silenciosamente en todos los pcalls.
+                    -- Pequeña espera para que el servidor registre la animacion
+                    task.wait(0.05)
+
+                    -- Construir CFrames y disparar FireServer
                     local myChar3 = LocalPlayer.Character
                     local myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
-
-                    -- Si HRP no existe todavia, esperar hasta 0.3s (raro pero posible post-respawn)
                     if not myHRP3 then
-                        local _t_hrp = os.clock()
+                        local _t0hrp = os.clock()
                         repeat task.wait(0.016)
                             myChar3 = LocalPlayer.Character
                             myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
-                        until myHRP3 or (os.clock() - _t_hrp > 0.3)
+                        until myHRP3 or (os.clock() - _t0hrp > 0.3)
                     end
 
                     local freshKnife = myChar3 and (
-                        myChar3:FindFirstChild("Knife")
-                        or myChar3:FindFirstChildOfClass("Tool")
+                        myChar3:FindFirstChild("Knife") or myChar3:FindFirstChildOfClass("Tool")
                     )
-                    local freshEvents      = freshKnife and (freshKnife:FindFirstChild("Events") or freshKnife)
-                    local freshKnifeThrown = freshEvents and (
-                        freshEvents:FindFirstChild("KnifeThrown")
-                        or freshKnife:FindFirstChildWhichIsA("RemoteEvent")
+                    local freshEv          = freshKnife and (freshKnife:FindFirstChild("Events") or freshKnife)
+                    local freshKnifeThrown = freshEv and (
+                        freshEv:FindFirstChild("KnifeThrown") or freshKnife:FindFirstChildWhichIsA("RemoteEvent")
                     )
-                    local freshThrowRemote = freshEvents and freshEvents:FindFirstChild("Throw")
+                    local freshThrowRemote = freshEv and freshEv:FindFirstChild("Throw")
 
-                    -- Fallback: si el knife no esta en el char, usar el capturado al inicio de _ksaDoThrow
-                    local resolvedKnifeThrown = freshKnifeThrown or knifeThrown
-                    local resolvedThrowRemote = freshThrowRemote or throwRemote
+                    local resolvedKT = freshKnifeThrown or knifeThrown
+                    local resolvedTR = freshThrowRemote or throwRemote
+                    local hcf, tcf  = _ksaBuildCFrames(myHRP3)
 
-                    local finalHandleCF, finalTargetCF = _ksaBuildCFrames(myHRP3)
+                    _ksaFireKnife(resolvedKT, resolvedTR, hcf, tcf)
 
-                    -- Intentar FireServer; si falla, reintentar una vez tras 1 frame
-                    local _fired = false
-                    if resolvedKnifeThrown or resolvedThrowRemote then
-                        pcall(function()
-                            _ksaFireKnife(resolvedKnifeThrown, resolvedThrowRemote, finalHandleCF, finalTargetCF)
-                            _fired = true
-                        end)
-                    end
-                    if not _fired then
-                        task.wait(0.016)
-                        myChar3 = LocalPlayer.Character
-                        myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
-                        local rk  = myChar3 and (myChar3:FindFirstChild("Knife") or myChar3:FindFirstChildOfClass("Tool"))
-                        local rev = rk and (rk:FindFirstChild("Events") or rk)
-                        local rkt = rev and (rev:FindFirstChild("KnifeThrown") or rk:FindFirstChildWhichIsA("RemoteEvent"))
-                        local rtr = rev and rev:FindFirstChild("Throw")
-                        local rhcf, rtcf = _ksaBuildCFrames(myHRP3)
-                        pcall(function() _ksaFireKnife(rkt or resolvedKnifeThrown, rtr or resolvedThrowRemote, rhcf or finalHandleCF, rtcf or finalTargetCF) end)
-                    end
+                    -- RESET GARANTIZADO: si _ksaOnThrowingKnifeAdded no llega
+                    -- (servidor no responde), volvemos a idle despues de 3s
+                    -- para que el boton funcione de nuevo.
+                    task.delay(3, function()
+                        if _mobileThrowState == "throwing" then
+                            _killAllThrowAnims()
+                            _mobileThrowState = "idle"
+                        end
+                    end)
                 end
 
                 -- ================================================================
