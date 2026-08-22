@@ -49819,10 +49819,10 @@ function CreateCombatTab()
                     if not handleLink.Value then return end
                     local handle = handleLink.Value
                     if not handle:IsDescendantOf(myChar) then return end
-                    -- Cooldown
                     local now = os.clock()
-                    if now - _lastMobileSAThrow < 0.35 then return end
-                    -- Si estamos en ThrowHold esperando touch, disparar la fase 3 ahora
+                    -- Si estamos en ThrowHold esperando touch, disparar la fase 3 ahora.
+                    -- NO aplicar cooldown aqui: el timestamp ya fue marcado en fase 3 de
+                    -- _ksaDoThrow, lo que bloquearia este branch con el check de 0.35s.
                     if _mobileThrowState == "holding" and _mobileTouchRelease then
                         _lastMobileSAThrow = now
                         _mobileTouchRelease()
