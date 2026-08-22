@@ -64536,33 +64536,13 @@ end)
 
 
 -- ================================================================
--- == MOBILE KNIFE BUTTONS v4  (FIX COMPLETO)
+-- == MOBILE KNIFE BUTTONS v5
 --
--- BUGS CORREGIDOS vs v3:
---
--- [FIX-1] Touch en pantalla ya NO lanza el knife por si solo.
---   El listener InputBegan ahora usa un flag _throwHoldActive que
---   se activa SOLO cuando el boton Lanzar fue presionado y el
---   KnifeClient esta en estado ThrowHold (brazo levantado).
---   Sin ese flag, cualquier toque en la pantalla era ignorado.
---
--- [FIX-2] pcall de WeaponService estaba mal usado.
---   pcall devuelve (ok, value); el codigo anterior usaba el booleano
---   ok como si fuera el modulo. Ahora se captura correctamente.
---
--- [FIX-3] ThrowCharge/ThrowHold se detienen ANTES de reproducir
---   ThrowKnife, evitando que la animacion de carga quede superpuesta
---   y el brazo se vea "levantado" indefinidamente.
---
--- [FIX-4] doThrow() ahora:
---   1. Activa _throwHoldActive = true (seteado antes del wait)
---   2. Espera ThrowSpeed (0.5s aprox) como hace el KnifeClient
---   3. Apunta al enemigo mas cercano y dispara FireServer
---   Con esto el botón Lanzar realmente lanza el knife.
---
--- [FIX-5] El touch en pantalla (cuando _throwHoldActive==true)
---   llama exactamente la misma logica de disparo que el boton,
---   replicando el comportamiento original de TouchTapInWorld.
+-- El boton EQUIPAR del hub equipa el knife desde el backpack.
+-- El boton LANZAR del juego (nativo MM2) NO se toca - el KnifeClient
+-- maneja el flujo ThrowCharge -> ThrowHold -> tap -> ThrowKnife.
+-- KnifeSA intercepta el ThrowingKnife via workspace.ChildAdded
+-- y redirige al target. Sin doble-disparo, sin romper animaciones.
 -- ================================================================
 task.spawn(function()
     local UIS = game:GetService("UserInputService")
@@ -64614,164 +64594,15 @@ task.spawn(function()
     end
 
     -- ----------------------------------------------------------------
-    -- Estado compartido
+    -- Estado
     -- ----------------------------------------------------------------
-    local _equipFired      = false
-    local _lastEquipT      = -999
-    local EQUIP_CD         = 0.35
-
-    local _throwBusy       = false
-    local _lastThrowT      = -999
-    local THROW_CD         = 0.5
-
-    -- FIX-1: flag que indica que el KnifeClient esta en ThrowHold
-    -- (brazo levantado, esperando tap). Solo cuando este flag es true
-    -- el InputBegan touch dispara el knife.
-    local _throwHoldActive = false
-
-    -- ----------------------------------------------------------------
-    -- ENEMIES
-    -- ----------------------------------------------------------------
-    local function getNearestEnemy()
-        local char = getChar()
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return nil end
-        local myPos   = hrp.Position
-        local best, bestDist = nil, math.huge
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= lp and p.Character then
-                local eHRP = p.Character:FindFirstChild("HumanoidRootPart")
-                local eHum = p.Character:FindFirstChildOfClass("Humanoid")
-                if eHRP and eHum and eHum.Health > 0 then
-                    local d = (eHRP.Position - myPos).Magnitude
-                    if d < bestDist then bestDist = d; best = eHRP end
-                end
-            end
-        end
-        return best
-    end
-
-    -- ----------------------------------------------------------------
-    -- FIX-2: helper para obtener WeaponService correctamente
-    -- ----------------------------------------------------------------
-    local function getWeaponService()
-        local ok, ws = pcall(function()
-            return require(
-                game:GetService("ReplicatedStorage")
-                    :WaitForChild("ClientServices", 3)
-                    :WaitForChild("WeaponService",  3)
-            )
-        end)
-        return (ok and type(ws) == "table") and ws or nil
-    end
-
-    -- ----------------------------------------------------------------
-    -- FIX-3: detener animaciones de carga antes de lanzar
-    -- ----------------------------------------------------------------
-    local function stopChargeAnims(animator)
-        if not animator then return end
-        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-            local name = track.Name:lower()
-            if name:find("throwcharge") or name:find("throwhold") or name:find("throw_charge") or name:find("throw_hold") then
-                pcall(function() track:Stop(0) end)
-            end
-        end
-    end
-
-    -- ----------------------------------------------------------------
-    -- LOGICA DE DISPARO (compartida entre boton y touch)
-    -- ----------------------------------------------------------------
-    local function executeThrow()
-        local knife, loc = findKnife()
-        if not knife or loc ~= "char" then
-            _throwHoldActive = false
-            _throwBusy = false
-            return
-        end
-
-        local handle      = knife:FindFirstChild("Handle")
-        local ev          = knife:FindFirstChild("Events")
-        local knifeThrown = ev and ev:FindFirstChild("KnifeThrown")
-
-        if not handle or not knifeThrown then
-            _throwHoldActive = false
-            _throwBusy = false
-            return
-        end
-
-        -- Calcular targetCF
-        local enemyHRP = getNearestEnemy()
-        local targetCF
-
-        -- FIX-2: WeaponService capturado correctamente
-        local WS = getWeaponService()
-        if WS and WS.GetTargetPosition then
-            local cam = workspace.CurrentCamera
-            local vp  = cam.ViewportSize
-            pcall(function()
-                targetCF = WS:GetTargetPosition(vp.X / 2, vp.Y / 2)
-            end)
-        end
-
-        -- Silent aim: sobreescribir con posicion real del enemigo mas cercano
-        if enemyHRP then
-            local origin  = handle.Position
-            local tPos    = enemyHRP.Position
-            local backDir = (origin - tPos)
-            if backDir.Magnitude > 0.001 then
-                targetCF = CFrame.new(tPos, tPos + backDir.Unit)
-            end
-        end
-
-        -- Fallback: 40 studs al frente
-        if not targetCF then
-            local char = getChar()
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local origin  = handle.Position
-                local tPos    = origin + hrp.CFrame.LookVector * 40
-                local backDir = (origin - tPos)
-                if backDir.Magnitude < 0.001 then backDir = Vector3.new(0, 0, 1) end
-                targetCF = CFrame.new(tPos, tPos + backDir.Unit)
-            end
-        end
-
-        if not targetCF then
-            _throwHoldActive = false
-            _throwBusy = false
-            return
-        end
-
-        -- FIX-3: detener animaciones de carga
-        local hum      = getHum()
-        local animator = hum and hum:FindFirstChildOfClass("Animator")
-        stopChargeAnims(animator)
-
-        -- Reproducir ThrowKnife (la animacion real de lanzamiento)
-        if animator then
-            local kc      = knife:FindFirstChild("KnifeClient")
-            local animObj = kc and kc:FindFirstChild("ThrowKnife")
-            if animObj and animObj:IsA("Animation") then
-                pcall(function()
-                    local track = animator:LoadAnimation(animObj)
-                    if track.IsPlaying then track:Stop(0) end
-                    track:Play(0.1, 6, 1)
-                end)
-            end
-        end
-
-        -- FireServer con firma original del KnifeClient
-        pcall(function()
-            knifeThrown:FireServer(handle.CFrame, targetCF)
-        end)
-
-        _throwHoldActive = false
-        task.wait(0.3)
-        _throwBusy = false
-    end
+    local _equipFired = false
+    local _lastEquipT = -999
+    local EQUIP_CD    = 0.35
 
     -- ----------------------------------------------------------------
     -- BOTON EQUIPAR
+    -- Solo equipa el knife desde el backpack si no esta en mano.
     -- ----------------------------------------------------------------
     local function doEquip()
         local now = os.clock()
@@ -64794,95 +64625,12 @@ task.spawn(function()
     end
 
     -- ----------------------------------------------------------------
-    -- BOTON LANZAR (v6 - ANIMACION COMPLETA CON ESPERA)
-    --
-    -- Flujo:
-    --   1. Reproduce ThrowCharge (brazo levantandose) a velocidad normal
-    --   2. Espera que ThrowCharge termine via evento Stopped
-    --   3. Reproduce ThrowKnife (lanzamiento final) a velocidad normal
-    --   4. Espera que ThrowKnife termine via evento Stopped
-    --   5. Recien ahi KnifeSA intercepta el ThrowingKnife y redirige
-    -- NO hace FireServer - el KnifeClient nativo lo maneja.
-    -- ----------------------------------------------------------------
-    local function _waitTrackStopped(track, maxWait)
-        -- Espera a que el track termine o hasta maxWait segundos
-        if not track then return end
-        task.wait()  -- 1 frame para que .Length se popule
-        local len = track.Length or 0
-        if len < 0.05 then return end  -- track vacio, no esperar
-        local done = false
-        local conn
-        conn = track.Stopped:Connect(function()
-            done = true
-            if conn then conn:Disconnect(); conn = nil end
-        end)
-        local limit = maxWait or (len + 0.5)
-        local t0 = os.clock()
-        repeat task.wait(0.016) until done or (os.clock() - t0 > limit)
-        if conn then conn:Disconnect(); conn = nil end
-    end
-
-    local function doThrow()
-        local now = os.clock()
-        if now - _lastThrowT < THROW_CD then return end
-        if _throwBusy then return end
-
-        local knife, loc = findKnife()
-        if not knife or loc ~= "char" then return end
-
-        _throwBusy  = true
-        _lastThrowT = now
-
-        task.spawn(function()
-            local hum      = getHum()
-            local animator = hum and hum:FindFirstChildOfClass("Animator")
-
-            -- Detener animaciones de carga previas
-            stopChargeAnims(animator)
-
-            if animator then
-                local kc = knife:FindFirstChild("KnifeClient")
-
-                -- PASO 1: ThrowCharge (brazo levantandose) a velocidad normal
-                local chargeObj = kc and (kc:FindFirstChild("ThrowCharge") or kc:FindFirstChild("ThrowHold"))
-                if chargeObj and chargeObj:IsA("Animation") then
-                    pcall(function()
-                        local track = animator:LoadAnimation(chargeObj)
-                        if track.IsPlaying then track:Stop(0) end
-                        track.Priority = Enum.AnimationPriority.Action
-                        track:Play(0.08, 1, 1)  -- velocidad 1 = normal
-                        _waitTrackStopped(track, 1.5)
-                    end)
-                end
-
-                -- PASO 2: ThrowKnife (animacion final de lanzamiento) a velocidad normal
-                local throwObj = kc and kc:FindFirstChild("ThrowKnife")
-                    or knife:FindFirstChild("ThrowKnife", true)
-                if throwObj and throwObj:IsA("Animation") then
-                    pcall(function()
-                        local track = animator:LoadAnimation(throwObj)
-                        if track.IsPlaying then track:Stop(0) end
-                        track.Priority = Enum.AnimationPriority.Action
-                        track:Play(0.05, 1, 1)  -- velocidad 1 = normal
-                        _waitTrackStopped(track, 1.5)
-                    end)
-                end
-            end
-
-            -- Limpiar estado (sin FireServer - KnifeSA maneja el throw real)
-            _throwHoldActive = false
-            task.wait(0.1)
-            _throwBusy = false
-        end)
-    end
-
-    -- ----------------------------------------------------------------
-    -- HOOKEAR BOTONES
+    -- HOOKEAR SOLO EL BOTON EQUIPAR
+    -- El boton Throw nativo NO se hookea - el KnifeClient lo maneja.
     -- ----------------------------------------------------------------
     local _equipHooked = false
-    local _throwHooked = false
 
-    local function hookButtons()
+    local function hookEquip()
         local gcui = pg:FindFirstChild("GameplayControlsUI")
         if not gcui then return false end
         local tc = gcui:FindFirstChild("TouchControls")
@@ -64891,62 +64639,32 @@ task.spawn(function()
         if not rb then return false end
 
         local equipBtn = rb:FindFirstChild("EquipWeapon")
-        local throwBtn = rb:FindFirstChild("Throw")
-
         if equipBtn and not _equipHooked then
             pcall(function() equipBtn.Activated:Connect(doEquip) end)
             _equipHooked = true
         end
 
-        if throwBtn and not _throwHooked then
-            pcall(function() throwBtn.Activated:Connect(doThrow) end)
-            _throwHooked = true
-        end
-
-        return _equipHooked and _throwHooked
+        return _equipHooked
     end
 
-    if not hookButtons() then
+    if not hookEquip() then
         local watcher
         watcher = pg.DescendantAdded:Connect(function(desc)
-            if desc.Name == "EquipWeapon" or desc.Name == "Throw" then
+            if desc.Name == "EquipWeapon" then
                 task.wait(0.1)
-                if hookButtons() then watcher:Disconnect() end
+                if hookEquip() then watcher:Disconnect() end
             end
         end)
     end
 
     lp.CharacterAdded:Connect(function()
-        _equipHooked     = false
-        _throwHooked     = false
-        _equipFired      = false
-        _throwBusy       = false
-        _throwHoldActive = false
-        _lastEquipT      = -999
-        _lastThrowT      = -999
+        _equipHooked = false
+        _equipFired  = false
+        _lastEquipT  = -999
         task.wait(0.6)
-        hookButtons()
-    end)
-
-    -- ----------------------------------------------------------------
-    -- Touch en pantalla (v5 - BLOQUEADO)
-    --
-    -- El touch en pantalla NO dispara el knife directamente.
-    -- KnifeSA maneja el throw via workspace.ChildAdded (ThrowingKnife).
-    -- Este handler solo resetea el flag _throwHoldActive para evitar
-    -- estados inconsistentes si el KnifeClient nativo procesa el tap.
-    -- ----------------------------------------------------------------
-    UIS.InputBegan:Connect(function(inp, gp)
-        if gp then return end
-        if inp.UserInputType ~= Enum.UserInputType.Touch then return end
-        -- Solo limpiar el flag, NO ejecutar throw desde aqui.
-        -- KnifeSA intercepta el ThrowingKnife en workspace.ChildAdded
-        -- y redirige al target correcto sin necesidad de duplicar el disparo.
-        if _throwHoldActive then
-            _throwHoldActive = false
-        end
+        hookEquip()
     end)
 end)
 -- ================================================================
--- == FIN MOBILE KNIFE BUTTONS v4
+-- == FIN MOBILE KNIFE BUTTONS v5
 -- ================================================================
