@@ -6775,12 +6775,21 @@ function _KnifeSA_setupKnife(knife)
 
     -- Reproduce ThrowHold (animacion de sostener el knife antes de lanzar)
     -- Se llama justo DESPUES de que ThrowCharge termina y ANTES de FireServer
+    -- FIX: forzar Looped=false en el track DESPUES de Play para que el Animator
+    -- no lo reactive automaticamente cuando otra animacion termina.
     local function _playThrowHoldAnim()
         KnifeSAState._playThrowHoldAnim = _playThrowHoldAnim
         KnifeSAState._lastThrowHoldTrackName = nil
         if _animObjs["ThrowHold"] then
             if _playKnifeAnim("ThrowHold", 1.0) then
                 KnifeSAState._lastThrowHoldTrackName = "ThrowHold"
+                -- FIX: desactivar loop inmediatamente despues de reproducir
+                -- El asset MM2 tiene Looped=true; al setearlo false aqui el track
+                -- termina naturalmente en vez de reiniciarse, y Stop(0) lo mata definitivo
+                pcall(function()
+                    local th = _animTracks["ThrowHold"]
+                    if th then th.Looped = false end
+                end)
                 return true
             end
         end
@@ -7384,9 +7393,14 @@ function _KnifeSA_deactivate()
                 if knifeAnimNames[tname]
                     or tname:find("throw") or tname:find("slash") or tname:find("knife") or tname:find("stab")
                     or animId:find("1108307876") or animId:find("knife") then
-                    pcall(function() track:Stop(0.15) end)
+                    -- FIX: Looped=false antes de Stop para que el Animator no reactive ThrowHold
+                    pcall(function() track.Looped = false end)
+                    pcall(function() track:Stop(0) end)
                 end
             end
+            -- Invalidar cache de ThrowHold para evitar reanudacion implicita
+            if KnifeSAState._animTracks then KnifeSAState._animTracks["ThrowHold"] = nil end
+            KnifeSAState._lastThrowHoldTrackName = nil
         end
         -- 4) Resetear estados internos del SA sobre este knife
         KnifeSAState._origCanCollide = {}
@@ -49623,13 +49637,29 @@ function CreateCombatTab()
                     -- Si el jugador no toco en tiempo, cancelar y detener ThrowHold
                     if not _released then
                         _doRelease()
-                        pcall(function()
+                        -- FIX: Looped=false + Stop(0) + invalidar cache en los 3 lugares
+                        local function _killThrowHold()
                             local holdName  = KnifeSAState._lastThrowHoldTrackName
                             local holdTrack = holdName and KnifeSAState._animTracks and KnifeSAState._animTracks[holdName]
-                            if holdTrack and holdTrack.IsPlaying then
-                                pcall(function() holdTrack:Stop(0.15) end)
+                            if holdTrack then
+                                pcall(function() holdTrack.Looped = false end)
+                                pcall(function() holdTrack:Stop(0) end)
                             end
-                        end)
+                            if KnifeSAState._animTracks then KnifeSAState._animTracks["ThrowHold"] = nil end
+                            KnifeSAState._lastThrowHoldTrackName = nil
+                            local char = LocalPlayer.Character
+                            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                            local animr = hum and hum:FindFirstChildOfClass("Animator")
+                            if not animr then return end
+                            for _, t in ipairs(animr:GetPlayingAnimationTracks()) do
+                                local n = (t.Name or ""):lower()
+                                if n == "throwhold" or n == "throw_hold" then
+                                    pcall(function() t.Looped = false end)
+                                    pcall(function() t:Stop(0) end)
+                                end
+                            end
+                        end
+                        pcall(_killThrowHold)
                         _mobileThrowState = "idle"
                         return
                     end
@@ -49637,17 +49667,31 @@ function CreateCombatTab()
                     -- FASE 3: ThrowKnife (animacion de lanzamiento) + FireServer
                     _mobileThrowState = "idle"
 
-                    -- Detener ThrowHold limpiamente
-                    pcall(function()
-                        if KnifeSAState._playThrowHoldAnim then
-                            -- Parar el track de ThrowHold si existe
-                            local holdTrackName = KnifeSAState._lastThrowHoldTrackName
-                            if holdTrackName then
-                                local ht = KnifeSAState._animTracks and KnifeSAState._animTracks[holdTrackName]
-                                if ht and ht.IsPlaying then pcall(function() ht:Stop(0.05) end) end
+                    -- Detener ThrowHold: FIX Looped=false + Stop(0) + invalidar cache
+                    local function _killThrowHold()
+                        local holdTrackName = KnifeSAState._lastThrowHoldTrackName
+                        if holdTrackName then
+                            local ht = KnifeSAState._animTracks and KnifeSAState._animTracks[holdTrackName]
+                            if ht then
+                                pcall(function() ht.Looped = false end)
+                                pcall(function() ht:Stop(0) end)
                             end
                         end
-                    end)
+                        if KnifeSAState._animTracks then KnifeSAState._animTracks["ThrowHold"] = nil end
+                        KnifeSAState._lastThrowHoldTrackName = nil
+                        local char = LocalPlayer.Character
+                        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                        local animr = hum and hum:FindFirstChildOfClass("Animator")
+                        if not animr then return end
+                        for _, t in ipairs(animr:GetPlayingAnimationTracks()) do
+                            local n = (t.Name or ""):lower()
+                            if n == "throwhold" or n == "throw_hold" then
+                                pcall(function() t.Looped = false end)
+                                pcall(function() t:Stop(0) end)
+                            end
+                        end
+                    end
+                    pcall(_killThrowHold)
 
                     -- Reproducir ThrowKnife (la animacion del lanzamiento real)
                     pcall(function()
