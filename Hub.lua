@@ -49584,15 +49584,21 @@ function CreateCombatTab()
                 local function _ksaDoThrow()
                     -- Guard: ya hay un throw en curso
                     if _mobileThrowState ~= "idle" then return end
+                    -- Marcar como ocupado INMEDIATAMENTE para bloquear taps concurrentes
+                    -- mientras esperamos que el knife vuelva del throw anterior.
+                    _mobileThrowState = "waiting"
                     local myChar = LocalPlayer.Character
                     local hum    = myChar and myChar:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health <= 0 then return end
+                    if not hum or hum.Health <= 0 then _mobileThrowState = "idle"; return end
                     -- Guard: equip cooldown (el mismo touch del boton Equipar no debe lanzar)
-                    if KnifeSAState._lastEquipTime and (os.clock() - KnifeSAState._lastEquipTime) < 0.4 then return end
+                    if KnifeSAState._lastEquipTime and (os.clock() - KnifeSAState._lastEquipTime) < 0.4 then _mobileThrowState = "idle"; return end
 
-                    -- Asegurar que el knife este en mano
+                    -- Asegurar que el knife este en mano.
+                    -- FIX: despues de un throw, el knife viaja como ThrowingKnife en workspace
+                    -- y puede no estar en character ni backpack todavia. Esperar hasta 2s.
                     local knife = myChar:FindFirstChild("Knife")
                     if not knife then
+                        -- Intentar desde backpack primero
                         local bpKnife = LocalPlayer.Backpack:FindFirstChild("Knife")
                         if bpKnife then
                             pcall(function() bpKnife.Parent = LocalPlayer.Character end)
@@ -49608,21 +49614,39 @@ function CreateCombatTab()
                             end
                         end
                     end
-                    if not knife then return end
+                    -- Si todavia no esta, esperar hasta 2s (knife en transito post-throw)
+                    if not knife then
+                        local _t0knife = os.clock()
+                        repeat
+                            task.wait(0.05)
+                            local c = LocalPlayer.Character
+                            knife = c and c:FindFirstChild("Knife")
+                            if not knife then
+                                local bp2 = LocalPlayer.Backpack:FindFirstChild("Knife")
+                                if bp2 then
+                                    pcall(function() hum:EquipTool(bp2) end)
+                                    task.wait(0.1)
+                                    c = LocalPlayer.Character
+                                    knife = c and c:FindFirstChild("Knife")
+                                end
+                            end
+                        until knife or (os.clock() - _t0knife > 2.0)
+                    end
+                    if not knife then _mobileThrowState = "idle"; return end
                     local _knifeInChar = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(knife.Name)
                     if not _knifeInChar then
                         task.wait(0.05)
                         _knifeInChar = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(knife.Name)
                     end
-                    if not _knifeInChar then return end
+                    if not _knifeInChar then _mobileThrowState = "idle"; return end
                     knife = _knifeInChar
 
                     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHRP then return end
+                    if not myHRP then _mobileThrowState = "idle"; return end
                     local events       = knife:FindFirstChild("Events") or knife
                     local throwRemote  = events:FindFirstChild("Throw")
                     local knifeThrown  = events:FindFirstChild("KnifeThrown") or knife:FindFirstChildWhichIsA("RemoteEvent")
-                    if not knifeThrown then return end
+                    if not knifeThrown then _mobileThrowState = "idle"; return end
 
                     _mobileThrowState = "charging"
 
@@ -49889,6 +49913,10 @@ function CreateCombatTab()
                                 if not KnifeSAState.enabled then return end
                                 local now = os.clock()
                                 if now - _lastMobileSAThrow < 0.35 then return end
+                                -- FIX: stampar DESPUES del guard de estado, no antes.
+                                -- Si _ksaDoThrow sale porque el knife no esta listo,
+                                -- no queremos bloquear el siguiente tap.
+                                if _mobileThrowState ~= "idle" then return end
                                 _lastMobileSAThrow = now
                                 task.spawn(_ksaDoThrow)
                             end)
@@ -49902,6 +49930,7 @@ function CreateCombatTab()
                                 if not KnifeSAState.enabled then return end
                                 local now = os.clock()
                                 if now - _lastMobileSAThrow < 0.35 then return end
+                                if _mobileThrowState ~= "idle" then return end
                                 _lastMobileSAThrow = now
                                 task.spawn(_ksaDoThrow)
                             end)
