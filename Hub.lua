@@ -6673,14 +6673,44 @@ function _KnifeSA_setupKnife(knife)
     end
 
     KnifeSAState._playThrowHoldAnim = function()
-        -- CORRECCION: reproducir ThrowHold si existe en KnifeClient.
-        -- Si no existe, solo limpiar la variable de estado (no-op visual aceptable).
+        -- FIX MOBILE: reproducir ThrowHold si existe en KnifeClient.
+        -- Si NO existe, hacer loop de ThrowCharge para congelar el brazo en la
+        -- pose de carga hasta que el jugador toque la pantalla para lanzar.
+        -- Sin esto, al terminar ThrowCharge el KnifeClient nativo retoma el control
+        -- y resetea el brazo a idle (animacion vuelve a posicion neutra).
         local holdTrack = _loadTrack("ThrowHold")
         if holdTrack then
             pcall(function() holdTrack:Play(0.05); holdTrack:AdjustSpeed(1.0) end)
             KnifeSAState._lastThrowHoldTrackName = "ThrowHold"
         else
+            -- ThrowHold no existe: loopear ThrowCharge para sostener el brazo
+            local chargeTrack = _loadTrack("ThrowCharge")
+            if chargeTrack then
+                pcall(function()
+                    chargeTrack.Looped = true
+                    if not chargeTrack.IsPlaying then
+                        chargeTrack:Play(0.05)
+                        chargeTrack:AdjustSpeed(0)  -- velocidad 0 = fotograma congelado
+                    else
+                        chargeTrack:AdjustSpeed(0)  -- congelar en el ultimo fotograma
+                    end
+                end)
+            end
             KnifeSAState._lastThrowHoldTrackName = nil
+        end
+    end
+
+    -- Funcion para liberar el hold (detener loop de ThrowCharge antes de ThrowKnife)
+    KnifeSAState._releaseThrowHoldAnim = function()
+        -- Si habia un ThrowHold real, detenerlo
+        local holdTrack = _animTracks["ThrowHold"]
+        if holdTrack and holdTrack.IsPlaying then
+            pcall(function() holdTrack.Looped = false; holdTrack:Stop(0) end)
+        end
+        -- Si habia ThrowCharge en loop (fallback), detenerlo
+        local chargeTrack = _animTracks["ThrowCharge"]
+        if chargeTrack and chargeTrack.IsPlaying then
+            pcall(function() chargeTrack.Looped = false; chargeTrack:Stop(0) end)
         end
     end
 
@@ -49238,6 +49268,11 @@ function CreateCombatTab()
                     _activeChargeTrack = nil
                     _activeHoldTrack   = nil
                     _activeKnifeTrack  = nil
+                    -- FIX MOBILE: si se uso ThrowCharge en loop como fallback de hold,
+                    -- tambien hay que detenerlo aqui para limpiar completamente el estado.
+                    if KnifeSAState._releaseThrowHoldAnim then
+                        pcall(KnifeSAState._releaseThrowHoldAnim)
+                    end
                 end
 
                 -- Helper: calcular handleCF / targetCF con SA o fallback al frente
@@ -49457,27 +49492,32 @@ function CreateCombatTab()
                     -- Esperar que ThrowCharge termine — misma logica que el RMB de PC:
                     --   conectar t.Stopped, hacer loop con maxWait como backstop.
                     local animFinished = false
-                    local maxWait = 0.8  -- backstop igual que PC (len + 0.05, minimo 0.8)
+                    local maxWait = 0.8  -- backstop (len + 0.05, minimo 0.8)
                     pcall(function()
                         local animator = myChar and myChar:FindFirstChildOfClass("Humanoid")
                             and myChar:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
                         if not animator then return end
-                        task.wait(0.016)  -- un frame para que el track arranque
-                        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                            local n = (t.Name or ""):lower()
-                            -- FIX: buscar especificamente ThrowCharge para no matchear
-                            -- ThrowKnife o ThrowHold que pueden estar precargados.
-                            if n == "throwcharge" or n == "throw_charge" or n == "charge" then
-                                local conn_anim
-                                conn_anim = t.Stopped:Connect(function()
-                                    animFinished = true
-                                    if conn_anim then conn_anim:Disconnect() end
-                                end)
-                                local len = t.Length or 0
-                                if len > 0.05 then maxWait = len + 0.05 end
-                                _activeChargeTrack = t
-                                break
+                        -- FIX MOBILE: reintentar hasta 10 frames (0.16s) para que el
+                        -- track aparezca en GetPlayingAnimationTracks (lag de Roblox mobile).
+                        local _found = false
+                        for _retry = 1, 10 do
+                            task.wait(0.016)
+                            for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                                local n = (t.Name or ""):lower()
+                                if n == "throwcharge" or n == "throw_charge" or n == "charge" then
+                                    local conn_anim
+                                    conn_anim = t.Stopped:Connect(function()
+                                        animFinished = true
+                                        if conn_anim then conn_anim:Disconnect() end
+                                    end)
+                                    local len = t.Length or 0
+                                    if len > 0.05 then maxWait = len + 0.05 end
+                                    _activeChargeTrack = t
+                                    _found = true
+                                    break
+                                end
                             end
+                            if _found then break end
                         end
                     end)
                     local t0 = os.clock()
@@ -49532,6 +49572,16 @@ function CreateCombatTab()
 
                     -- FASE 3: ThrowKnife — animacion de lanzamiento
                     _mobileThrowState = "throwing"
+                    -- FIX MOBILE: liberar el hold/loop antes de reproducir ThrowKnife.
+                    -- Si ThrowHold no existia, ThrowCharge estaba en loop con speed=0
+                    -- (brazo congelado). Hay que detenerlo ANTES de reproducir ThrowKnife
+                    -- para que el Animator no lo mantenga activo y bloquee la animacion
+                    -- de lanzamiento. Sin esto, ThrowKnife se reproduce pero ThrowCharge
+                    -- looped (Priority=Action) lo pisa y el brazo se queda quieto.
+                    if KnifeSAState._releaseThrowHoldAnim then
+                        pcall(KnifeSAState._releaseThrowHoldAnim)
+                    end
+                    task.wait(0.016)  -- un frame para que el Animator procese el Stop
                     if KnifeSAState._playThrowKnifeAnim then
                         pcall(KnifeSAState._playThrowKnifeAnim)
                     end
