@@ -49380,17 +49380,17 @@ function CreateCombatTab()
                     if not knifeThrown then _mobileThrowState = "idle"; return end
 
                     -- ================================================================
-                    -- SECUENCIA CELU:
-                    --   FASE 1: ThrowCharge  Play(0)      -> se reproduce completa
-                    --   FASE 2: ThrowHold    Play(0.9861) -> se queda frenada esperando touch
-                    --   touch en pantalla    ->  ThrowKnife Play(0.5975) + FireServer
+                    -- SECUENCIA CELU (ANIMS PERSONALIZADAS):
+                    --   FASE 1: Anim1_Charge (rbxassetid://1957618848)       delay=0.0000s -> completa
+                    --   FASE 2: Anim2_Hold   (rbxassetid://15478370930)      delay=0.9865s -> looped, espera touch
+                    --   touch en pantalla -> Anim3_Throw (rbxassetid://112035104498952) delay=0.9997s + FireServer
                     --   ThrowingKnife detectado en workspace -> mata las 3 anims y vuelve a idle
                     -- ================================================================
 
                     -- Limpiar tracks stale del lanzamiento anterior
                     _killAllThrowAnims()
                     if KnifeSAState._animTracks then
-                        for _, _cn in ipairs({"ThrowCharge","ThrowHold","ThrowKnife"}) do
+                        for _, _cn in ipairs({"Anim1_Charge","Anim2_Hold","Anim3_Throw","ThrowCharge","ThrowHold","ThrowKnife"}) do
                             local _old = KnifeSAState._animTracks[_cn]
                             if _old then
                                 pcall(function() _old.Looped = false end)
@@ -49401,12 +49401,39 @@ function CreateCombatTab()
                     end
                     KnifeSAState._lastThrowHoldTrackName = nil
 
-                    -- Carga un AnimationTrack fresco desde KnifeClient (nunca usa cache)
+                    -- ================================================================
+                    -- SECUENCIA DE ANIMACIONES PERSONALIZADAS CELULAR
+                    -- IDs y delays extraidos del log de ejecucion:
+                    --   Anim 1: rbxassetid://1957618848   delay = 0.0000 s  (FASE 1 - charge)
+                    --   Anim 2: rbxassetid://15478370930  delay = 0.9865 s  (FASE 2 - hold)
+                    --   Anim 3: rbxassetid://112035104498952 delay = 0.9997 s (FASE 3 - throw)
+                    -- ================================================================
+                    local _MOBILE_THROW_ANIMS = {
+                        { id = "rbxassetid://1957618848",      delay = 0.0000, fadeTime = 0,      looped = false, name = "Anim1_Charge" },
+                        { id = "rbxassetid://15478370930",     delay = 0.9865, fadeTime = 0.9865, looped = true,  name = "Anim2_Hold"   },
+                        { id = "rbxassetid://112035104498952", delay = 0.9997, fadeTime = 0.5975, looped = false, name = "Anim3_Throw"  },
+                    }
+
+                    -- Carga un AnimationTrack fresco por ID directo (no depende de KnifeClient)
                     local function _loadFreshTrack(animName)
                         local char  = LocalPlayer.Character
                         local animr = char and char:FindFirstChildOfClass("Humanoid")
                             and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
                         if not animr then return nil end
+                        -- Buscar en tabla de anims personalizadas primero
+                        for _, entry in ipairs(_MOBILE_THROW_ANIMS) do
+                            if entry.name == animName then
+                                local animObj = Instance.new("Animation")
+                                animObj.AnimationId = entry.id
+                                local ok, track = pcall(function() return animr:LoadAnimation(animObj) end)
+                                if ok and track then
+                                    track.Priority = Enum.AnimationPriority.Action
+                                    return track
+                                end
+                                return nil
+                            end
+                        end
+                        -- Fallback: buscar en KnifeClient por nombre legacy
                         local kc      = knife:FindFirstChild("KnifeClient")
                         local animObj = (kc and kc:FindFirstChild(animName))
                             or knife:FindFirstChild(animName, true)
@@ -49438,15 +49465,16 @@ function CreateCombatTab()
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 1: ThrowCharge (fadeTime = 0, sin delay)
+                    -- FASE 1: Anim1_Charge (delay = 0.0000s, fadeTime = 0, sin espera previa)
+                    -- rbxassetid://1957618848
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "charging"
-                    local chargeTrack = _loadFreshTrack("ThrowCharge")
+                    local chargeTrack = _loadFreshTrack("Anim1_Charge")
                     _activeChargeTrack = chargeTrack
                     if chargeTrack then pcall(function() chargeTrack:Play(0) end) end
                     _waitFreshTrack(chargeTrack, 0.6)
 
-                    -- Guard: murio durante ThrowCharge
+                    -- Guard: murio durante Anim1_Charge
                     local myChar2 = LocalPlayer.Character
                     local hum2    = myChar2 and myChar2:FindFirstChildOfClass("Humanoid")
                     if not hum2 or hum2.Health <= 0 then
@@ -49454,15 +49482,15 @@ function CreateCombatTab()
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 2: ThrowHold (fadeTime = 0.9861) — se queda frenada (Looped)
-                    -- esperando un NUEVO touch del jugador (no el mismo del boton Lanzar).
+                    -- FASE 2: Anim2_Hold (delay = 0.9865s, fadeTime = 0.9865, Looped)
+                    -- rbxassetid://15478370930 — se queda frenada esperando otro touch
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "holding"
-                    local holdTrack = _loadFreshTrack("ThrowHold")
+                    local holdTrack = _loadFreshTrack("Anim2_Hold")
                     _activeHoldTrack = holdTrack
                     if holdTrack then
                         pcall(function() holdTrack.Looped = true end)
-                        pcall(function() holdTrack:Play(0.9861) end)
+                        pcall(function() holdTrack:Play(0.9865) end)
                     end
 
                     -- Esperar un frame para que el touch del boton Lanzar ya no este activo
@@ -49514,13 +49542,13 @@ function CreateCombatTab()
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 3: ThrowKnife (fadeTime = 0.5975) + FireServer
-                    -- ThrowKnife baja el brazo. _ksaOnThrowingKnifeAdded mata todo
-                    -- en cuanto el servidor confirma el lanzamiento.
+                    -- FASE 3: Anim3_Throw (delay = 0.9997s, fadeTime = 0.5975) + FireServer
+                    -- rbxassetid://112035104498952 — baja el brazo y lanza.
+                    -- _ksaOnThrowingKnifeAdded mata todo en cuanto el servidor confirma.
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "throwing"
 
-                    -- Detener ThrowHold limpiamente
+                    -- Detener Anim2_Hold limpiamente
                     if holdTrack then
                         pcall(function() holdTrack.Looped = false end)
                         pcall(function() holdTrack:Stop(0) end)
@@ -49532,8 +49560,8 @@ function CreateCombatTab()
                     _lastMobileSAThrow = _now3
                     KnifeSAState._lastMobileThrowTime = _now3
 
-                    -- Reproducir ThrowKnife (baja el brazo)
-                    local knifeTrack = _loadFreshTrack("ThrowKnife")
+                    -- Reproducir Anim3_Throw (baja el brazo y lanza)
+                    local knifeTrack = _loadFreshTrack("Anim3_Throw")
                     _activeKnifeTrack = knifeTrack
                     if knifeTrack then pcall(function() knifeTrack:Play(0.5975) end) end
 
