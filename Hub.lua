@@ -49477,16 +49477,21 @@ function CreateCombatTab()
                     end
 
                     -- ----------------------------------------------------------------
-                    -- FASE 1: rbxassetid://1957618848 — levanta el brazo (fadeTime=0)
+                    -- FASE 1+2 SIMPLIFICADA: un solo press del boton = lanzamiento completo.
+                    -- Eliminada la espera de segundo toque que era la causa de los bugs.
+                    -- Solo reproducimos la animacion ThrowCharge brevemente y pasamos
+                    -- directo a FASE 3 (ThrowKnife + FireServer).
                     -- ----------------------------------------------------------------
                     _mobileThrowState = "charging"
                     _startSrvBlock()
                     local chargeTrack = _loadCustomTrack("rbxassetid://1957618848")
                     _activeChargeTrack = chargeTrack
                     if chargeTrack then pcall(function() chargeTrack:Play(0) end) end
-                    _waitTrack(chargeTrack, 0.6)
 
-                    -- Guard: murio durante FASE 1
+                    -- Pequena pausa visual (animacion de carga), sin esperar que termine
+                    task.wait(0.18)
+
+                    -- Guard: murio durante la pausa
                     do
                         local _c = LocalPlayer.Character
                         local _h = _c and _c:FindFirstChildOfClass("Humanoid")
@@ -49495,77 +49500,10 @@ function CreateCombatTab()
                         end
                     end
 
-                    -- ----------------------------------------------------------------
-                    -- FASE 2: rbxassetid://15478370930 — frena brazo, espera touch
-                    -- fadeTime=0 para snap inmediato (sin bajada visible del brazo)
-                    -- ----------------------------------------------------------------
+                    -- Pasar directo a FASE 3 sin esperar segundo toque
                     _mobileThrowState = "holding"
-                    local holdTrack = _loadCustomTrack("rbxassetid://15478370930")
-                    _activeHoldTrack = holdTrack
-                    if holdTrack then
-                        pcall(function() holdTrack.Looped = true end)
-                        pcall(function() holdTrack:Play(0) end)
-                    end
-
-                    -- FIX BUG TOUCH: esperar suficiente para que el TouchEnded del boton
-                    -- Lanzar haya llegado. En mobile el touchUp del boton puede tardar
-                    -- hasta 200ms en procesarse. Usamos 0.30s de margen para descartar
-                    -- ese touch y solo reaccionar a UN NUEVO toque del jugador.
-                    task.wait(0.30)
-
-                    if _mobileThrowState ~= "holding" then
-                        _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
-                    end
-
-                    -- Esperar NUEVO touch del jugador (TouchEnded -> siguiente TouchStarted)
-                    -- FIX: escuchar TouchStarted pero solo DESPUES de confirmar que
-                    -- el dedo anterior ya fue levantado (esperamos TouchEnded del boton primero).
-                    -- Tambien aceptamos InputBegan MouseButton1 para PC/emulador.
-                    local _touchFired  = false
-                    local _touchSignal = Instance.new("BindableEvent")
-                    local UIS2 = game:GetService("UserInputService")
-
-                    -- FIX BUG PRINCIPAL: NO usar TouchStarted directamente porque puede
-                    -- llegar el TouchStarted del boton Lanzar todavia activo en el buffer.
-                    -- En su lugar esperamos TouchEnded (sueltan el boton) y luego
-                    -- el siguiente TouchStarted (nuevo toque) para lanzar.
-                    local _btnReleased = false
-                    local _teConn = UIS2.TouchEnded:Connect(function()
-                        _btnReleased = true
-                    end)
-                    -- Dar un poco mas de tiempo para el TouchEnded del boton
-                    task.wait(0.10)
-                    pcall(function() _teConn:Disconnect() end)
-                    _btnReleased = true  -- garantizar que pasamos al siguiente touch
-
-                    local _tc = UIS2.TouchStarted:Connect(function()
-                        if not _btnReleased then return end  -- ignorar si boton aun presionado
-                        if _mobileThrowState == "holding" and not _touchFired then
-                            _touchFired = true; pcall(function() _touchSignal:Fire() end)
-                        end
-                    end)
-                    local _cc = UIS2.InputBegan:Connect(function(inp)
-                        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                            if _mobileThrowState == "holding" and not _touchFired then
-                                _touchFired = true; pcall(function() _touchSignal:Fire() end)
-                            end
-                        end
-                    end)
-                    -- Timeout 8s
-                    task.delay(8, function()
-                        if not _touchFired then
-                            _touchFired = true; pcall(function() _touchSignal:Fire() end)
-                        end
-                    end)
-
-                    pcall(function() _touchSignal.Event:Wait() end)
-                    pcall(function() _tc:Disconnect() end)
-                    pcall(function() _cc:Disconnect() end)
-                    pcall(function() _touchSignal:Destroy() end)
-
-                    if _mobileThrowState ~= "holding" then
-                        _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
-                    end
+                    local holdTrack = nil  -- No usamos holdTrack en este modo
+                    _activeHoldTrack = nil
 
                     -- ----------------------------------------------------------------
                     -- FASE 3: ThrowKnife real del KnifeClient + FireServer
@@ -49704,35 +49642,39 @@ function CreateCombatTab()
 
                     local function _tryHookObj(obj)
                         if not obj then return end
-                        -- Intentar Activated (GuiButton)
-                        pcall(function()
-                            local c = obj.Activated:Connect(function()
-                                if not KnifeSAState.enabled then return end
-                                local now = os.clock()
-                                if now - _lastMobileSAThrow < 0.35 then return end
-                                -- FIX: stampar DESPUES del guard de estado, no antes.
-                                -- Si _ksaDoThrow sale porque el knife no esta listo,
-                                -- no queremos bloquear el siguiente tap.
-                                if _mobileThrowState ~= "idle" then return end
-                                _lastMobileSAThrow = now
-                                task.spawn(_ksaDoThrow)
+                        -- FIX DOBLE HOOK: antes habia Activated + InputBegan en el mismo objeto.
+                        -- Ambos se disparaban con el mismo tap. El InputBegan del tap del boton
+                        -- tambien llegaba al TouchStarted de FASE 2, disparando el lanzamiento
+                        -- antes de que el jugador tocara la pantalla intencionalmente.
+                        -- SOLUCION: usar SOLO Activated en GuiButton, e InputBegan SOLO en
+                        -- Frame/ImageLabel (objetos que no tienen Activated funcional).
+                        -- Ademas eliminar el cooldown por tiempo (_lastMobileSAThrow) del hook:
+                        -- _mobileThrowState es suficiente para evitar dobles lanzamientos.
+                        local _isGuiBtn = pcall(function()
+                            return obj:IsA("GuiButton")
+                        end) and obj:IsA("GuiButton")
+                        if _isGuiBtn then
+                            pcall(function()
+                                local c = obj.Activated:Connect(function()
+                                    if not KnifeSAState.enabled then return end
+                                    if _mobileThrowState ~= "idle" then return end
+                                    task.spawn(_ksaDoThrow)
+                                end)
+                                table.insert(KnifeSAState._mobileConns, c)
                             end)
-                            table.insert(KnifeSAState._mobileConns, c)
-                        end)
-                        -- InputBegan como respaldo (Frame/ImageLabel con Active=true)
-                        pcall(function()
-                            local c = obj.InputBegan:Connect(function(inp)
-                                if inp.UserInputType ~= Enum.UserInputType.Touch
-                                and inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-                                if not KnifeSAState.enabled then return end
-                                local now = os.clock()
-                                if now - _lastMobileSAThrow < 0.35 then return end
-                                if _mobileThrowState ~= "idle" then return end
-                                _lastMobileSAThrow = now
-                                task.spawn(_ksaDoThrow)
+                        else
+                            -- Solo Frame / ImageLabel sin Activated real
+                            pcall(function()
+                                local c = obj.InputBegan:Connect(function(inp)
+                                    if inp.UserInputType ~= Enum.UserInputType.Touch
+                                    and inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+                                    if not KnifeSAState.enabled then return end
+                                    if _mobileThrowState ~= "idle" then return end
+                                    task.spawn(_ksaDoThrow)
+                                end)
+                                table.insert(KnifeSAState._mobileConns, c)
                             end)
-                            table.insert(KnifeSAState._mobileConns, c)
-                        end)
+                        end
                     end
 
                     local function _scanAndHook(parent, depth)
