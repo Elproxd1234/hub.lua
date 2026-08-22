@@ -6728,6 +6728,58 @@ function _KnifeSA_setupKnife(knife)
         if t and t.IsPlaying then pcall(function() t:Stop(0.08) end) end
     end
 
+    -- FIX DEFINITIVO: guard post-throw que bloquea ThrowHold replicado por el servidor.
+    -- Despues de FireServer(KnifeThrown), el servidor MM2 manda al Animator del cliente
+    -- que reproduzca ThrowHold via replicacion. Nuestros Stop() ocurren ANTES del FireServer
+    -- pero el servidor responde DESPUES, volviendo a levantar el brazo.
+    -- Solucion: hookeamos Animator.AnimationPlayed para interceptar y cancelar
+    -- cualquier ThrowHold que se intente reproducir durante _throwHoldBlocked=true.
+    local _throwHoldBlocked = false  -- se activa justo antes de FireServer, dura ~1.5s
+    local _animPlayedConn   = nil    -- conexion al Animator.AnimationPlayed
+
+    local function _hookAnimatorBlock()
+        local animator = _getAnimator()
+        if not animator then return end
+        if _animPlayedConn then
+            pcall(function() _animPlayedConn:Disconnect() end)
+            _animPlayedConn = nil
+        end
+        _animPlayedConn = animator.AnimationPlayed:Connect(function(track)
+            if not _throwHoldBlocked then return end
+            local n = (track.Name or ""):lower()
+            -- Bloquear ThrowHold replicated. Permitir ThrowKnife (es la anim de lanzamiento).
+            if n == "throwhold" or n == "throw_hold" then
+                task.defer(function()
+                    if track and track.IsPlaying then
+                        pcall(function() track.Looped = false end)
+                        pcall(function() track:Stop(0) end)
+                    end
+                end)
+            end
+        end)
+        addConn(_animPlayedConn)
+    end
+
+    -- Activar el bloqueo justo ANTES de FireServer y mantenerlo 1.5s
+    -- (tiempo suficiente para que el servidor responda y nosotros lo bloqueemos)
+    local function _blockThrowHoldAfterThrow()
+        _throwHoldBlocked = true
+        -- Asegurarse de que el hook esta activo
+        if not _animPlayedConn then
+            pcall(_hookAnimatorBlock)
+        end
+        -- Desactivar bloqueo despues de 1.5s (el throw ya termino)
+        task.delay(1.5, function()
+            _throwHoldBlocked = false
+        end)
+    end
+
+    -- Exponer para que _waitThrowHold y el path mobile lo llamen antes del FireServer
+    KnifeSAState._blockThrowHoldAfterThrow = _blockThrowHoldAfterThrow
+
+    -- Inicializar el hook al equipar
+    pcall(_hookAnimatorBlock)
+
     -- Precargar al equipar (async, no bloquea)
     task.spawn(_preloadTracks)
 
@@ -7228,6 +7280,11 @@ function _KnifeSA_setupKnife(knife)
             end
 
             -- Disparar ? probar m?ltiples firmas de KnifeThrown
+            -- FIX: activar bloqueo de ThrowHold ANTES de FireServer
+            -- (el servidor responde despues y manda ThrowHold al Animator)
+            if KnifeSAState._blockThrowHoldAfterThrow then
+                pcall(KnifeSAState._blockThrowHoldAfterThrow)
+            end
             local fired = false
             pcall(function() knifeThrown:FireServer(handleCF, targetCFrame); fired = true end)
             if not fired then pcall(function() knifeThrown:FireServer(targetCFrame, handleCF); fired = true end) end
@@ -49472,6 +49529,10 @@ function CreateCombatTab()
 
                 -- Helper: FireServer con multiples firmas de KnifeThrown
                 local function _ksaFireKnife(freshKnifeThrown, freshThrowRemote, finalHandleCF, finalTargetCF)
+                    -- FIX: bloquear ThrowHold replicado por servidor ANTES de disparar
+                    if KnifeSAState._blockThrowHoldAfterThrow then
+                        pcall(KnifeSAState._blockThrowHoldAfterThrow)
+                    end
                     local fired = false
                     if freshThrowRemote and CombatTabState and CombatTabState._saHookActive then
                         pcall(function() freshThrowRemote:FireServer(); fired = true end)
