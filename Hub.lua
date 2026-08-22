@@ -49217,9 +49217,10 @@ function CreateCombatTab()
                 -- _mobileThrowState controla en que fase estamos para evitar
                 -- que un segundo tap en la pantalla reinicie todo desde cero.
                 -- ================================================================
-                local _mobileThrowState = "idle"  -- "idle" | "waiting" | "charging" | "holding" | "throwing"
-                local _mobileTouchRelease = nil    -- funcion que se llama al tocar en fase "holding"
-                local _lastMobileSAThrow  = -999
+                local _mobileThrowState    = "idle"  -- "idle" | "waiting" | "charging" | "holding" | "throwing"
+                local _mobileTouchRelease  = nil    -- funcion que se llama al tocar en fase "holding"
+                local _lastMobileSAThrow   = -999
+                local _mobileThrowStartTime = -999  -- timestamp de inicio de _ksaDoThrow (gracia contra tap del boton)
 
                 -- Tracks activos del lanzamiento en curso (para poder matarlos desde fuera)
                 local _activeChargeTrack = nil
@@ -49298,11 +49299,13 @@ function CreateCombatTab()
                     if KnifeSAState._blockThrowHoldAfterThrow then
                         pcall(KnifeSAState._blockThrowHoldAfterThrow)
                     end
+                    -- CORRECCION BUG FIRESERVER:
+                    -- La rama original con freshThrowRemote:FireServer() sin argumentos
+                    -- no lanza el knife — el servidor espera CFrames. Esa llamada marcaba
+                    -- fired=true y bloqueaba el KnifeThrown:FireServer(handleCF, targetCF) real.
+                    -- Solución: siempre usar KnifeThrown con los CFrames correctos.
                     local fired = false
-                    if freshThrowRemote and CombatTabState and CombatTabState._saHookActive then
-                        pcall(function() freshThrowRemote:FireServer(); fired = true end)
-                    end
-                    if not fired and freshKnifeThrown and finalHandleCF and finalTargetCF then
+                    if freshKnifeThrown and finalHandleCF and finalTargetCF then
                         pcall(function() freshKnifeThrown:FireServer(finalHandleCF, finalTargetCF); fired = true end)
                     end
                     if not fired and freshKnifeThrown and finalTargetCF then
@@ -49346,6 +49349,8 @@ function CreateCombatTab()
                 local function _ksaDoThrow()
                     -- Guard: ya hay un throw en curso
                     if _mobileThrowState ~= "idle" then return end
+                    -- Registrar cuando empezo este throw para filtrar el tap del boton Lanzar
+                    _mobileThrowStartTime = os.clock()
                     _mobileThrowState = "waiting"
 
                     -- Helper: resetear todo y salir limpio desde cualquier exit path
@@ -49625,27 +49630,34 @@ function CreateCombatTab()
 
                 -- ================================================================
                 -- HOOK DE CONFIRMACION DE LANZAMIENTO (FASE "holding")
-                -- Cuando el jugador toca la pantalla mientras esta en estado "holding",
-                -- se llama _mobileTouchRelease para confirmar el lanzamiento.
-                -- Este hook usa TouchTap (gesto rapido en pantalla) y tambien
-                -- UserInputService.InputBegan con Touch para mayor compatibilidad.
-                -- IMPORTANTE: se filtra gameProcessed=true para evitar que toques
-                -- sobre la UI (botones del hub, etc.) confirmen el lanzamiento.
+                -- El tap sobre el boton "Lanzar" genera DOS eventos en mobile:
+                --   1. Activated del boton  -> llama _ksaDoThrow
+                --   2. InputBegan/TouchTap global -> llega casi simultaneamente
+                -- Sin proteccion, el evento (2) llegaria mientras el estado ya
+                -- es "holding" de un throw ANTERIOR y lo confirmaria prematuramente.
+                -- SOLUCION: _mobileThrowStartTime se actualiza al inicio de _ksaDoThrow
+                -- (ver la linea "_mobileThrowStartTime = os.clock()" dentro de la funcion)
+                -- y los hooks de tap rechazan cualquier toque en los primeros 0.35s.
                 -- ================================================================
+                -- TouchTap: gesto rapido de tap en la pantalla del juego (no sobre UI)
                 local tapConn = UserInputService.TouchTap:Connect(function(positions, gameProcessed)
                     if gameProcessed then return end
                     if _mobileThrowState ~= "holding" then return end
+                    -- Ignorar el tap que activo el boton Lanzar (gracia de 0.35s)
+                    if os.clock() - _mobileThrowStartTime < 0.35 then return end
                     if type(_mobileTouchRelease) == "function" then
                         _mobileTouchRelease()
                     end
                 end)
                 table.insert(KnifeSAState._mobileConns, tapConn)
 
-                -- Respaldo via InputBegan Touch para executors que no exponen TouchTap correctamente
+                -- InputBegan Touch: respaldo para executors que no exponen TouchTap correctamente
                 local inputTapConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
                     if gameProcessed then return end
                     if input.UserInputType ~= Enum.UserInputType.Touch then return end
                     if _mobileThrowState ~= "holding" then return end
+                    -- Ignorar el tap que activo el boton Lanzar (gracia de 0.35s)
+                    if os.clock() - _mobileThrowStartTime < 0.35 then return end
                     if type(_mobileTouchRelease) == "function" then
                         _mobileTouchRelease()
                     end
