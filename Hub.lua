@@ -45505,6 +45505,12 @@ function CreateCombatTab()
             -- Cuando el juego llama Throw:FireServer(), lo suprimimos y en su lugar
             -- llamamos KnifeThrown:FireServer(handleCF, targetCF) con direccion SA.
             if selfName == "Throw" and KnifeSAState and KnifeSAState.enabled then
+                -- FIX: si _saBypassHook esta activo significa que _ksaFireKnife ya envio
+                -- KnifeThrown directamente (VIA 1). Dejar pasar Throw:FireServer() al servidor
+                -- sin volver a disparar KnifeThrown (evita doble disparo).
+                if CombatTabState and CombatTabState._saBypassHook then
+                    return _orig(self, ...)
+                end
                 local _intercepted = false
                 pcall(function()
                     local myChar = LocalPlayer.Character
@@ -49341,16 +49347,10 @@ function CreateCombatTab()
                         pcall(KnifeSAState._blockThrowHoldAfterThrow)
                     end
 
-                    -- VIA 1: Events.Throw:FireServer() — simula el remote nativo del KnifeClient.
-                    -- El hook __namecall lo intercepta: si hay target SA -> KnifeThrown(handleCF, targetCF).
-                    -- Si no hay target -> pasa al servidor como throw normal (knife vuela al frente).
-                    -- Esta via es la que el servidor ESPERA para procesar el lanzamiento.
-                    if freshThrowRemote then
-                        pcall(function() freshThrowRemote:FireServer() end)
-                    end
-
-                    -- VIA 2: KnifeThrown directo como respaldo (por si el hook no intercepta Throw).
-                    -- Intentar con los CFrames en el orden que MM2 acepta.
+                    -- VIA 1: KnifeThrown directo con CFrames SA — esta es la VIA PRINCIPAL.
+                    -- Disparamos KnifeThrown ANTES que Throw para que el servidor reciba
+                    -- la trayectoria SA sin depender del hook __namecall (que puede fallar
+                    -- si el knife cambio de referencia entre la resolucion y el namecall).
                     local fired = false
                     if freshKnifeThrown and finalHandleCF and finalTargetCF then
                         pcall(function() freshKnifeThrown:FireServer(finalHandleCF, finalTargetCF); fired = true end)
@@ -49363,6 +49363,18 @@ function CreateCombatTab()
                     end
                     if not fired and freshKnifeThrown and finalHandleCF then
                         pcall(function() freshKnifeThrown:FireServer(finalHandleCF); fired = true end)
+                    end
+
+                    -- VIA 2: Events.Throw:FireServer() — notifica al servidor que hubo un lanzamiento.
+                    -- Se dispara DESPUES de KnifeThrown para que el servidor valide el throw.
+                    -- El hook __namecall intercepta este remote, pero como KnifeThrown ya fue
+                    -- enviado directamente en VIA 1, si el hook falla el lanzamiento igual llego.
+                    -- FIX: pasamos _intercepted=true via _saBypassHook para que el hook NO
+                    -- duplique el KnifeThrown (evitar doble disparo).
+                    if freshThrowRemote then
+                        if CombatTabState then CombatTabState._saBypassHook = true end
+                        pcall(function() freshThrowRemote:FireServer() end)
+                        if CombatTabState then CombatTabState._saBypassHook = false end
                     end
                 end
 
