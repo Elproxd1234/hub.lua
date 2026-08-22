@@ -49323,18 +49323,31 @@ function CreateCombatTab()
                 -- El estado siempre vuelve a "idle" (timeout garantizado).
                 -- ----------------------------------------------------------------
                 local function _ksaDoThrow()
-                    -- Guard: ya hay un throw en curso
+                    -- ================================================================
+                    -- FIX v2: Guard atomico + reset garantizado con pcall total.
+                    -- Problema original: despues del 1er lanzamiento, _mobileThrowState
+                    -- quedaba en "throwing" si _ksaOnThrowingKnifeAdded no llegaba,
+                    -- bloqueando todos los lanzamientos siguientes indefinidamente.
+                    -- Ahora el timeout es 1.2s (era 2s) y se wrappea todo en pcall
+                    -- para que cualquier error interno no deje el estado atascado.
+                    -- ================================================================
                     if _mobileThrowState ~= "idle" then return end
                     _mobileThrowState = "waiting"
+
+                    -- FIX: wrap completo en pcall para garantizar reset aunque explote algo interno
+                    local _throwOk, _throwErr = pcall(function()
+
                     local myChar = LocalPlayer.Character
                     local hum    = myChar and myChar:FindFirstChildOfClass("Humanoid")
                     if not hum or hum.Health <= 0 then _mobileThrowState = "idle"; return end
-                    if KnifeSAState._lastEquipTime and (os.clock() - KnifeSAState._lastEquipTime) < 0.4 then _mobileThrowState = "idle"; return end
+                    if KnifeSAState._lastEquipTime and (os.clock() - KnifeSAState._lastEquipTime) < 0.4 then
+                        _mobileThrowState = "idle"; return
+                    end
 
-                    -- Asegurar que el knife este en mano (espera hasta 2s post-throw)
+                    -- Asegurar knife en mano
                     local knife = myChar:FindFirstChild("Knife")
                     if not knife then
-                        local bpKnife = LocalPlayer.Backpack:FindFirstChild("Knife")
+                        local bpKnife = LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild("Knife")
                         if bpKnife then
                             pcall(function() bpKnife.Parent = LocalPlayer.Character end)
                             task.wait(0.08)
@@ -49349,6 +49362,7 @@ function CreateCombatTab()
                             end
                         end
                     end
+                    -- FIX: si sigue sin knife, esperar maximo 1.5s (era 2s) para no bloquear tanto
                     if not knife then
                         local _t0knife = os.clock()
                         repeat
@@ -49356,34 +49370,40 @@ function CreateCombatTab()
                             local c = LocalPlayer.Character
                             knife = c and c:FindFirstChild("Knife")
                             if not knife then
-                                local bp2 = LocalPlayer.Backpack:FindFirstChild("Knife")
+                                local bp2 = LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild("Knife")
                                 if bp2 then
                                     pcall(function() hum:EquipTool(bp2) end)
-                                    task.wait(0.1)
+                                    task.wait(0.08)
                                     c = LocalPlayer.Character
                                     knife = c and c:FindFirstChild("Knife")
                                 end
                             end
-                        until knife or (os.clock() - _t0knife > 2.0)
+                        until knife or (os.clock() - _t0knife > 1.5)
                     end
                     if not knife then _mobileThrowState = "idle"; return end
-                    local _knifeInChar = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(knife.Name)
+
+                    -- FIX: refrescar myChar por si el character cambio durante la espera
+                    myChar = LocalPlayer.Character
+                    local _knifeInChar = myChar and myChar:FindFirstChild(knife.Name)
                     if not _knifeInChar then
                         task.wait(0.05)
-                        _knifeInChar = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(knife.Name)
+                        myChar = LocalPlayer.Character
+                        _knifeInChar = myChar and myChar:FindFirstChild(knife.Name)
                     end
                     if not _knifeInChar then _mobileThrowState = "idle"; return end
                     knife = _knifeInChar
 
                     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHRP then _mobileThrowState = "idle"; return end
+
+                    -- FIX: buscar eventos tanto en Events como directamente en el knife
                     local events      = knife:FindFirstChild("Events") or knife
                     local throwRemote = events:FindFirstChild("Throw")
-                    local knifeThrown = events:FindFirstChild("KnifeThrown") or knife:FindFirstChildWhichIsA("RemoteEvent")
+                    local knifeThrown = events:FindFirstChild("KnifeThrown")
+                        or knife:FindFirstChildWhichIsA("RemoteEvent")
                     if not knifeThrown then _mobileThrowState = "idle"; return end
 
-                    -- ================================================================
-                    -- Limpiar tracks stale del lanzamiento anterior
+                    -- Limpiar tracks del lanzamiento anterior
                     _killAllThrowAnims()
                     if KnifeSAState._animTracks then
                         for _, _cn in ipairs({"ThrowCharge","ThrowHold","ThrowKnife"}) do
@@ -49397,65 +49417,58 @@ function CreateCombatTab()
                     end
                     KnifeSAState._lastThrowHoldTrackName = nil
 
-                    -- Helper: cargar anim por ID directo del animator del personaje
+                    -- FIX: helper para cargar anim custom - reutiliza Animator fresco cada vez
                     local function _loadCustomTrack(animId)
-                        local char  = LocalPlayer.Character
-                        local animr = char and char:FindFirstChildOfClass("Humanoid")
-                            and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
-                        if not animr then return nil end
+                        local char2  = LocalPlayer.Character
+                        local hum2   = char2 and char2:FindFirstChildOfClass("Humanoid")
+                        local animr2 = hum2 and hum2:FindFirstChildOfClass("Animator")
+                        if not animr2 then return nil end
                         local animObj = Instance.new("Animation")
                         animObj.AnimationId = animId
-                        local ok, track = pcall(function() return animr:LoadAnimation(animObj) end)
+                        local ok, track = pcall(function() return animr2:LoadAnimation(animObj) end)
                         if not ok or not track then return nil end
                         track.Priority = Enum.AnimationPriority.Action
                         return track
                     end
 
-                    -- Helper: cargar anim por nombre desde KnifeClient (para ThrowKnife real)
+                    -- FIX: helper para cargar ThrowKnife del KnifeClient - siempre busca el knife fresco
                     local function _loadKnifeClientTrack(animName)
-                        local char  = LocalPlayer.Character
-                        local animr = char and char:FindFirstChildOfClass("Humanoid")
-                            and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
-                        if not animr then return nil end
-                        local kc = knife:FindFirstChild("KnifeClient")
-                        local animObj = (kc and kc:FindFirstChild(animName, true))
-                            or knife:FindFirstChild(animName, true)
+                        local char2  = LocalPlayer.Character
+                        local hum2   = char2 and char2:FindFirstChildOfClass("Humanoid")
+                        local animr2 = hum2 and hum2:FindFirstChildOfClass("Animator")
+                        if not animr2 then return nil end
+                        -- FIX: buscar el knife fresco en el character, no el knife capturado en el closure
+                        local freshKnife2 = char2:FindFirstChild("Knife") or char2:FindFirstChildOfClass("Tool")
+                        local kc2 = freshKnife2 and freshKnife2:FindFirstChild("KnifeClient")
+                        -- FIX: habilitar temporalmente KnifeClient para acceder a la animacion
+                        local kcWasDisabled = false
+                        if kc2 and kc2.Disabled then
+                            kcWasDisabled = true
+                            pcall(function() kc2.Disabled = false end)
+                            task.wait()
+                        end
+                        local animObj = (kc2 and kc2:FindFirstChild(animName, true))
+                            or (freshKnife2 and freshKnife2:FindFirstChild(animName, true))
+                        -- FIX: restaurar KnifeClient desactivado inmediatamente
+                        if kcWasDisabled and kc2 then
+                            pcall(function() kc2.Disabled = true end)
+                        end
                         if not animObj or not animObj:IsA("Animation") then return nil end
-                        local ok, track = pcall(function() return animr:LoadAnimation(animObj) end)
+                        local ok, track = pcall(function() return animr2:LoadAnimation(animObj) end)
                         if not ok or not track then return nil end
                         track.Priority = Enum.AnimationPriority.Action
                         return track
                     end
 
-                    -- Helper: esperar que un track termine (con fallback)
-                    local function _waitTrack(track, fallbackSecs)
-                        if not track then
-                            if fallbackSecs and fallbackSecs > 0 then task.wait(fallbackSecs) end
-                            return
-                        end
-                        local _t0 = os.clock()
-                        repeat task.wait(0.033) until track.IsPlaying or (os.clock() - _t0 > 0.5)
-                        if not track.IsPlaying then
-                            if fallbackSecs and fallbackSecs > 0 then task.wait(fallbackSecs) end
-                            return
-                        end
-                        local _t1 = os.clock()
-                        repeat task.wait(0.033) until (track.Length or 0) > 0.05 or (os.clock() - _t1 > 0.4)
-                        local len = track.Length or 0
-                        if len < 0.05 then task.wait(fallbackSecs or 0.8); return end
-                        task.wait(len)
-                        if track.IsPlaying then pcall(function() track:Stop(0) end) end
-                    end
-
-                    -- Bloquear anims del servidor que interfieren durante charge/hold
+                    -- Bloquear anims del servidor durante charge/hold
                     local _srvBlockConn = nil
                     local function _startSrvBlock()
-                        local char  = LocalPlayer.Character
-                        local animr = char and char:FindFirstChildOfClass("Humanoid")
-                            and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
-                        if not animr then return end
+                        local char2  = LocalPlayer.Character
+                        local hum2   = char2 and char2:FindFirstChildOfClass("Humanoid")
+                        local animr2 = hum2 and hum2:FindFirstChildOfClass("Animator")
+                        if not animr2 then return end
                         if _srvBlockConn then pcall(function() _srvBlockConn:Disconnect() end) end
-                        _srvBlockConn = animr.AnimationPlayed:Connect(function(t)
+                        _srvBlockConn = animr2.AnimationPlayed:Connect(function(t)
                             if _mobileThrowState ~= "charging" and _mobileThrowState ~= "holding" then return end
                             local n = (t.Name or ""):lower()
                             if n:find("throwhold") or n:find("throw_hold")
@@ -49476,19 +49489,14 @@ function CreateCombatTab()
                         end
                     end
 
-                    -- ----------------------------------------------------------------
-                    -- FASE 1+2 SIMPLIFICADA: un solo press del boton = lanzamiento completo.
-                    -- Eliminada la espera de segundo toque que era la causa de los bugs.
-                    -- Solo reproducimos la animacion ThrowCharge brevemente y pasamos
-                    -- directo a FASE 3 (ThrowKnife + FireServer).
-                    -- ----------------------------------------------------------------
+                    -- FASE 1: Animacion de carga breve
                     _mobileThrowState = "charging"
                     _startSrvBlock()
                     local chargeTrack = _loadCustomTrack("rbxassetid://1957618848")
                     _activeChargeTrack = chargeTrack
                     if chargeTrack then pcall(function() chargeTrack:Play(0) end) end
 
-                    -- Pequena pausa visual (animacion de carga), sin esperar que termine
+                    -- Pausa visual minima
                     task.wait(0.18)
 
                     -- Guard: murio durante la pausa
@@ -49500,50 +49508,40 @@ function CreateCombatTab()
                         end
                     end
 
-                    -- Pasar directo a FASE 3 sin esperar segundo toque
+                    -- FASE 2->3: directo al lanzamiento
                     _mobileThrowState = "holding"
-                    local holdTrack = nil  -- No usamos holdTrack en este modo
                     _activeHoldTrack = nil
 
-                    -- ----------------------------------------------------------------
-                    -- FASE 3: ThrowKnife real del KnifeClient + FireServer
-                    -- Usar ThrowKnife del KnifeClient es OBLIGATORIO para que el servidor
-                    -- acepte el KnifeThrown:FireServer (valida que la animacion haya corrido).
-                    -- ----------------------------------------------------------------
                     _mobileThrowState = "throwing"
                     _stopSrvBlock()
 
-                    if holdTrack then
-                        pcall(function() holdTrack.Looped = false end)
-                        pcall(function() holdTrack:Stop(0) end)
-                    end
-                    _activeHoldTrack = nil
-
                     local _now3 = os.clock()
-                    _lastMobileSAThrow    = _now3
+                    _lastMobileSAThrow            = _now3
                     KnifeSAState._lastMobileThrowTime = _now3
 
-                    -- Reproducir ThrowKnife del KnifeClient real
+                    -- FIX: cargar ThrowKnife con knife fresco del character
                     local throwKnifeTrack = _loadKnifeClientTrack("ThrowKnife")
                     _activeKnifeTrack = throwKnifeTrack
                     if throwKnifeTrack then
                         pcall(function() throwKnifeTrack:Play(0.1) end)
                     end
 
-                    -- Pequeña espera para que el servidor registre la animacion
+                    -- Espera minima para que el servidor registre la animacion
                     task.wait(0.05)
 
-                    -- Construir CFrames y disparar FireServer
+                    -- Construir CFrames con HRP fresco
                     local myChar3 = LocalPlayer.Character
                     local myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
                     if not myHRP3 then
                         local _t0hrp = os.clock()
-                        repeat task.wait(0.016)
+                        repeat
+                            task.wait(0.016)
                             myChar3 = LocalPlayer.Character
                             myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
                         until myHRP3 or (os.clock() - _t0hrp > 0.3)
                     end
 
+                    -- FIX: resolver knife/remote siempre desde el character actual
                     local freshKnife = myChar3 and (
                         myChar3:FindFirstChild("Knife") or myChar3:FindFirstChildOfClass("Tool")
                     )
@@ -49555,22 +49553,27 @@ function CreateCombatTab()
 
                     local resolvedKT = freshKnifeThrown or knifeThrown
                     local resolvedTR = freshThrowRemote or throwRemote
-                    local hcf, tcf  = _ksaBuildCFrames(myHRP3)
+                    local hcf, tcf   = _ksaBuildCFrames(myHRP3)
 
                     _ksaFireKnife(resolvedKT, resolvedTR, hcf, tcf)
 
-                    -- RESET GARANTIZADO: si _ksaOnThrowingKnifeAdded no llega
-                    -- (servidor no responde), volvemos a idle despues de 2s
-                    -- para que el boton funcione de nuevo sin tener que presionar muchas veces.
-                    -- FIX: tambien resetear _lastMobileSAThrow para que el guard de 0.35s
-                    -- no bloquee el siguiente press del boton Lanzar despues del reset.
-                    task.delay(2, function()
+                    end) -- fin pcall
+
+                    -- FIX: reset garantizado siempre, independientemente de errores
+                    -- Timeout reducido a 1.2s (era 2s) para respuesta mas rapida entre throws
+                    task.delay(1.2, function()
                         if _mobileThrowState == "throwing" then
                             _killAllThrowAnims()
                             _mobileThrowState = "idle"
-                            _lastMobileSAThrow = -999  -- liberar el cooldown del boton inmediatamente
+                            _lastMobileSAThrow = -999
                         end
                     end)
+                    -- FIX: si el pcall fallo, resetear inmediatamente en lugar de esperar el timeout
+                    if not _throwOk then
+                        _killAllThrowAnims()
+                        _mobileThrowState = "idle"
+                        _lastMobileSAThrow = -999
+                    end
                 end
 
                 -- ================================================================
