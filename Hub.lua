@@ -7314,6 +7314,10 @@ function _KnifeSA_setupKnife(knife)
         end
         if os.clock() - lastStab  < stabCooldown then return end
         if os.clock() - lastThrow < 0.3          then return end
+        -- FIX MOBILE: lastThrow solo se actualiza por RMB (desktop).
+        -- En mobile el throw pasa por _ksaFireKnife que no toca lastThrow.
+        -- Usar KnifeSAState._lastMobileThrowTime para bloquear slash post-throw mobile.
+        if KnifeSAState._lastMobileThrowTime and (os.clock() - KnifeSAState._lastMobileThrowTime) < 1.0 then return end
         stabbing = true
         lastStab = os.clock()
         task.spawn(_playSlashAnim)
@@ -49552,9 +49556,16 @@ function CreateCombatTab()
                 end
 
                 -- Helper: esperar que un AnimationTrack termine (evento Stopped + timeout)
+                -- FIX: esperar a que el track este realmente reproduciendose ANTES de
+                -- conectar el listener de Stopped. Sin esto, el Stop(0) que hace
+                -- _playKnifeAnim para resetear el track puede emitir Stopped de forma
+                -- diferida y disparar done=true antes de que la animacion siquiera empiece.
                 local function _waitTrackStopped(track, extraTimeout)
                     if not track then return end
-                    task.wait()  -- un frame para que Length se populate en mobile
+                    -- Esperar hasta 0.2s a que el track empiece a reproducirse
+                    local t_start = os.clock()
+                    repeat task.wait(0.016) until track.IsPlaying or (os.clock() - t_start > 0.2)
+                    if not track.IsPlaying then return end  -- nunca empezo, nada que esperar
                     local len = track.Length or 0
                     if len < 0.05 then return end
                     local done = false
@@ -49680,11 +49691,18 @@ function CreateCombatTab()
                     end
 
                     -- Conectar el proximo touch en pantalla como trigger de lanzamiento
+                    -- FIX: guardar el tiempo exacto en que entramos a "holding" para
+                    -- rechazar cualquier InputBegan que llegue en los primeros 0.05s
+                    -- (residuo del tap que inicio el throw, evita auto-release inmediato).
+                    local _holdingEnteredAt = os.clock()
                     _releaseConn = UserInputService.InputBegan:Connect(function(inp, gp)
                         if gp then return end
                         if inp.UserInputType ~= Enum.UserInputType.Touch
                         and inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
                         if _mobileThrowState ~= "holding" then return end
+                        -- Ignorar eventos de input que llegan menos de 0.05s despues
+                        -- de entrar en holding (pueden ser colas del tap anterior)
+                        if os.clock() - _holdingEnteredAt < 0.05 then return end
                         _doRelease()
                     end)
 
@@ -49730,7 +49748,11 @@ function CreateCombatTab()
                     -- FIX: marcar el timestamp AHORA para que el workspace watcher
                     -- (_ksaOnThrowingKnifeAdded) no re-dispare _ksaDoThrow cuando
                     -- ThrowingKnife llega desde el servidor con delay de red.
-                    _lastMobileSAThrow = os.clock()
+                    local _now3 = os.clock()
+                    _lastMobileSAThrow = _now3
+                    -- FIX SLASH: exponer tiempo del throw mobile para que _doSlash
+                    -- no se dispare en los 1s posteriores al lanzamiento.
+                    KnifeSAState._lastMobileThrowTime = _now3
 
                     -- Detener ThrowHold: FIX Looped=false + Stop(0) + invalidar cache
                     local function _killThrowHold()
