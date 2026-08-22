@@ -49556,25 +49556,23 @@ function CreateCombatTab()
                 end
 
                 -- Helper: esperar que un AnimationTrack termine.
-                -- FIX DEFINITIVO: NO usar track.Stopped porque _playKnifeAnim hace
-                -- Stop(0)+Play() y el evento Stopped del Stop anterior puede llegar
-                -- despues de que Play() inicio, causando que la espera termine antes
-                -- de que ThrowCharge realmente termine.
-                -- En cambio: esperar IsPlaying=true, leer Length, esperar esa duracion.
+                -- En mobile, track.Length puede ser 0 durante los primeros frames.
+                -- Esperamos a que IsPlaying=true Y Length > 0 antes de usar la duracion.
                 local function _waitTrackStopped(track, extraTimeout)
                     if not track then return end
-                    -- Esperar hasta 0.3s a que el track empiece a reproducirse
+                    -- Esperar hasta 0.5s a que el track empiece Y tenga Length valido
                     local t_start = os.clock()
-                    repeat task.wait(0.016) until track.IsPlaying or (os.clock() - t_start > 0.3)
-                    if not track.IsPlaying then return end  -- nunca empezo
+                    repeat task.wait(0.033) until (track.IsPlaying and (track.Length or 0) > 0.05)
+                        or (os.clock() - t_start > 0.5)
+                    if not track.IsPlaying then return end
                     local len = track.Length or 0
-                    if len < 0.05 then return end
+                    if len < 0.05 then
+                        -- Length todavia 0 en mobile: esperar un tiempo fijo de seguridad
+                        task.wait(0.8)
+                        return
+                    end
                     -- Esperar la duracion real de la animacion + margen
                     task.wait(len + (extraTimeout or 0.1))
-                    -- Si por algun motivo todavia esta playing, esperar un poco mas
-                    if track.IsPlaying then
-                        task.wait(0.2)
-                    end
                 end
 
                 -- ----------------------------------------------------------------
@@ -49683,84 +49681,19 @@ function CreateCombatTab()
                     local hum2    = myChar2 and myChar2:FindFirstChildOfClass("Humanoid")
                     if not hum2 or hum2.Health <= 0 then _mobileThrowState = "idle"; return end
 
-                    -- FASE 2: reproducir ThrowHold y ESPERAR que el jugador toque la pantalla
+                    -- FASE 2: reproducir ThrowHold brevemente (visual solamente)
+                    -- SIMPLIFICADO: no esperamos segundo tap. ThrowHold dura ~0.15s y
+                    -- lanzamos automaticamente. Elimina todos los problemas de _releaseConn,
+                    -- _mobileTouchRelease y race conditions con _ksaOnThrowingKnifeAdded.
                     _mobileThrowState = "holding"
                     if KnifeSAState._playThrowHoldAnim then
                         pcall(KnifeSAState._playThrowHoldAnim)
                     end
-
-                    -- Pequeno delay antes de escuchar el proximo touch,
-                    -- para evitar capturar el mismo tap que inicio el throw
                     task.wait(0.15)
+                    if _mobileThrowState ~= "holding" then return end  -- murio/cancelo
 
-                    -- Si durante ese delay el jugador murio o alguien cancelo, abortar
-                    if _mobileThrowState ~= "holding" then return end
-
-                    -- Registrar una conexion one-shot de Touch para disparar la fase 3
-                    -- Se cancela sola con timeout de 5s si el jugador no toca
-                    local _releaseConn   = nil
-                    local _released      = false
-                    local _releaseTimeout = 5.0
-
-                    local function _doRelease()
-                        if _released then return end
-                        _released = true
-                        if _releaseConn then _releaseConn:Disconnect(); _releaseConn = nil end
-                        _mobileTouchRelease = nil
-                    end
-
-                    -- Conectar el proximo touch en pantalla como trigger de lanzamiento
-                    -- FIX: guardar el tiempo exacto en que entramos a "holding" para
-                    -- rechazar cualquier InputBegan que llegue en los primeros 0.05s
-                    -- (residuo del tap que inicio el throw, evita auto-release inmediato).
-                    local _holdingEnteredAt = os.clock()
-                    _releaseConn = UserInputService.InputBegan:Connect(function(inp, gp)
-                        if gp then return end
-                        if inp.UserInputType ~= Enum.UserInputType.Touch
-                        and inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-                        if _mobileThrowState ~= "holding" then return end
-                        -- Ignorar eventos de input que llegan menos de 0.05s despues
-                        -- de entrar en holding (pueden ser colas del tap anterior)
-                        if os.clock() - _holdingEnteredAt < 0.05 then return end
-                        _doRelease()
-                    end)
-
-                    -- Exponer funcion de release para que el watcher de ThrowingKnife pueda usarla
-                    _mobileTouchRelease = _doRelease
-
-                    -- Esperar el touch del jugador (o timeout)
-                    local _t0 = os.clock()
-                    repeat task.wait(0.033) until _released or (os.clock() - _t0 > _releaseTimeout)
-
-                    -- Si el jugador no toco en tiempo, cancelar y detener ThrowHold
-                    if not _released then
-                        _doRelease()
-                        -- FIX: Looped=false + Stop(0) + invalidar cache en los 3 lugares
-                        local function _killThrowHold()
-                            local holdName  = KnifeSAState._lastThrowHoldTrackName
-                            local holdTrack = holdName and KnifeSAState._animTracks and KnifeSAState._animTracks[holdName]
-                            if holdTrack then
-                                pcall(function() holdTrack.Looped = false end)
-                                pcall(function() holdTrack:Stop(0) end)
-                            end
-                            if KnifeSAState._animTracks then KnifeSAState._animTracks["ThrowHold"] = nil end
-                            KnifeSAState._lastThrowHoldTrackName = nil
-                            local char = LocalPlayer.Character
-                            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-                            local animr = hum and hum:FindFirstChildOfClass("Animator")
-                            if not animr then return end
-                            for _, t in ipairs(animr:GetPlayingAnimationTracks()) do
-                                local n = (t.Name or ""):lower()
-                                if n == "throwhold" or n == "throw_hold" then
-                                    pcall(function() t.Looped = false end)
-                                    pcall(function() t:Stop(0) end)
-                                end
-                            end
-                        end
-                        pcall(_killThrowHold)
-                        _mobileThrowState = "idle"
-                        return
-                    end
+                    -- Limpiar _mobileTouchRelease (ya no se usa pero por compatibilidad)
+                    _mobileTouchRelease = nil
 
                     -- FASE 3: ThrowKnife (animacion de lanzamiento) + FireServer
                     _mobileThrowState = "idle"
@@ -49861,21 +49794,14 @@ function CreateCombatTab()
                     local handle = handleLink.Value
                     if not handle:IsDescendantOf(myChar) then return end
                     local now = os.clock()
-                    -- Si estamos en ThrowHold esperando touch, disparar la fase 3 ahora.
-                    -- NO aplicar cooldown aqui: el timestamp ya fue marcado en fase 3 de
-                    -- _ksaDoThrow, lo que bloquearia este branch con el check de 0.35s.
-                    if _mobileThrowState == "holding" and _mobileTouchRelease then
-                        _lastMobileSAThrow = now
-                        _mobileTouchRelease()
-                    elseif _mobileThrowState == "idle" then
-                        -- FIX: ThrowingKnife puede aparecer en workspace con delay de red
-                        -- DESPUES de que _ksaDoThrow ya completo la fase 3 y reseteo a "idle".
-                        -- Cooldown largo (2s) para no re-disparar ThrowCharge por el mismo knife.
+                    -- Solo bloquear re-triggers en idle (ThrowingKnife del throw anterior
+                    -- llega con delay de red despues de que ya completamos la fase 3).
+                    if _mobileThrowState == "idle" then
                         if now - _lastMobileSAThrow < 2.0 then return end
                         _lastMobileSAThrow = now
-                        -- SA activo pero el throw fue iniciado sin nuestro boton (edge case real)
                         task.spawn(_ksaDoThrow)
                     end
+                    -- En "charging" o "holding": no hacer nada, el flujo sigue su curso normal.
                 end
 
                 -- Hookear workspace.ChildAdded para detectar ThrowingKnife del local player
