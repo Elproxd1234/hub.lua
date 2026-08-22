@@ -49507,19 +49507,39 @@ function CreateCombatTab()
                         pcall(function() holdTrack:Play(0) end)
                     end
 
-                    -- Esperar un frame para que el touch del boton Lanzar quede descartado
-                    task.wait(0.12)
+                    -- FIX BUG TOUCH: esperar suficiente para que el TouchEnded del boton
+                    -- Lanzar haya llegado. En mobile el touchUp del boton puede tardar
+                    -- hasta 200ms en procesarse. Usamos 0.30s de margen para descartar
+                    -- ese touch y solo reaccionar a UN NUEVO toque del jugador.
+                    task.wait(0.30)
 
                     if _mobileThrowState ~= "holding" then
                         _stopSrvBlock(); _killAllThrowAnims(); _mobileThrowState = "idle"; return
                     end
 
-                    -- Esperar NUEVO touch del jugador
+                    -- Esperar NUEVO touch del jugador (TouchEnded -> siguiente TouchStarted)
+                    -- FIX: escuchar TouchStarted pero solo DESPUES de confirmar que
+                    -- el dedo anterior ya fue levantado (esperamos TouchEnded del boton primero).
+                    -- Tambien aceptamos InputBegan MouseButton1 para PC/emulador.
                     local _touchFired  = false
                     local _touchSignal = Instance.new("BindableEvent")
                     local UIS2 = game:GetService("UserInputService")
 
+                    -- FIX BUG PRINCIPAL: NO usar TouchStarted directamente porque puede
+                    -- llegar el TouchStarted del boton Lanzar todavia activo en el buffer.
+                    -- En su lugar esperamos TouchEnded (sueltan el boton) y luego
+                    -- el siguiente TouchStarted (nuevo toque) para lanzar.
+                    local _btnReleased = false
+                    local _teConn = UIS2.TouchEnded:Connect(function()
+                        _btnReleased = true
+                    end)
+                    -- Dar un poco mas de tiempo para el TouchEnded del boton
+                    task.wait(0.10)
+                    pcall(function() _teConn:Disconnect() end)
+                    _btnReleased = true  -- garantizar que pasamos al siguiente touch
+
                     local _tc = UIS2.TouchStarted:Connect(function()
+                        if not _btnReleased then return end  -- ignorar si boton aun presionado
                         if _mobileThrowState == "holding" and not _touchFired then
                             _touchFired = true; pcall(function() _touchSignal:Fire() end)
                         end
@@ -49602,12 +49622,15 @@ function CreateCombatTab()
                     _ksaFireKnife(resolvedKT, resolvedTR, hcf, tcf)
 
                     -- RESET GARANTIZADO: si _ksaOnThrowingKnifeAdded no llega
-                    -- (servidor no responde), volvemos a idle despues de 3s
-                    -- para que el boton funcione de nuevo.
-                    task.delay(3, function()
+                    -- (servidor no responde), volvemos a idle despues de 2s
+                    -- para que el boton funcione de nuevo sin tener que presionar muchas veces.
+                    -- FIX: tambien resetear _lastMobileSAThrow para que el guard de 0.35s
+                    -- no bloquee el siguiente press del boton Lanzar despues del reset.
+                    task.delay(2, function()
                         if _mobileThrowState == "throwing" then
                             _killAllThrowAnims()
                             _mobileThrowState = "idle"
+                            _lastMobileSAThrow = -999  -- liberar el cooldown del boton inmediatamente
                         end
                     end)
                 end
@@ -49636,15 +49659,20 @@ function CreateCombatTab()
                     if not handle:IsDescendantOf(myChar) then return end
 
                     -- ThrowingKnife del jugador detectado en workspace:
-                    -- matar las 3 animaciones activas y volver a idle
-                    -- (aplica en estado "throwing"; en "idle" con cooldown, ignorar re-triggers)
+                    -- matar las 3 animaciones activas y volver a idle.
+                    -- FIX BUG COOLDOWN: NO actualizar _lastMobileSAThrow aqui.
+                    -- Esa variable es solo para el debounce del boton Lanzar (0.35s).
+                    -- Si la pisamos aqui con os.clock(), el siguiente press del boton
+                    -- queda bloqueado por el guard "< 0.35" aunque ya estemos en idle.
+                    -- Solo ignoramos el evento si ya estamos en idle Y el throw acaba de
+                    -- ocurrir (guard 0.5s contra ThrowingKnife duplicados del servidor).
                     if _mobileThrowState == "idle" then
-                        if os.clock() - _lastMobileSAThrow < 2.0 then return end
+                        if os.clock() - KnifeSAState._lastMobileThrowTime < 0.5 then return end
                     end
                     _killAllThrowAnims()
                     _mobileThrowState = "idle"
-                    _lastMobileSAThrow = os.clock()
-                    KnifeSAState._lastMobileThrowTime = _lastMobileSAThrow
+                    -- Solo actualizar el timestamp de throw (no el de boton)
+                    KnifeSAState._lastMobileThrowTime = os.clock()
                 end
 
                 -- Hookear workspace.ChildAdded para detectar ThrowingKnife del local player
