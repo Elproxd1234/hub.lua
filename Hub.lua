@@ -49351,44 +49351,81 @@ function CreateCombatTab()
                 -- ya fueron declarados arriba en el mismo scope (bloque externo).
                 local _throwState = 0
 
-                -- Helpers de anim directos que buscan tracks en KnifeSAState._animTracks
-                -- sin depender de closures que pueden quedar desactualizados al re-equipar
-                local function _msa_playAnim(name)
-                    local tracks = KnifeSAState._animTracks
-                    if not tracks then return nil end
-                    -- Intentar via KnifeSAState helper primero
-                    if name == "ThrowCharge" and type(KnifeSAState._playThrowAnim) == "function" then
-                        pcall(KnifeSAState._playThrowAnim)
-                        return tracks["ThrowCharge"]
-                    elseif name == "ThrowKnife" and type(KnifeSAState._playThrowKnifeAnim) == "function" then
-                        pcall(KnifeSAState._playThrowKnifeAnim)
-                        return tracks["ThrowKnife"]
-                    end
-                    -- Fallback: cargar y reproducir directamente desde el Animator
-                    local char = LocalPlayer.Character
-                    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-                    local anim = hum and hum:FindFirstChildOfClass("Animator")
-                    if not anim then return nil end
-                    local knifeChar = char and char:FindFirstChild("Knife")
-                    local kc2 = knifeChar and knifeChar:FindFirstChild("KnifeClient")
-                    local animObj = kc2 and kc2:FindFirstChild(name)
-                    if not animObj then return nil end
-                    local ok, track = pcall(function() return anim:LoadAnimation(animObj) end)
-                    if not ok or not track then return nil end
-                    track.Priority = Enum.AnimationPriority.Action
-                    if track.IsPlaying then pcall(function() track:Stop(0) end); task.wait() end
-                    pcall(function() track:Play(0.05); track:AdjustSpeed(1.0) end)
-                    tracks[name] = track
-                    return track
+                -- Cache propio de tracks (independiente de KnifeSAState closures)
+                -- Se invalida cada vez que el knife cambia, al igual que en _setupKnife
+                local _msaTracks = {}
+
+                -- Obtiene el Animator del personaje local
+                local function _msa_getAnimator()
+                    local c = LocalPlayer.Character
+                    local h = c and c:FindFirstChildOfClass("Humanoid")
+                    return h and h:FindFirstChildOfClass("Animator")
                 end
 
+                -- Obtiene el KnifeClient del knife actualmente equipado
+                local function _msa_getKC()
+                    local c = LocalPlayer.Character
+                    local k = c and c:FindFirstChild("Knife")
+                    return k and k:FindFirstChild("KnifeClient")
+                end
+
+                -- Carga y reproduce una animacion directamente desde el KnifeClient.
+                -- No usa ningún closure de KnifeSAState. Devuelve el AnimationTrack.
+                local function _msa_playAnim(name)
+                    local anim = _msa_getAnimator()
+                    if not anim then return nil end
+                    local kc2 = _msa_getKC()
+                    if not kc2 then return nil end
+                    local animObj = kc2:FindFirstChild(name)
+                    if not animObj then return nil end
+
+                    -- Reusar track si ya existe y es valido
+                    local cached = _msaTracks[name]
+                    if cached then
+                        local ok = pcall(function() return cached.IsPlaying end)
+                        if not ok then cached = nil; _msaTracks[name] = nil end
+                    end
+                    if not cached then
+                        local ok, t = pcall(function() return anim:LoadAnimation(animObj) end)
+                        if not ok or not t then return nil end
+                        t.Priority = Enum.AnimationPriority.Action
+                        _msaTracks[name] = t
+                        cached = t
+                    end
+
+                    -- Parar si ya estaba corriendo
+                    if cached.IsPlaying then
+                        pcall(function() cached:Stop(0) end)
+                        task.wait(0.016)
+                    end
+                    pcall(function() cached:Play(0.05); cached:AdjustSpeed(1.0) end)
+                    return cached
+                end
+
+                -- ThrowHold: reproducir si existe, sino congelar ThrowCharge
                 local function _msa_playHold()
-                    if type(KnifeSAState._playThrowHoldAnim) == "function" then
-                        pcall(KnifeSAState._playThrowHoldAnim)
+                    local anim = _msa_getAnimator()
+                    local kc2  = _msa_getKC()
+                    if anim and kc2 and kc2:FindFirstChild("ThrowHold") then
+                        -- ThrowHold existe: cargarlo y reproducirlo
+                        local animObj = kc2:FindFirstChild("ThrowHold")
+                        local cached  = _msaTracks["ThrowHold"]
+                        if not cached then
+                            local ok, t = pcall(function() return anim:LoadAnimation(animObj) end)
+                            if ok and t then
+                                t.Priority = Enum.AnimationPriority.Action
+                                _msaTracks["ThrowHold"] = t
+                                cached = t
+                            end
+                        end
+                        if cached then
+                            cached.Looped = true
+                            if cached.IsPlaying then pcall(function() cached:Stop(0) end); task.wait(0.016) end
+                            pcall(function() cached:Play(0.05); cached:AdjustSpeed(1.0) end)
+                        end
                     else
-                        -- fallback: congelar ThrowCharge en loop
-                        local tracks = KnifeSAState._animTracks
-                        local t = tracks and tracks["ThrowCharge"]
+                        -- ThrowHold no existe: congelar ThrowCharge en el ultimo frame
+                        local t = _msaTracks["ThrowCharge"]
                         if t then
                             pcall(function()
                                 t.Looped = true
@@ -49399,31 +49436,46 @@ function CreateCombatTab()
                     end
                 end
 
+                -- Detener ThrowHold (o ThrowCharge congelado) antes de ThrowKnife
                 local function _msa_releaseHold()
-                    if type(KnifeSAState._releaseThrowHoldAnim) == "function" then
-                        pcall(KnifeSAState._releaseThrowHoldAnim)
-                    else
-                        local tracks = KnifeSAState._animTracks
-                        if not tracks then return end
-                        local hold   = tracks["ThrowHold"]
-                        local charge = tracks["ThrowCharge"]
-                        if hold   and hold.IsPlaying   then pcall(function() hold.Looped = false;   hold:Stop(0) end) end
-                        if charge and charge.IsPlaying then pcall(function() charge.Looped = false; charge:Stop(0) end) end
-                    end
+                    local hold   = _msaTracks["ThrowHold"]
+                    local charge = _msaTracks["ThrowCharge"]
+                    if hold   and hold.IsPlaying   then pcall(function() hold.Looped   = false; hold:Stop(0)   end) end
+                    if charge and charge.IsPlaying then pcall(function() charge.Looped = false; charge:Stop(0) end) end
                 end
 
-                -- Espera a que un track termine (o timeout)
-                local function _msa_waitTrack(track, extraSec)
-                    if not track then task.wait(extraSec or 0.5); return end
+                -- Esperar que un track termine (con fallback por tiempo)
+                local function _msa_waitTrack(track, fallbackSec)
+                    if not track then task.wait(fallbackSec or 0.5); return end
                     local t0 = os.clock()
-                    -- Esperar que arranque (max 0.5s)
                     repeat task.wait(0.016) until track.IsPlaying or (os.clock()-t0) > 0.5
-                    local len = (track.Length and track.Length > 0.05) and track.Length or (extraSec or 0.5)
+                    local len = (track.Length and track.Length > 0.05) and track.Length or (fallbackSec or 0.5)
                     local t1 = os.clock()
-                    -- Esperar que termine completamente
                     repeat task.wait(0.016) until
                         not track.IsPlaying
                         or (os.clock()-t1) >= len + 0.1
+                end
+
+                -- Invalidar cache cuando el knife se re-equipa (puede cambiar el Animator)
+                do
+                    local c = LocalPlayer.Character
+                    local k = c and c:FindFirstChild("Knife")
+                    if k then
+                        k.Unequipped:Connect(function() _msaTracks = {} end)
+                        k.Equipped:Connect(function()   _msaTracks = {} end)
+                    end
+                    -- Tambien vigilar si se equipa un knife nuevo
+                    if c then
+                        c.ChildAdded:Connect(function(child)
+                            if child:IsA("Tool") and child.Name == "Knife" then
+                                _msaTracks = {}
+                                pcall(function()
+                                    child.Unequipped:Connect(function() _msaTracks = {} end)
+                                    child.Equipped:Connect(function()   _msaTracks = {} end)
+                                end)
+                            end
+                        end)
+                    end
                 end
 
                 -- Secuencia principal: UN ciclo completo por presion del boton LANZAR
