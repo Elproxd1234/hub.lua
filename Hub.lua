@@ -49429,7 +49429,7 @@ function CreateCombatTab()
                     _seqTouchTime = os.clock()
                     _seqRunning = true
 
-                    -- Asegurar que el knife esta en el Character (no en Backpack)
+                    -- Resolver knife y referencias
                     local c     = LocalPlayer.Character
                     local knife = c and c:FindFirstChild("Knife")
                     if not knife then
@@ -49443,90 +49443,101 @@ function CreateCombatTab()
                     local kt = ev and ev:FindFirstChild("KnifeThrown")
                     if not kt then _seqRunning = false; return end
 
-                    -- Obtener el Animator del personaje
                     local hum      = c and c:FindFirstChildOfClass("Humanoid")
                     local animator = hum and hum:FindFirstChildOfClass("Animator")
+                    if not animator then _seqRunning = false; return end
 
-                    -- Helper: cargar y reproducir animacion desde KnifeClient
-                    local function _playKcAnim(animName, speed, looped)
-                        if not animator or not kc then return nil end
-                        local animInst = kc:FindFirstChild(animName)
-                        if not animInst then return nil end
+                    -- ================================================================
+                    -- Helper local: carga el Animation object de KnifeClient y devuelve
+                    -- un AnimationTrack FRESCO (sin reutilizar el cache de _animTracks
+                    -- de KnifeSAState, que puede tener Looped/Speed sucios de frames
+                    -- anteriores y causar el reinicio de animacion).
+                    -- ================================================================
+                    local function _freshTrack(animName, looped, speed)
+                        if not kc then return nil end
+                        local animObj = kc:FindFirstChild(animName)
+                        if not animObj then return nil end
                         local ok, track = pcall(function()
-                            return animator:LoadAnimation(animInst)
+                            return animator:LoadAnimation(animObj)
                         end)
                         if not ok or not track then return nil end
-                        track.Looped = looped or false
-                        pcall(function() track:Play(0.1, 1, speed or 1) end)
+                        -- Forzar estado limpio antes de reproducir
+                        pcall(function() track:Stop(0) end)
+                        track.Looped   = looped or false
+                        track.Priority = Enum.AnimationPriority.Action4
+                        pcall(function() track:Play(0.05, 1, speed or 1) end)
                         return track
                     end
 
-                    -- Helper: detener un track con seguridad
-                    local function _stopTrack(track)
-                        if track then pcall(function() track:Stop(0.1) end) end
+                    local function _stopFresh(track)
+                        if not track then return end
+                        pcall(function() track.Looped = false end)
+                        pcall(function() track:Stop(0.05) end)
                     end
 
-                    -- Helper: esperar a que un track termine (con timeout)
-                    local function _waitTrack(track, timeout)
+                    -- Espera que un track termine con timeout
+                    local function _waitDone(track, timeout)
                         if not track then task.wait(timeout or 0.3); return end
                         local t0    = os.clock()
-                        local limit = timeout or (track.Length and track.Length + 0.1) or 1.5
-                        repeat task.wait(0.016) until not track.IsPlaying or (os.clock()-t0) > limit
+                        local limit = timeout or math.max((track.Length or 0) + 0.15, 0.5)
+                        repeat task.wait(0.016)
+                        until not track.IsPlaying or (os.clock()-t0) >= limit
                     end
+
+                    -- ---- PRE-LIMPIEZA ----
+                    -- Detener cualquier animacion de slash/stab en curso para que
+                    -- ThrowCharge no quede superpuesta y cause el efecto de "baja y sube"
+                    pcall(function()
+                        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                            local n = (t.Name or ""):lower()
+                            if n:find("slash") or n:find("stab") or n:find("downstab")
+                            or n:find("charge") or n:find("hold") or n:find("throw") then
+                                pcall(function() t.Looped = false; t:Stop(0) end)
+                            end
+                        end
+                    end)
+                    -- Tambien limpiar el cache de _animTracks de KnifeSAState para
+                    -- evitar que tracks "sucios" (Looped=true, Speed=0) interfieran
+                    if KnifeSAState._animTracks then
+                        for _, name in ipairs({"ThrowCharge","ThrowHold","ThrowKnife"}) do
+                            local cached = KnifeSAState._animTracks[name]
+                            if cached then
+                                pcall(function() cached.Looped = false; cached:Stop(0) end)
+                                KnifeSAState._animTracks[name] = nil
+                            end
+                        end
+                    end
+                    task.wait(0.033)  -- un frame para que el Animator procese los stops
 
                     -- ---- FASE 1: ThrowCharge ----
-                    -- Detener slash/stab que pudiera estar en curso
-                    if animator then
-                        pcall(function()
-                            for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                                local n = (t.Name or ""):lower()
-                                if n:find("slash") or n:find("stab") or n:find("downstab") then
-                                    pcall(function() t:Stop(0.05) end)
-                                end
-                            end
-                        end)
-                    end
-
-                    local chargeTrack = nil
-                    if KnifeSAState._playThrowAnim then
-                        -- Usar funcion cacheada de KnifeSAState (ya conoce el knife correcto)
-                        pcall(KnifeSAState._playThrowAnim)
-                        task.wait(0.016)
-                        if animator then
-                            pcall(function()
-                                for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                                    local n = (t.Name or ""):lower()
-                                    if n == "throwcharge" or n == "throw_charge" or n == "charge" then
-                                        chargeTrack = t; break
-                                    end
-                                end
-                            end)
-                        end
-                    else
-                        -- Fallback directo desde KnifeClient
-                        local attr = knife:GetAttribute("ThrowSpeed") or 1
-                        chargeTrack = _playKcAnim("ThrowCharge", 1 / attr, false)
-                    end
-
-                    _waitTrack(chargeTrack, 2.0)
+                    local attr        = knife:GetAttribute("ThrowSpeed") or 1
+                    local chargeSpeed = 1 / math.max(attr, 0.1)
+                    local chargeTrack = _freshTrack("ThrowCharge", false, chargeSpeed)
+                    -- Si no hay ThrowCharge en KnifeClient, esperar un tiempo fijo
+                    _waitDone(chargeTrack, math.max(attr + 0.1, 0.5))
+                    _stopFresh(chargeTrack)
 
                     -- ---- FASE 2: ThrowHold ----
+                    -- Solo si existe el objeto Animation en KnifeClient.
+                    -- Looped=true para que no termine solo. Paramos nosotros.
                     local holdTrack = nil
-                    if kc and kc:FindFirstChild("ThrowHold") then
-                        holdTrack = _playKcAnim("ThrowHold", 1, true)  -- loop=true
+                    if kc:FindFirstChild("ThrowHold") then
+                        holdTrack = _freshTrack("ThrowHold", true, 1)
+                        -- Esperar que arranque (max 0.5s)
                         local t0 = os.clock()
                         repeat task.wait(0.016)
                         until (holdTrack and holdTrack.IsPlaying) or (os.clock()-t0 > 0.5)
+                        -- Pose visible brevemente
+                        task.wait(0.06)
+                    else
+                        task.wait(0.10)
                     end
-                    -- Breve pausa para que la pose ThrowHold sea visible
-                    task.wait(0.05)
 
                     -- ---- FASE 3: ThrowKnife + FireServer ----
-                    _stopTrack(holdTrack)
-                    _stopTrack(chargeTrack)
-                    task.wait(0.05)
+                    _stopFresh(holdTrack)
+                    task.wait(0.033)
 
-                    -- Calcular CFrames con Silent Aim
+                    -- Calcular CFrames (Silent Aim o fallback al frente)
                     local bladeCF, targetCF = _calcCFrames()
                     if not bladeCF then
                         local myHRP = c and c:FindFirstChild("HumanoidRootPart")
@@ -49540,22 +49551,25 @@ function CreateCombatTab()
                         end
                     end
 
-                    -- Registrar timestamp de throw
-                    KnifeSAState._lastMobileThrowTime = os.clock()
-                    _G._mobileKSALastThrow            = os.clock()
+                    -- ================================================================
+                    -- FIX KNIFE VISUAL: el servidor MM2 solo spawnea el ThrowingKnife
+                    -- si el KnifeClient esta HABILITADO en el momento del FireServer.
+                    -- Como SA lo mantiene desactivado, lo habilitamos un frame,
+                    -- disparamos, y lo volvemos a deshabilitar.
+                    -- ================================================================
+                    pcall(function() if kc then kc.Disabled = false end end)
 
-                    -- Reproducir ThrowKnife
-                    local throwTrack = nil
-                    if KnifeSAState._playThrowKnifeAnim then
-                        pcall(KnifeSAState._playThrowKnifeAnim)
-                    else
-                        throwTrack = _playKcAnim("ThrowKnife", 1, false)
-                    end
+                    -- Reproducir ThrowKnife (track fresco, sin cache)
+                    local throwTrack = _freshTrack("ThrowKnife", false, 1)
 
                     -- Bloquear ThrowHold replicado por servidor
                     if KnifeSAState._blockThrowHoldAfterThrow then
                         pcall(KnifeSAState._blockThrowHoldAfterThrow)
                     end
+
+                    -- Registrar timestamps
+                    KnifeSAState._lastMobileThrowTime = os.clock()
+                    _G._mobileKSALastThrow            = os.clock()
 
                     -- FireServer con SA target
                     local fired = false
@@ -49564,13 +49578,17 @@ function CreateCombatTab()
                     if not fired then pcall(function() kt:FireServer(targetCF);          fired = true end) end
                     if not fired then pcall(function() kt:FireServer(bladeCF) end) end
 
-                    -- Esperar que ThrowKnife termine
-                    if throwTrack then
-                        _waitTrack(throwTrack, 1.5)
-                        _stopTrack(throwTrack)
-                    else
-                        task.wait(0.6)
-                    end
+                    -- Volver a deshabilitar KnifeClient (un frame despues del FireServer)
+                    -- para que no tome control de animaciones/movimiento
+                    task.defer(function()
+                        if kc and kc.Parent and KnifeSAState.enabled then
+                            pcall(function() kc.Disabled = true end)
+                        end
+                    end)
+
+                    -- Esperar que ThrowKnife termine antes de permitir el siguiente throw
+                    _waitDone(throwTrack, 1.2)
+                    _stopFresh(throwTrack)
 
                     _seqRunning = false
                 end
