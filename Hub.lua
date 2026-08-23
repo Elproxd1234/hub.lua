@@ -49519,8 +49519,15 @@ function CreateCombatTab()
 
                 -- ----------------------------------------------------------------
                 -- HOOK AL BOTON LANZAR
-                -- Busca ThrowWeapon en todo el PlayerGui. Si no existe aun,
-                -- espera via DescendantAdded. Rehookea tras CharacterAdded.
+                --
+                -- El boton Throw en MM2 NO usa .Activated — esta conectado via
+                -- TouchBinding.UIButton en GameplayControlsScript. Por eso
+                -- .Activated y .MouseButton1Click nunca disparan desde codigo externo.
+                --
+                -- Solucion: detectar InputBegan directamente sobre el GuiObject Throw
+                -- (RightBar:WaitForChild("Throw")) usando UserInputService.InputBegan
+                -- y verificar si el input toca el area del boton con
+                -- btn:IsDescendantOf() / gui:GetGuiObjectsAtPosition().
                 -- ----------------------------------------------------------------
                 local _throwBtnHooked = false
 
@@ -49528,7 +49535,6 @@ function CreateCombatTab()
                     if not KnifeSAState.enabled then return end
                     local c2 = LocalPlayer.Character
                     if not (c2 and c2:FindFirstChild("Knife")) then return end
-                    -- Si hay secuencia colgada (timeout), resetear y reiniciar
                     if _mobileSeqRunning and _throwState == 0 then
                         _mobileSeqRunning = false
                     end
@@ -49537,51 +49543,59 @@ function CreateCombatTab()
                     end
                 end
 
-                local function _doHook(btn)
-                    if not btn then return false end
-                    local ok1 = pcall(function() btn.Activated:Connect(_onLanzar) end)
-                    local ok2 = pcall(function() btn.MouseButton1Click:Connect(_onLanzar) end)
-                    if ok1 or ok2 then _throwBtnHooked = true end
-                    return _throwBtnHooked
-                end
-
                 task.spawn(function()
-                    local pg2 = LocalPlayer:WaitForChild("PlayerGui", 20)
+                    -- Obtener el frame Throw directamente por su ruta conocida
+                    local pg2      = LocalPlayer:WaitForChild("PlayerGui", 20)
                     if not pg2 then return end
+                    local gcui     = pg2:WaitForChild("GameplayControlsUI", 20)
+                    if not gcui then return end
+                    local tc       = gcui:WaitForChild("TouchControls", 20)
+                    if not tc then return end
+                    local rb       = tc:WaitForChild("RightBar", 20)
+                    if not rb then return end
+                    -- El boton se llama "Throw" (no "ThrowWeapon")
+                    local throwBtn = rb:WaitForChild("Throw", 20)
+                    if not throwBtn then return end
 
-                    -- Busqueda inicial (puede ya existir)
-                    local function _search()
-                        for _, d in ipairs(pg2:GetDescendants()) do
-                            if d.Name == "ThrowWeapon" then return d end
+                    _throwBtnHooked = true
+
+                    -- Hook via InputBegan: detectar cuando el dedo toca el area del boton
+                    local _btnInputConn = UserInputService.InputBegan:Connect(function(inp, gp)
+                        if gp then return end
+                        if not KnifeSAState.enabled then return end
+                        if inp.UserInputType ~= Enum.UserInputType.Touch
+                        and inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+                        -- Verificar si el touch cayo dentro del boton Throw
+                        local pos = inp.Position
+                        local objs = pg2:GetGuiObjectsAtPosition(pos.X, pos.Y)
+                        local hitBtn = false
+                        for _, obj in ipairs(objs) do
+                            if obj == throwBtn or obj:IsDescendantOf(throwBtn) then
+                                hitBtn = true
+                                break
+                            end
                         end
-                        return nil
-                    end
+                        if not hitBtn then return end
 
-                    local found = _search()
-                    if found then _doHook(found) end
+                        -- Solo iniciar si el boton es visible (knife equipado)
+                        if not throwBtn.Visible then return end
 
-                    -- Escuchar nuevos descendientes
-                    local w
-                    w = pg2.DescendantAdded:Connect(function(desc)
-                        if desc.Name == "ThrowWeapon" then
-                            task.wait(0.05)
-                            _doHook(desc)
-                            -- No desconectar w: el boton puede recrearse tras respawn
-                        end
+                        -- Si estamos en HOLDING (estado 2), esto es el confirm del lanzamiento
+                        -- NO iniciar una nueva secuencia — el touch hook separado lo maneja
+                        if _throwState == 2 then return end
+
+                        _onLanzar()
                     end)
-                    table.insert(KnifeSAState._mobileConns, w)
+                    table.insert(KnifeSAState._mobileConns, _btnInputConn)
 
-                    -- Tras respawn: resetear cache y estado
+                    -- Tras respawn: resetear estado
                     LocalPlayer.CharacterAdded:Connect(function(newChar)
-                        _msaCache = {}
+                        _msaCache           = {}
                         _mobileSeqRunning   = false
                         _mobileWaitingTouch = false
                         _mobileTouchFired   = false
                         _throwState         = 0
-                        _throwBtnHooked     = false
-                        task.wait(0.5)
-                        local b2 = _search()
-                        if b2 then _doHook(b2) end
                         -- Hookear knife nuevo
                         local k2 = newChar:FindFirstChild("Knife")
                         if k2 then _msaWatchKnife(k2) end
@@ -49596,6 +49610,8 @@ function CreateCombatTab()
 
                 -- ----------------------------------------------------------------
                 -- TOUCH: confirma lanzamiento SOLO en estado HOLDING (2)
+                -- Detecta touch en CUALQUIER parte de la pantalla excepto el boton
+                -- Throw (que ya es manejado por el hook de arriba como nuevo ciclo).
                 -- ----------------------------------------------------------------
                 local _touchConn = UserInputService.TouchTap:Connect(function(_, gp)
                     if gp or not KnifeSAState.enabled then return end
