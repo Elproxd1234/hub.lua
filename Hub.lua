@@ -49332,9 +49332,34 @@ function CreateCombatTab()
                 -- Usa KnifeSAState._playThrowAnim / _playThrowHoldAnim / etc.
                 -- que ya tienen el knife y el Animator correctos via closure.
                 -- ----------------------------------------------------------------
+                -- ================================================================
+                -- MOBILE THROW SYSTEM v11 - FIX ANIMACIONES CICLOS ILIMITADOS
+                --
+                -- MAQUINA DE ESTADOS:
+                --   IDLE      -> espera boton LANZAR (touch en pantalla o ThrowWeapon)
+                --   CHARGING  -> ThrowCharge x1, sin loop
+                --   HOLDING   -> ThrowHold x1 (o freeze frame), espera confirmacion
+                --   THROWING  -> ThrowKnife x1, FireServer, cleanup
+                --   -> vuelve a IDLE para el proximo ciclo
+                --
+                -- FIX v11:
+                --   - El timeout de 30s ya NO rompe el loop con break.
+                --     Antes: timeout -> break -> _mobileSeqRunning=false -> loop muerto para siempre.
+                --     Ahora: timeout -> detener hold -> continue -> ciclo nuevo desde IDLE.
+                --   - El loop while NUNCA termina por timeout; solo termina al desactivar SA.
+                --   - Cada ciclo es completamente independiente: las animaciones se pueden
+                --     reproducir ilimitadas veces porque no hay flag global que las bloquee.
+                --   - _mobileSeqRunning protege contra doble-inicio pero se resetea al salir.
+                -- ================================================================
+
+                -- Estado interno de la maquina (por ciclo, se resetea al volver a IDLE)
+                -- IDLE=0, CHARGING=1, HOLDING=2, THROWING=3
+                local _throwState = 0
+
                 local function _runMobileThrowSequence()
                     if _mobileSeqRunning then return end
                     _mobileSeqRunning = true
+                    _throwState = 0  -- comenzar en IDLE
 
                     task.spawn(function()
                         -- Esperar a que _KnifeSA_setupKnife haya corrido y expuesto las funciones
@@ -49346,34 +49371,42 @@ function CreateCombatTab()
                             or _waitSetup > 5
                             or not _mobileSeqRunning
 
+                        -- ---- LOOP PRINCIPAL: ciclos ilimitados ----
+                        -- Este loop NUNCA sale por timeout ni por falta de touch.
+                        -- Solo sale cuando SA se desactiva (_mobileSeqRunning = false).
                         while _mobileSeqRunning and KnifeSAState.enabled do
-                            -- Verificar que el knife este equipado en el Character y el personaje vivo
+
+                            -- IDLE: verificar condiciones antes de iniciar ciclo
+                            _throwState = 0
                             local char = LocalPlayer.Character
                             local knife = char and char:FindFirstChild("Knife")
                             local hum  = char and char:FindFirstChildOfClass("Humanoid")
                             if not knife or not hum or hum.Health <= 0 then
                                 task.wait(0.2)
-                                continue
+                                continue  -- reintentar en el proximo tick
                             end
 
-                            -- ==== PASO 1: ThrowCharge (via KnifeSAState) ====
+                            -- ====================================================
+                            -- PASO 1 - CHARGING: ThrowCharge x1 (nunca en loop)
+                            -- ====================================================
+                            _throwState = 1
                             if type(KnifeSAState._playThrowAnim) == "function" then
                                 pcall(KnifeSAState._playThrowAnim)
                             end
 
-                            -- Delay de entrada visible antes de esperar el track
+                            -- Delay minimo para que el track arranque (1 frame)
                             task.wait(0.05)
 
-                            -- Esperar que ThrowCharge termine usando el track expuesto
+                            -- Esperar que ThrowCharge termine (duracion real del track)
                             do
                                 local chargeTrack = type(KnifeSAState._getThrowTrack) == "function"
                                     and KnifeSAState._getThrowTrack()
                                     or nil
                                 if chargeTrack then
-                                    -- Esperar que arranque (puede tardar 1 frame)
+                                    -- Esperar que arranque si todavia no inicio
                                     local t0 = os.clock()
                                     repeat task.wait(0.016) until chargeTrack.IsPlaying or (os.clock()-t0) > 0.3
-                                    -- Esperar que termine
+                                    -- Esperar que termine (duracion real + margen)
                                     local len = (chargeTrack.Length and chargeTrack.Length > 0.05)
                                         and chargeTrack.Length or 0.6
                                     local t1 = os.clock()
@@ -49381,21 +49414,27 @@ function CreateCombatTab()
                                         not chargeTrack.IsPlaying
                                         or (os.clock() - t1) >= len + 0.25
                                 else
-                                    task.wait(0.5)  -- fallback si no hay track
+                                    task.wait(0.5)  -- fallback si no hay track aun
                                 end
                             end
 
-                            -- Delay de salida entre Paso 1 y Paso 2
+                            -- Transicion CHARGING -> HOLDING
                             task.wait(0.05)
 
                             if not _mobileSeqRunning or not KnifeSAState.enabled then break end
 
-                            -- ==== PASO 2: ThrowHold en loop (via KnifeSAState) ====
+                            -- ====================================================
+                            -- PASO 2 - HOLDING: ThrowHold x1, esperar confirmacion
+                            -- ====================================================
+                            _throwState = 2
                             if type(KnifeSAState._playThrowHoldAnim) == "function" then
                                 pcall(KnifeSAState._playThrowHoldAnim)
                             end
 
-                            -- Esperar touch del jugador (timeout 30s de seguridad)
+                            -- Esperar touch del jugador.
+                            -- FIX v11: el timeout ya NO rompe el ciclo con break.
+                            -- Si el jugador no confirma en 30s, se cancela el hold
+                            -- y el ciclo REGRESA A IDLE para comenzar de nuevo.
                             _mobileTouchFired   = false
                             _mobileWaitingTouch = true
                             local waitT0 = os.clock()
@@ -49407,49 +49446,60 @@ function CreateCombatTab()
                                 or (os.clock() - waitT0) > 30
                             _mobileWaitingTouch = false
 
-                            -- Parar ThrowHold al instante
+                            -- Siempre detener el hold al salir de la espera
                             if type(KnifeSAState._releaseThrowHoldAnim) == "function" then
                                 pcall(KnifeSAState._releaseThrowHoldAnim)
                             end
 
+                            -- Salir del loop solo si SA fue desactivado
                             if not _mobileSeqRunning or not KnifeSAState.enabled then break end
-                            if not _mobileTouchFired then break end
 
-                            -- Cooldown entre lanzamientos
+                            -- FIX v11: timeout sin touch -> volver a IDLE (continue),
+                            -- NO break. Las animaciones quedan disponibles para el proximo ciclo.
+                            if not _mobileTouchFired then
+                                _mobileTouchFired = false
+                                _throwState = 0  -- reset a IDLE
+                                task.wait(0.05)
+                                continue  -- proximo ciclo desde ThrowCharge
+                            end
+
+                            -- Cooldown entre lanzamientos (evita doble-disparo rapido)
                             local now = os.clock()
                             if now - _G._mobileKSALastThrow < THROW_CD then
                                 _mobileTouchFired = false
+                                _throwState = 0  -- reset a IDLE
                                 task.wait(0.05)
                                 continue
                             end
                             _G._mobileKSALastThrow            = now
                             KnifeSAState._lastMobileThrowTime = now
 
-                            -- Calcular CFrames ANTES de reproducir ThrowKnife
+                            -- Calcular CFrames ANTES de ThrowKnife
                             local bladeCF, targetCF = _calcCFrames()
 
-                            -- Bloquear anims replicadas por el servidor ANTES del FireServer
+                            -- Bloquear anims replicadas por servidor ANTES de FireServer
                             if KnifeSAState._blockThrowHoldAfterThrow then
                                 pcall(KnifeSAState._blockThrowHoldAfterThrow)
                             end
 
-                            -- ==== PASO 3: ThrowKnife (via KnifeSAState) ====
-                            -- Delay de entrada visual
-                            task.wait(0.08)
+                            -- ====================================================
+                            -- PASO 3 - THROWING: ThrowKnife x1, luego cleanup
+                            -- ====================================================
+                            _throwState = 3
+                            task.wait(0.08)  -- delay visual de entrada
 
                             if type(KnifeSAState._playThrowKnifeAnim) == "function" then
                                 pcall(KnifeSAState._playThrowKnifeAnim)
                             end
 
-                            -- Delay de sincronizacion: dejar que el frame de throw se vea
-                            task.wait(0.08)
+                            task.wait(0.08)  -- sincronizacion: dejar que el frame se vea
 
-                            -- Lanzar el knife al servidor
+                            -- Disparar al servidor
                             if bladeCF and targetCF then
                                 _fireKnifeServer(bladeCF, targetCF)
                             end
 
-                            -- Esperar que ThrowKnife termine antes de reiniciar el ciclo
+                            -- Esperar que ThrowKnife termine (duracion real del track)
                             do
                                 local throwTrack = KnifeSAState._animTracks
                                     and KnifeSAState._animTracks["ThrowKnife"]
@@ -49466,34 +49516,101 @@ function CreateCombatTab()
                                 end
                             end
 
-                            -- Reiniciar el ciclo desde 0
+                            -- ====================================================
+                            -- CLEANUP: reset variables del ciclo -> volver a IDLE
+                            -- NO deshabilita animaciones. Solo prepara el proximo ciclo.
+                            -- ====================================================
                             _mobileTouchFired = false
+                            _throwState = 0  -- IDLE: listo para el proximo LANZAR
                             task.wait(0.04)
+                            -- continua el while -> ciclo nuevo desde ThrowCharge
                         end
 
-                        -- Limpieza al salir del loop
+                        -- Limpieza final al desactivar SA (no al timeout)
                         _mobileSeqRunning   = false
                         _mobileWaitingTouch = false
                         _mobileTouchFired   = false
+                        _throwState = 0
                     end)
                 end
+
+                -- Exponer _throwState al estado global para debugging
+                KnifeSAState._getMobileThrowState = function() return _throwState end
 
                 -- Iniciar la secuencia al activar Knife SA en mobile
                 _runMobileThrowSequence()
 
-                -- Hook principal: TouchTap activa el lanzamiento durante ThrowHold
+                -- ----------------------------------------------------------------
+                -- HOOK AL BOTON LANZAR NATIVO (ThrowWeapon en GameplayControlsUI)
+                -- Cuando el jugador pulsa LANZAR en mobile y SA esta activo:
+                --   - Si estamos en HOLDING (_throwState == 2): confirmar el lanzamiento
+                --   - Si el loop murio inesperadamente: reiniciarlo
+                -- FIX v11: el boton LANZAR puede tanto confirmar el throw (como un touch)
+                -- como reiniciar el ciclo si el loop hubiera terminado por algun error.
+                -- ----------------------------------------------------------------
+                local _throwBtnHooked = false
+                local function _hookThrowBtn()
+                    local gcui2 = pg:FindFirstChild("GameplayControlsUI")
+                    if not gcui2 then return false end
+                    local tc2 = gcui2:FindFirstChild("TouchControls")
+                    if not tc2 then return false end
+                    local rb2 = tc2:FindFirstChild("RightBar")
+                    if not rb2 then return false end
+                    local throwBtn = rb2:FindFirstChild("ThrowWeapon")
+                    if throwBtn and not _throwBtnHooked then
+                        pcall(function()
+                            throwBtn.Activated:Connect(function()
+                                if not KnifeSAState.enabled then return end
+                                local char2 = LocalPlayer.Character
+                                if not (char2 and char2:FindFirstChild("Knife")) then return end
+                                if _mobileWaitingTouch then
+                                    -- Estamos en HOLDING: confirmar el lanzamiento
+                                    _mobileTouchFired = true
+                                elseif not _mobileSeqRunning then
+                                    -- El loop murio: reiniciarlo para el proximo ciclo
+                                    _throwState = 0
+                                    _mobileTouchFired = false
+                                    _mobileWaitingTouch = false
+                                    _runMobileThrowSequence()
+                                end
+                            end)
+                        end)
+                        _throwBtnHooked = true
+                    end
+                    return _throwBtnHooked
+                end
+                if not _hookThrowBtn() then
+                    local _btnWatcher
+                    _btnWatcher = pg.DescendantAdded:Connect(function(desc)
+                        if desc.Name == "ThrowWeapon" then
+                            task.wait(0.1)
+                            if _hookThrowBtn() then
+                                pcall(function() _btnWatcher:Disconnect() end)
+                            end
+                        end
+                    end)
+                    table.insert(KnifeSAState._mobileConns, _btnWatcher)
+                end
+
+                -- ----------------------------------------------------------------
+                -- HOOK TouchTap: confirma el lanzamiento durante HOLDING.
+                -- Solo actua en estado HOLDING (_mobileWaitingTouch=true).
+                -- Un touch en IDLE o CHARGING NO inicia un ciclo nuevo
+                -- (eso lo hace el boton LANZAR o el loop automatico al volver de THROWING).
+                -- ----------------------------------------------------------------
                 local _touchConn = UserInputService.TouchTap:Connect(function(positions, gp)
                     if gp then return end
                     if not KnifeSAState.enabled then return end
                     local char = LocalPlayer.Character
                     if not (char and char:FindFirstChild("Knife")) then return end
+                    -- Solo confirmar si estamos esperando confirmacion (estado HOLDING)
                     if _mobileWaitingTouch then
                         _mobileTouchFired = true
                     end
                 end)
                 table.insert(KnifeSAState._mobileConns, _touchConn)
 
-                -- Hook secundario: InputBegan Touch como respaldo
+                -- Hook secundario: InputBegan Touch como respaldo de TouchTap
                 local _inputBeganConn = UserInputService.InputBegan:Connect(function(inp, gp)
                     if gp then return end
                     if inp.UserInputType ~= Enum.UserInputType.Touch
@@ -49501,18 +49618,20 @@ function CreateCombatTab()
                     if not KnifeSAState.enabled then return end
                     local char = LocalPlayer.Character
                     if not (char and char:FindFirstChild("Knife")) then return end
+                    -- Solo confirmar si estamos en HOLDING
                     if _mobileWaitingTouch then
                         _mobileTouchFired = true
                     end
                 end)
                 table.insert(KnifeSAState._mobileConns, _inputBeganConn)
 
-                -- Detener la secuencia al desactivar
+                -- Detener la secuencia al desactivar SA
                 table.insert(KnifeSAState._mobileConns, {
                     Disconnect = function()
                         _mobileSeqRunning   = false
                         _mobileWaitingTouch = false
                         _mobileTouchFired   = true  -- desbloquear el loop si esta esperando
+                        _throwState = 0
                     end
                 })
             end
