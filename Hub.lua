@@ -49237,219 +49237,38 @@ function CreateCombatTab()
                 end
                 KnifeSAState._mobileConns = {}
                 -- ================================================================
-                -- MOBILE THROW SYSTEM v9
-                -- Reemplaza COMPLETAMENTE el sistema anterior.
-                -- Las animaciones se cargan DIRECTAMENTE desde knife.KnifeClient:
-                --   ThrowCharge 2  -> anima la carga del brazo
-                --   ThrowHold      -> loop mientras espera el toque del jugador
-                --   ThrowKnife     -> lanza el knife via Events.KnifeThrown:FireServer
+                -- MOBILE THROW SYSTEM v10
                 --
-                -- Flujo completo (se repite en ciclo mientras KnifeSA este activo):
-                --   1) Detener todas las anims de throw previas
-                --   2) ThrowCharge 2: play (delay 0.05s entrada) -> esperar que termine
-                --   3) ThrowHold: loop (delay 0.05s entrada) -> esperar touch del jugador
-                --   4) Al recibir touch:
-                --        ThrowKnife: play (delay 0.08s entrada)
-                --        -> Events.KnifeThrown:FireServer(bladeCF, targetCF)
-                --        -> esperar que ThrowKnife termine
-                --        -> reiniciar ciclo desde paso 1
-                -- NOTA: Solo activo en mobile (TouchEnabled). No afecta PC.
+                -- USA LAS FUNCIONES YA EXISTENTES DE KnifeSAState para animaciones:
+                --   KnifeSAState._playThrowAnim()        -> ThrowCharge (o ThrowCharge 2)
+                --   KnifeSAState._playThrowHoldAnim()    -> ThrowHold en loop
+                --   KnifeSAState._releaseThrowHoldAnim() -> para el hold
+                --   KnifeSAState._playThrowKnifeAnim()   -> ThrowKnife
+                --   KnifeSAState._getThrowTrack()        -> track actual de charge
+                --
+                -- Estas funciones ya tienen el knife correcto via closure del
+                -- _KnifeSA_setupKnife que se ejecuto ANTES de entrar aqui.
+                -- No se necesita ningun loader propio.
+                --
+                -- Flujo (ciclo infinito mientras KnifeSA activo):
+                --   1) ThrowCharge: play -> esperar fin de track
+                --   2) ThrowHold:   loop -> esperar touch del jugador
+                --   3) Al touch: stop hold -> ThrowKnife -> FireServer -> reiniciar
                 -- ================================================================
                 if not _G._mobileKSALastThrow then _G._mobileKSALastThrow = -999 end
 
-                -- Estado de la maquina de secuencia
                 local _mobileSeqRunning   = false
                 local _mobileWaitingTouch = false
                 local _mobileTouchFired   = false
                 local THROW_CD            = 1.5
-
-                -- Cache de tracks: se invalida cuando cambia el knife
-                local _mobileTrackCache    = {}
-                local _mobileCacheKnifeRef = nil
-
-                -- ----------------------------------------------------------------
-                -- HELPERS v9 (fix: busqueda robusta de knife + retry en LoadAnimation)
-                -- ----------------------------------------------------------------
-
-                -- Devuelve el knife del Character (prioridad) o Backpack
-                -- IMPORTANTE: el knife DEBE estar en el Character para que las
-                -- animaciones funcionen (el Animator pertenece al Humanoid del char)
-                local function _getMobileKnife()
-                    local char = LocalPlayer.Character
-                    local k = char and char:FindFirstChild("Knife")
-                    if k then return k end
-                    -- Fallback backpack (solo para cache, no para animar)
-                    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-                    return bp and bp:FindFirstChild("Knife")
-                end
-
-                -- Devuelve el Animator del Humanoid del Character local
-                local function _getMobileAnimator()
-                    local char = LocalPlayer.Character
-                    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-                    return hum and hum:FindFirstChildOfClass("Animator")
-                end
-
-                -- Invalida el cache cuando el knife cambia
-                local function _checkInvalidateCache()
-                    local knife = _getMobileKnife()
-                    if knife ~= _mobileCacheKnifeRef then
-                        _mobileTrackCache    = {}
-                        _mobileCacheKnifeRef = knife
-                    end
-                end
-
-                -- Carga un AnimationTrack directamente del KnifeClient.
-                -- Nombres exactos: "ThrowCharge 2", "ThrowHold", "ThrowKnife"
-                -- FIX: busca el animObj en el knife del CHARACTER (no backpack),
-                -- ya que el Animator solo acepta animations del objeto equipado.
-                -- Incluye retry de hasta 3 intentos por si LoadAnimation falla
-                -- en el primer frame tras equipar el knife.
-                local function _loadMobileTrack(animName)
-                    _checkInvalidateCache()
-
-                    -- Reusar track cacheado si sigue valido
-                    local cached = _mobileTrackCache[animName]
-                    if cached then
-                        local ok = pcall(function() return cached.IsPlaying end)
-                        if ok then return cached end
-                        -- cache invalido: limpiar y recargar
-                        _mobileTrackCache[animName] = nil
-                    end
-
-                    -- Buscar el knife SOLO en el Character (para que el Animator lo acepte)
-                    local char = LocalPlayer.Character
-                    local knife = char and char:FindFirstChild("Knife")
-                    if not knife then
-                        -- Fallback: tambien revisar backpack (raro pero posible en respawn)
-                        local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-                        knife = bp and bp:FindFirstChild("Knife")
-                    end
-                    if not knife then return nil end
-
-                    local kc = knife:FindFirstChild("KnifeClient")
-                    if not kc then return nil end
-
-                    local animObj = kc:FindFirstChild(animName)
-                    if not animObj then return nil end
-
-                    local animator = _getMobileAnimator()
-                    if not animator then return nil end
-
-                    -- Retry hasta 3 veces: LoadAnimation puede fallar en el primer frame
-                    local track = nil
-                    for attempt = 1, 3 do
-                        local ok2, result = pcall(function()
-                            local t = animator:LoadAnimation(animObj)
-                            t.Priority = Enum.AnimationPriority.Action4
-                            return t
-                        end)
-                        if ok2 and result then
-                            track = result
-                            break
-                        end
-                        task.wait(0.05)  -- pequeña espera entre reintentos
-                    end
-
-                    if track then
-                        _mobileTrackCache[animName] = track
-                    end
-                    return track
-                end
-
-                -- Precarga todas las anims del ciclo para evitar el fallo en el primer frame
-                local function _preloadMobileTracks()
-                    local char = LocalPlayer.Character
-                    if not char then return end
-                    local knife = char:FindFirstChild("Knife")
-                    if not knife then return end
-                    local kc = knife:FindFirstChild("KnifeClient")
-                    if not kc then return end
-                    local animator = _getMobileAnimator()
-                    if not animator then return end
-                    -- Cargar los 3 tracks en orden; si falla uno no rompe los demas
-                    for _, name in ipairs({"ThrowCharge 2", "ThrowHold", "ThrowKnife"}) do
-                        local animObj = kc:FindFirstChild(name)
-                        if animObj then
-                            local ok, t = pcall(function()
-                                local tr = animator:LoadAnimation(animObj)
-                                tr.Priority = Enum.AnimationPriority.Action4
-                                return tr
-                            end)
-                            if ok and t then
-                                _mobileTrackCache[name] = t
-                            end
-                        end
-                    end
-                end
-
-                -- Detiene todas las animaciones del ciclo de throw
-                local _THROW_ANIM_NAMES = {"ThrowCharge 2", "ThrowHold", "ThrowKnife"}
-                local function _stopAllMobileTracks()
-                    for _, name in ipairs(_THROW_ANIM_NAMES) do
-                        local t = _mobileTrackCache[name]
-                        if t then
-                            pcall(function()
-                                t.Looped = false
-                                if t.IsPlaying then t:Stop(0) end
-                            end)
-                        end
-                    end
-                    -- Barrer el Animator por si el servidor replico anims adicionales
-                    local animator = _getMobileAnimator()
-                    if animator then
-                        pcall(function()
-                            for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                                local n = (t.Name or ""):lower()
-                                if n == "throwcharge 2" or n == "throwcharge"
-                                or n == "throwhold"     or n == "throw_hold"
-                                or n == "throwknife"    or n == "throw_knife" then
-                                    t.Looped = false
-                                    t:Stop(0)
-                                end
-                            end
-                        end)
-                    end
-                end
-
-                -- Bloquea anims replicadas por el servidor post-FireServer
-                local _mobileServerBlockConn = nil
-                local _mobileBlockAnims      = false
-                local function _startServerAnimBlock()
-                    _mobileBlockAnims = true
-                    local animator = _getMobileAnimator()
-                    if not animator then return end
-                    if _mobileServerBlockConn then
-                        pcall(function() _mobileServerBlockConn:Disconnect() end)
-                    end
-                    _mobileServerBlockConn = animator.AnimationPlayed:Connect(function(track)
-                        if not _mobileBlockAnims then return end
-                        local n = (track.Name or ""):lower()
-                        if n == "throwcharge 2" or n == "throwcharge"
-                        or n == "throwhold"     or n == "throw_hold" then
-                            task.defer(function()
-                                pcall(function()
-                                    if track and track.IsPlaying then
-                                        track.Looped = false
-                                        track:Stop(0)
-                                    end
-                                end)
-                            end)
-                        end
-                    end)
-                    table.insert(KnifeSAState._mobileConns, _mobileServerBlockConn)
-                    task.delay(2.0, function() _mobileBlockAnims = false end)
-                end
 
                 -- Calcula bladeCF y targetCF con Silent Aim o fallback al frente
                 local function _calcCFrames()
                     local char  = LocalPlayer.Character
                     local myHRP = char and char:FindFirstChild("HumanoidRootPart")
                     if not myHRP then return nil, nil end
-
                     local origin    = myHRP.Position + Vector3.new(0, 1.5, 0)
                     local targetPos = nil
-
                     if KnifeSAState.enabled then
                         local target = _KnifeSA_getBestTarget and _KnifeSA_getBestTarget()
                         if target and target.Character then
@@ -49475,25 +49294,21 @@ function CreateCombatTab()
                             end
                         end
                     end
-
                     if not targetPos then
                         targetPos = origin + myHRP.CFrame.LookVector * 30
                     end
-
                     local dir  = targetPos - origin
                     if dir.Magnitude < 0.01 then dir = myHRP.CFrame.LookVector end
                     local dirU = dir.Unit
-
                     local bladeCF  = CFrame.new(origin, origin + dirU)
                     local backDir  = origin - targetPos
                     local targetCF = backDir.Magnitude > 0.1
                         and CFrame.new(targetPos, targetPos + backDir.Unit)
                         or  CFrame.new(targetPos)
-
                     return bladeCF, targetCF
                 end
 
-                -- Lanza el knife via knife.Events.KnifeThrown:FireServer(bladeCF, targetCF)
+                -- Lanza el knife via knife.Events.KnifeThrown:FireServer
                 local function _fireKnifeServer(bladeCF, targetCF)
                     local char  = LocalPlayer.Character
                     local knife = char and char:FindFirstChild("Knife")
@@ -49506,142 +49321,81 @@ function CreateCombatTab()
                     local kt = ev and ev:FindFirstChild("KnifeThrown")
                     if not kt then return end
                     local fired = false
-                    if not fired then pcall(function() kt:FireServer(bladeCF, targetCF); fired = true end) end
+                    pcall(function() kt:FireServer(bladeCF, targetCF); fired = true end)
                     if not fired then pcall(function() kt:FireServer(targetCF, bladeCF); fired = true end) end
                     if not fired then pcall(function() kt:FireServer(targetCF);          fired = true end) end
                     if not fired then pcall(function() kt:FireServer(bladeCF)                       end) end
                 end
 
                 -- ----------------------------------------------------------------
-                -- SECUENCIA PRINCIPAL v9
-                --
-                -- Paso 1: ThrowCharge 2
-                --         -> Detener anims previas
-                --         -> delay 0.05s entrada
-                --         -> play (speed 1.0, no loop)
-                --         -> esperar que termine (timeout: largo + 0.2s)
-                --         -> delay 0.04s salida
-                --
-                -- Paso 2: ThrowHold
-                --         -> delay 0.05s entrada
-                --         -> play (speed 1.0, loop = true)
-                --         -> esperar touch del jugador (timeout 30s)
-                --         -> stop inmediato al recibir touch
-                --
-                -- Paso 3: ThrowKnife
-                --         -> calcular bladeCF / targetCF ANTES de animar
-                --         -> bloquear anims del servidor
-                --         -> delay 0.08s entrada visual
-                --         -> play (speed 1.0, no loop)
-                --         -> delay 0.08s sincronizacion con el frame de lanzamiento
-                --         -> Events.KnifeThrown:FireServer(bladeCF, targetCF)
-                --         -> esperar que ThrowKnife termine
-                --         -> reiniciar ciclo desde Paso 1
+                -- SECUENCIA PRINCIPAL v10
+                -- Usa KnifeSAState._playThrowAnim / _playThrowHoldAnim / etc.
+                -- que ya tienen el knife y el Animator correctos via closure.
                 -- ----------------------------------------------------------------
                 local function _runMobileThrowSequence()
                     if _mobileSeqRunning then return end
                     _mobileSeqRunning = true
 
                     task.spawn(function()
-                        -- Esperar a que el knife este en el Character y precargar tracks
-                        -- ANTES de entrar al loop principal (fix del fallo en primer ciclo)
-                        local _preWait = 0
+                        -- Esperar a que _KnifeSA_setupKnife haya corrido y expuesto las funciones
+                        local _waitSetup = 0
                         repeat
                             task.wait(0.1)
-                            _preWait = _preWait + 0.1
-                            local _preChar  = LocalPlayer.Character
-                            local _preKnife = _preChar and _preChar:FindFirstChild("Knife")
-                            if _preKnife and _preKnife:FindFirstChild("KnifeClient") then
-                                _checkInvalidateCache()
-                                _preloadMobileTracks()
-                                break
-                            end
-                        until _preWait > 5 or not _mobileSeqRunning
+                            _waitSetup = _waitSetup + 0.1
+                        until (type(KnifeSAState._playThrowAnim) == "function")
+                            or _waitSetup > 5
+                            or not _mobileSeqRunning
 
                         while _mobileSeqRunning and KnifeSAState.enabled do
                             -- Verificar que el knife este equipado en el Character y el personaje vivo
-                            local char  = LocalPlayer.Character
+                            local char = LocalPlayer.Character
                             local knife = char and char:FindFirstChild("Knife")
-                            local hum   = char and char:FindFirstChildOfClass("Humanoid")
+                            local hum  = char and char:FindFirstChildOfClass("Humanoid")
                             if not knife or not hum or hum.Health <= 0 then
                                 task.wait(0.2)
                                 continue
                             end
 
-                            -- Invalidar cache si el knife cambio y recargar tracks
-                            local prevKnife = _mobileCacheKnifeRef
-                            _checkInvalidateCache()
-                            if _mobileCacheKnifeRef ~= prevKnife then
-                                -- El knife cambio (re-equip, respawn): recargar todo
-                                task.wait(0.15)
-                                _preloadMobileTracks()
+                            -- ==== PASO 1: ThrowCharge (via KnifeSAState) ====
+                            if type(KnifeSAState._playThrowAnim) == "function" then
+                                pcall(KnifeSAState._playThrowAnim)
                             end
 
-                            -- ==== PASO 1: ThrowCharge 2 ====
-                            _stopAllMobileTracks()
-                            local chargeTrack = _loadMobileTrack("ThrowCharge 2")
-                            if chargeTrack then
-                                chargeTrack.Looped = false
-                                pcall(function()
-                                    if chargeTrack.IsPlaying then chargeTrack:Stop(0) end
-                                end)
-                                task.wait(0.05)   -- delay de entrada
-                                pcall(function()
-                                    chargeTrack:Play(0.05)
-                                    chargeTrack:AdjustSpeed(1.0)
-                                end)
-                                -- Esperar que termine (con timeout de seguridad)
-                                -- FIX: leer Length DESPUES de Play para que Roblox lo popule
-                                task.wait(0.05)
-                                local chargeLen = (chargeTrack.Length and chargeTrack.Length > 0.05)
-                                    and chargeTrack.Length or 0.6
-                                local t0 = os.clock()
-                                repeat task.wait(0.016) until
-                                    not chargeTrack.IsPlaying
-                                    or (os.clock() - t0) >= chargeLen + 0.25
-                                task.wait(0.04)   -- delay de salida
-                            else
-                                -- ThrowCharge 2 no encontrada: intentar precargar y reintentar UNA vez
-                                _preloadMobileTracks()
-                                task.wait(0.1)
-                                chargeTrack = _loadMobileTrack("ThrowCharge 2")
+                            -- Delay de entrada visible antes de esperar el track
+                            task.wait(0.05)
+
+                            -- Esperar que ThrowCharge termine usando el track expuesto
+                            do
+                                local chargeTrack = type(KnifeSAState._getThrowTrack) == "function"
+                                    and KnifeSAState._getThrowTrack()
+                                    or nil
                                 if chargeTrack then
-                                    chargeTrack.Looped = false
-                                    task.wait(0.05)
-                                    pcall(function()
-                                        chargeTrack:Play(0.05)
-                                        chargeTrack:AdjustSpeed(1.0)
-                                    end)
-                                    task.wait(0.05)
-                                    local chargeLen = (chargeTrack.Length and chargeTrack.Length > 0.05)
-                                        and chargeTrack.Length or 0.6
+                                    -- Esperar que arranque (puede tardar 1 frame)
                                     local t0 = os.clock()
+                                    repeat task.wait(0.016) until chargeTrack.IsPlaying or (os.clock()-t0) > 0.3
+                                    -- Esperar que termine
+                                    local len = (chargeTrack.Length and chargeTrack.Length > 0.05)
+                                        and chargeTrack.Length or 0.6
+                                    local t1 = os.clock()
                                     repeat task.wait(0.016) until
                                         not chargeTrack.IsPlaying
-                                        or (os.clock() - t0) >= chargeLen + 0.25
-                                    task.wait(0.04)
+                                        or (os.clock() - t1) >= len + 0.25
                                 else
-                                    task.wait(0.35)
+                                    task.wait(0.5)  -- fallback si no hay track
                                 end
                             end
 
+                            -- Delay de salida entre Paso 1 y Paso 2
+                            task.wait(0.05)
+
                             if not _mobileSeqRunning or not KnifeSAState.enabled then break end
 
-                            -- ==== PASO 2: ThrowHold (loop hasta touch) ====
-                            local holdTrack = _loadMobileTrack("ThrowHold")
-                            if holdTrack then
-                                holdTrack.Looped = true
-                                pcall(function()
-                                    if holdTrack.IsPlaying then holdTrack:Stop(0) end
-                                end)
-                                task.wait(0.05)   -- delay de entrada
-                                pcall(function()
-                                    holdTrack:Play(0.05)
-                                    holdTrack:AdjustSpeed(1.0)
-                                end)
+                            -- ==== PASO 2: ThrowHold en loop (via KnifeSAState) ====
+                            if type(KnifeSAState._playThrowHoldAnim) == "function" then
+                                pcall(KnifeSAState._playThrowHoldAnim)
                             end
 
-                            -- Esperar touch del jugador (timeout 30s)
+                            -- Esperar touch del jugador (timeout 30s de seguridad)
                             _mobileTouchFired   = false
                             _mobileWaitingTouch = true
                             local waitT0 = os.clock()
@@ -49653,12 +49407,9 @@ function CreateCombatTab()
                                 or (os.clock() - waitT0) > 30
                             _mobileWaitingTouch = false
 
-                            -- Detener ThrowHold al instante
-                            if holdTrack then
-                                pcall(function()
-                                    holdTrack.Looped = false
-                                    holdTrack:Stop(0)
-                                end)
+                            -- Parar ThrowHold al instante
+                            if type(KnifeSAState._releaseThrowHoldAnim) == "function" then
+                                pcall(KnifeSAState._releaseThrowHoldAnim)
                             end
 
                             if not _mobileSeqRunning or not KnifeSAState.enabled then break end
@@ -49678,44 +49429,41 @@ function CreateCombatTab()
                             local bladeCF, targetCF = _calcCFrames()
 
                             -- Bloquear anims replicadas por el servidor ANTES del FireServer
-                            _startServerAnimBlock()
                             if KnifeSAState._blockThrowHoldAfterThrow then
                                 pcall(KnifeSAState._blockThrowHoldAfterThrow)
                             end
 
-                            -- ==== PASO 3: ThrowKnife ====
-                            _stopAllMobileTracks()
-                            local throwTrack = _loadMobileTrack("ThrowKnife")
-                            if throwTrack then
-                                throwTrack.Looped = false
-                                pcall(function()
-                                    if throwTrack.IsPlaying then throwTrack:Stop(0) end
-                                end)
-                                task.wait(0.08)   -- delay de entrada visual
-                                pcall(function()
-                                    throwTrack:Play(0.05)
-                                    throwTrack:AdjustSpeed(1.0)
-                                end)
-                            end
-
-                            -- Delay de sincronizacion con el frame de lanzamiento
+                            -- ==== PASO 3: ThrowKnife (via KnifeSAState) ====
+                            -- Delay de entrada visual
                             task.wait(0.08)
 
-                            -- Lanzar el knife al servidor via Events.KnifeThrown
+                            if type(KnifeSAState._playThrowKnifeAnim) == "function" then
+                                pcall(KnifeSAState._playThrowKnifeAnim)
+                            end
+
+                            -- Delay de sincronizacion: dejar que el frame de throw se vea
+                            task.wait(0.08)
+
+                            -- Lanzar el knife al servidor
                             if bladeCF and targetCF then
                                 _fireKnifeServer(bladeCF, targetCF)
                             end
 
                             -- Esperar que ThrowKnife termine antes de reiniciar el ciclo
-                            if throwTrack then
-                                local throwLen = (throwTrack.Length and throwTrack.Length > 0.05)
-                                    and throwTrack.Length or 0.4
-                                local t1 = os.clock()
-                                repeat task.wait(0.016) until
-                                    not throwTrack.IsPlaying
-                                    or (os.clock() - t1) >= throwLen + 0.2
-                            else
-                                task.wait(0.4)
+                            do
+                                local throwTrack = KnifeSAState._animTracks
+                                    and KnifeSAState._animTracks["ThrowKnife"]
+                                    or nil
+                                if throwTrack then
+                                    local len = (throwTrack.Length and throwTrack.Length > 0.05)
+                                        and throwTrack.Length or 0.4
+                                    local t2 = os.clock()
+                                    repeat task.wait(0.016) until
+                                        not throwTrack.IsPlaying
+                                        or (os.clock() - t2) >= len + 0.2
+                                else
+                                    task.wait(0.4)
+                                end
                             end
 
                             -- Reiniciar el ciclo desde 0
@@ -49723,9 +49471,7 @@ function CreateCombatTab()
                             task.wait(0.04)
                         end
 
-                        -- Limpieza al terminar el loop
-                        _stopAllMobileTracks()
-                        _mobileBlockAnims   = false
+                        -- Limpieza al salir del loop
                         _mobileSeqRunning   = false
                         _mobileWaitingTouch = false
                         _mobileTouchFired   = false
@@ -49735,7 +49481,7 @@ function CreateCombatTab()
                 -- Iniciar la secuencia al activar Knife SA en mobile
                 _runMobileThrowSequence()
 
-                -- Hook principal: TouchTap en pantalla activa el lanzamiento durante ThrowHold
+                -- Hook principal: TouchTap activa el lanzamiento durante ThrowHold
                 local _touchConn = UserInputService.TouchTap:Connect(function(positions, gp)
                     if gp then return end
                     if not KnifeSAState.enabled then return end
@@ -49747,7 +49493,7 @@ function CreateCombatTab()
                 end)
                 table.insert(KnifeSAState._mobileConns, _touchConn)
 
-                -- Hook secundario: InputBegan (Touch/MB1) como respaldo al TouchTap
+                -- Hook secundario: InputBegan Touch como respaldo
                 local _inputBeganConn = UserInputService.InputBegan:Connect(function(inp, gp)
                     if gp then return end
                     if inp.UserInputType ~= Enum.UserInputType.Touch
@@ -49767,7 +49513,6 @@ function CreateCombatTab()
                         _mobileSeqRunning   = false
                         _mobileWaitingTouch = false
                         _mobileTouchFired   = true  -- desbloquear el loop si esta esperando
-                        _stopAllMobileTracks()
                     end
                 })
             end
