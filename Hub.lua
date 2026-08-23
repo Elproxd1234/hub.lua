@@ -49618,47 +49618,74 @@ function CreateCombatTab()
                 KnifeSAState._getMobileThrowState = function() return _throwState end
 
                 -- ----------------------------------------------------------------
-                -- HOOK AL BOTON LANZAR (ThrowWeapon en GameplayControlsUI)
-                -- Presionar LANZAR inicia la secuencia completa desde cero.
-                -- Solo inicia si no hay un ciclo ya activo (_mobileSeqRunning).
+                -- HOOK AL BOTON LANZAR (ThrowWeapon en PlayerGui)
+                -- Busca el boton en cualquier parte del PlayerGui usando
+                -- DescendantAdded para detectarlo cuando aparezca.
+                -- Al presionar LANZAR inicia la secuencia completa desde cero.
                 -- ----------------------------------------------------------------
                 local _throwBtnHooked = false
-                local function _hookThrowBtn()
-                    local gcui2 = pg:FindFirstChild("GameplayControlsUI")
-                    if not gcui2 then return false end
-                    local tc2 = gcui2:FindFirstChild("TouchControls")
-                    if not tc2 then return false end
-                    local rb2 = tc2:FindFirstChild("RightBar")
-                    if not rb2 then return false end
-                    local throwBtn = rb2:FindFirstChild("ThrowWeapon")
-                    if throwBtn and not _throwBtnHooked then
+
+                local function _doHookBtn(throwBtn)
+                    if _throwBtnHooked then return end
+                    _throwBtnHooked = true
+                    -- Intentar Activated (GuiButton)
+                    local ok = pcall(function()
+                        throwBtn.Activated:Connect(function()
+                            if not KnifeSAState.enabled then return end
+                            local c2 = LocalPlayer.Character
+                            if not (c2 and c2:FindFirstChild("Knife")) then return end
+                            if not _mobileSeqRunning then
+                                _runMobileThrowSequence()
+                            end
+                        end)
+                    end)
+                    if not ok then
+                        -- Fallback: MouseButton1Click
                         pcall(function()
-                            throwBtn.Activated:Connect(function()
+                            throwBtn.MouseButton1Click:Connect(function()
                                 if not KnifeSAState.enabled then return end
                                 local c2 = LocalPlayer.Character
                                 if not (c2 and c2:FindFirstChild("Knife")) then return end
-                                -- Iniciar la secuencia SOLO si no hay una activa
                                 if not _mobileSeqRunning then
                                     _runMobileThrowSequence()
                                 end
                             end)
                         end)
-                        _throwBtnHooked = true
                     end
-                    return _throwBtnHooked
                 end
-                if not _hookThrowBtn() then
+
+                -- Buscar ThrowWeapon en todo el PlayerGui recursivamente
+                local function _findThrowBtn(root)
+                    if not root then return nil end
+                    if root.Name == "ThrowWeapon" then return root end
+                    for _, d in ipairs(root:GetDescendants()) do
+                        if d.Name == "ThrowWeapon" then return d end
+                    end
+                    return nil
+                end
+
+                task.spawn(function()
+                    local playerGui = LocalPlayer:WaitForChild("PlayerGui", 15)
+                    if not playerGui then return end
+
+                    -- Intentar encontrarlo ya existente
+                    local existing = _findThrowBtn(playerGui)
+                    if existing then
+                        _doHookBtn(existing)
+                        return
+                    end
+
+                    -- Esperar a que aparezca via DescendantAdded
                     local _btnWatcher
-                    _btnWatcher = pg.DescendantAdded:Connect(function(desc)
-                        if desc.Name == "ThrowWeapon" then
-                            task.wait(0.1)
-                            if _hookThrowBtn() then
-                                pcall(function() _btnWatcher:Disconnect() end)
-                            end
+                    _btnWatcher = playerGui.DescendantAdded:Connect(function(desc)
+                        if desc.Name == "ThrowWeapon" and not _throwBtnHooked then
+                            task.wait(0.05)
+                            _doHookBtn(desc)
+                            pcall(function() _btnWatcher:Disconnect() end)
                         end
                     end)
                     table.insert(KnifeSAState._mobileConns, _btnWatcher)
-                end
+                end)
 
                 -- ----------------------------------------------------------------
                 -- HOOK TouchTap + InputBegan para confirmar lanzamiento en HOLDING
