@@ -7114,6 +7114,10 @@ function _KnifeSA_setupKnife(knife)
             if os.clock() - lmbStabTime > 0.4 then return end
             -- No reproducir slash si KnifeSA esta lanzando (evita conflicto con throw)
             if KnifeSAState.enabled then return end
+            -- FIX MOBILE v6: bloquear slash si el boton Throw esta en secuencia
+            -- (CHARGING / HOLDING / THROWING). _G._mobileThrowState lo setea el boton.
+            local mts = _G._mobileThrowState
+            if mts and mts ~= "IDLE" then return end
             task.spawn(_doSlash)
         end
     end))
@@ -64661,6 +64665,12 @@ task.spawn(function()
     -- ----------------------------------------------------------------
     local THROW_STATE = "IDLE"   -- "IDLE" | "CHARGING" | "HOLDING" | "THROWING"
 
+    -- Sincronizar con global para que el slash handler pueda leerlo
+    local function _setState(s)
+        THROW_STATE = s
+        _G._mobileThrowState = s
+    end
+
     -- Delays entre animaciones (en segundos)
     local DELAY_AFTER_CHARGE  = 0.05   -- pausa entre ThrowCharge y ThrowHold
     local DELAY_AFTER_HOLD    = 0.05   -- pausa entre ThrowHold y ThrowKnife
@@ -64809,7 +64819,7 @@ task.spawn(function()
         if not kc then return end
 
         -- ---- FASE 1: CHARGING ----
-        THROW_STATE = "CHARGING"
+        _setState("CHARGING")
 
         -- Weld del knife a la mano para evitar glitches visuales
         local _knifeWeld = nil
@@ -64836,7 +64846,7 @@ task.spawn(function()
         task.wait(DELAY_AFTER_CHARGE)
 
         -- ---- FASE 2: HOLDING ----
-        THROW_STATE = "HOLDING"
+        _setState("HOLDING")
 
         local holdTrack = nil
         local holdExists = kc:FindFirstChild("ThrowHold") ~= nil
@@ -64871,7 +64881,7 @@ task.spawn(function()
             stopTrack(chargeTrack)
             stopTrack(holdTrack)
             pcall(function() if _knifeWeld and _knifeWeld.Parent then _knifeWeld:Destroy() end end)
-            THROW_STATE = "IDLE"
+            _setState("IDLE")
             return
         end
 
@@ -64905,12 +64915,26 @@ task.spawn(function()
                 if KnifeSAState then
                     KnifeSAState._lastMobileThrowTime = os.clock()
                 end
+                -- FIX KNIFE VISUAL: habilitar KnifeClient brevemente para que el
+                -- servidor pueda spawnear el ThrowingKnife en workspace.
+                -- Sin esto el knife no sale volando aunque el FireServer se ejecute.
+                local kc2 = knife:FindFirstChild("KnifeClient")
+                if kc2 then
+                    pcall(function() kc2.Disabled = false end)
+                end
                 -- Disparar - probar firmas conocidas de KnifeThrown
                 local fired = false
                 pcall(function() knifeThrown:FireServer(handleCF, targetCF); fired = true end)
                 if not fired then pcall(function() knifeThrown:FireServer(targetCF, handleCF); fired = true end) end
                 if not fired then pcall(function() knifeThrown:FireServer(targetCF); fired = true end) end
                 if not fired then pcall(function() knifeThrown:FireServer(handleCF) end) end
+                -- Volver a deshabilitar KnifeClient despues de un frame
+                -- para que no tome control del movimiento del personaje
+                task.defer(function()
+                    if kc2 and kc2.Parent then
+                        pcall(function() kc2.Disabled = true end)
+                    end
+                end)
             end
         end
 
@@ -64922,7 +64946,7 @@ task.spawn(function()
             task.wait(0.6)
         end
 
-        THROW_STATE = "IDLE"
+        _setState("IDLE")
     end
 
     -- ----------------------------------------------------------------
@@ -64970,7 +64994,7 @@ task.spawn(function()
                             task.spawn(startThrowSequence, throwBtn)
                         elseif THROW_STATE == "HOLDING" then
                             -- Segundo tap: disparar el knife
-                            THROW_STATE = "THROWING"
+                            _setState("THROWING")
                         end
                         -- En CHARGING o THROWING: ignorar taps extra
                     end)
@@ -64999,7 +65023,7 @@ task.spawn(function()
     lp.CharacterAdded:Connect(function()
         _equipHooked  = false
         _throwHooked  = false
-        THROW_STATE   = "IDLE"
+        _setState("IDLE")
         task.wait(0.6)
         hookButtons()
     end)
