@@ -49496,19 +49496,42 @@ function CreateCombatTab()
                         task.wait(0.12)  -- animacion arranca antes de FireServer
 
                         -- FireServer
+                        -- FIX KNIFE VISUAL: el servidor necesita que KnifeClient este
+                        -- habilitado para procesar KnifeThrown y spawnear ThrowingKnife.
+                        -- Lo habilitamos 1 frame, disparamos, lo deshabilitamos de nuevo.
                         local fc = LocalPlayer.Character
                         local fk = fc and fc:FindFirstChild("Knife")
                         if not fk then
                             local fb = LocalPlayer:FindFirstChildOfClass("Backpack")
                             fk = fb and fb:FindFirstChild("Knife")
                         end
-                        if fk and bladeCF and targetCF then
-                            local ev = fk:FindFirstChild("Events")
-                            local kt = ev and ev:FindFirstChild("KnifeThrown")
+                        if fk and targetCF then
+                            local ev     = fk:FindFirstChild("Events")
+                            local kt     = ev and ev:FindFirstChild("KnifeThrown")
+                            local kc_fk  = fk:FindFirstChild("KnifeClient")
+                            local handle = fk:FindFirstChild("Handle")
+
                             if kt then
+                                -- Habilitar KnifeClient para que el servidor procese el throw
+                                if kc_fk then pcall(function() kc_fk.Disabled = false end) end
+
+                                -- Usar Handle.CFrame real como blade origin (igual que KnifeClient nativo)
+                                local realBladeCF = bladeCF
+                                if handle then
+                                    pcall(function() realBladeCF = handle.CFrame end)
+                                end
+
                                 local ok = false
-                                pcall(function() kt:FireServer(bladeCF, targetCF); ok = true end)
-                                if not ok then pcall(function() kt:FireServer(targetCF, bladeCF) end) end
+                                pcall(function() kt:FireServer(realBladeCF, targetCF); ok = true end)
+                                if not ok then pcall(function() kt:FireServer(targetCF, realBladeCF); ok = true end) end
+                                if not ok then pcall(function() kt:FireServer(targetCF) end) end
+
+                                -- Deshabilitar KnifeClient en el siguiente frame
+                                task.defer(function()
+                                    if kc_fk and kc_fk.Parent then
+                                        pcall(function() kc_fk.Disabled = true end)
+                                    end
+                                end)
                             else
                                 _fireKnifeServer(bladeCF, targetCF)
                             end
