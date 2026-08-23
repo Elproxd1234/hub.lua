@@ -49333,94 +49333,43 @@ function CreateCombatTab()
 
                 -- ----------------------------------------------------------------
                 -- ================================================================
-                -- MOBILE THROW SYSTEM v16 - FLUJO NATIVO
+                -- MOBILE THROW SYSTEM v17 - HOOK NATIVO TouchTapInWorld
                 --
-                -- ESTRATEGIA: No luchar contra el KnifeClient.
-                -- El KnifeClient nativo maneja todo el FireServer correctamente.
-                -- Nosotros solo:
-                --   1) Detectamos el tap en el boton Throw (primer tap -> inicia secuencia)
-                --   2) Esperamos a que ThrowCharge termine y ThrowHold empiece (u67=true en el KC nativo)
-                --   3) En fase HOLDING: detectamos cualquier touch en pantalla (ignorando gp)
-                --   4) Calculamos el target SA y disparamos TouchTapInWorld sintetico
-                --      OR inyectamos directamente WeaponService:GetTargetPosition con SA
+                -- El KnifeClient nativo ya maneja todo el flujo correctamente:
+                --   Throw presionado -> startThrowKnife() -> ThrowCharge -> u67=true -> ThrowHold
+                --   Touch en pantalla -> TouchTapInWorld -> throwKnife(targetPos) -> FireServer
                 --
-                -- El KnifeClient queda HABILITADO para que el servidor procese todo.
-                -- KnifeSAState._setupKnife lo deshabilita solo para Desktop (RMB).
-                -- En mobile lo dejamos habilitado.
+                -- Nosotros SOLO hookeamos TouchTapInWorld para reemplazar targetPos
+                -- con el del Silent Aim cuando u67=true (fase HOLDING).
+                -- KnifeClient queda HABILITADO siempre. No reimplementamos nada.
                 -- ================================================================
 
-                -- Habilitar KnifeClient en mobile (no debe estar disabled)
-                do
-                    local function _enableKC(parent)
+                -- Paso 1: asegurar KnifeClient habilitado
+                local function _enableKC()
+                    local c = LocalPlayer.Character
+                    local function _enable(parent)
                         if not parent then return end
                         local knife = parent:FindFirstChild("Knife")
                         local kc = knife and knife:FindFirstChild("KnifeClient")
                         if kc then pcall(function() kc.Disabled = false end) end
                     end
-                    local c0 = LocalPlayer.Character
-                    if c0 then _enableKC(c0) end
-                    _enableKC(LocalPlayer.Backpack)
+                    _enable(c)
+                    _enable(LocalPlayer.Backpack)
                 end
+                _enableKC()
 
-                -- Estado de la secuencia
-                -- 0=IDLE  1=CHARGING  2=HOLDING  3=THROWING
-                local _throwState       = 0
-                local _mobileSeqActive  = false
+                -- Paso 2: obtener referencia a WeaponService (mismo que usa el KnifeClient)
+                local _weaponService = nil
+                pcall(function()
+                    local RS = game:GetService("ReplicatedStorage")
+                    _weaponService = require(RS:WaitForChild("ClientServices"):WaitForChild("WeaponService"))
+                end)
 
-                -- Cache de tracks locales (independiente de KnifeSAState)
-                local _msaCache = {}
-
-                local function _msaGetAnimator()
-                    local c = LocalPlayer.Character
-                    local h = c and c:FindFirstChildOfClass("Humanoid")
-                    return h and h:FindFirstChildOfClass("Animator")
-                end
-
-                local function _msaPlay(knife, name, looped)
-                    local anim = _msaGetAnimator()
-                    if not anim then return nil end
-                    local kc  = knife and knife:FindFirstChild("KnifeClient")
-                    local obj = kc and kc:FindFirstChild(name)
-                    if not obj then return nil end
-                    local t = _msaCache[name]
-                    if t then
-                        local ok = pcall(function() return t.IsPlaying end)
-                        if not ok then t = nil; _msaCache[name] = nil end
-                    end
-                    if not t then
-                        local ok, tr = pcall(function() return anim:LoadAnimation(obj) end)
-                        if not ok or not tr then return nil end
-                        tr.Priority = Enum.AnimationPriority.Action
-                        _msaCache[name] = tr
-                        t = tr
-                    end
-                    t.Looped = looped or false
-                    if t.IsPlaying then pcall(function() t:Stop(0) end); task.wait(0.016) end
-                    pcall(function() t:Play(0.05) end)
-                    return t
-                end
-
-                local function _msaStop(name)
-                    local t = _msaCache[name]
-                    if t then pcall(function() t.Looped = false; t:Stop(0.05) end) end
-                end
-
-                local function _msaWait(track, fallback)
-                    if not track then task.wait(fallback or 0.5); return end
-                    local t0 = os.clock()
-                    repeat task.wait(0.016) until track.IsPlaying or (os.clock()-t0) > 0.4
-                    local len = (track.Length and track.Length > 0.05) and track.Length or (fallback or 0.5)
-                    local t1 = os.clock()
-                    repeat task.wait(0.016) until (not track.IsPlaying) or (os.clock()-t1) >= len + 0.05
-                end
-
-                -- Calcula targetCF con Silent Aim o fallback al frente del personaje
-                local function _calcTarget()
+                -- Paso 3: calcular CFrame del target SA
+                local function _getSATargetCF()
                     local c    = LocalPlayer.Character
                     local myHRP = c and c:FindFirstChild("HumanoidRootPart")
                     if not myHRP then return nil end
-                    local origin = myHRP.Position + Vector3.new(0, 1.5, 0)
-                    local targetPos = nil
                     -- Intentar SA
                     if KnifeSAState and KnifeSAState.enabled
                     and type(_KnifeSA_getBestTarget) == "function" then
@@ -49435,226 +49384,72 @@ function CreateCombatTab()
                                         pred = _KnifeSA_getPredictedPos(tHRP, tgt.Character)
                                     end)
                                 end
-                                targetPos = pred or tHRP.Position
+                                local targetPos = pred or tHRP.Position
                                 local minY = math.max(0.3, tHRP.Position.Y - 1.5)
                                 if targetPos.Y < minY then
                                     targetPos = Vector3.new(targetPos.X, tHRP.Position.Y + 0.5, targetPos.Z)
                                 end
+                                local origin  = myHRP.Position + Vector3.new(0, 1.5, 0)
+                                local backDir = origin - targetPos
+                                return backDir.Magnitude > 0.1
+                                    and CFrame.new(targetPos, targetPos + backDir.Unit)
+                                    or  CFrame.new(targetPos)
                             end
                         end
                     end
-                    -- Fallback: frente del personaje
-                    if not targetPos then
-                        targetPos = origin + myHRP.CFrame.LookVector * 30
-                    end
-                    local aimVec = (targetPos - origin)
-                    if aimVec.Magnitude < 0.01 then aimVec = myHRP.CFrame.LookVector end
-                    local aimDir = aimVec.Unit
-                    local handleCF  = CFrame.new(origin, origin + aimDir)
-                    local backDir   = origin - targetPos
-                    local targetCF  = backDir.Magnitude > 0.1
-                        and CFrame.new(targetPos, targetPos + backDir.Unit)
-                        or  CFrame.new(targetPos)
-                    return handleCF, targetCF
+                    return nil
                 end
 
-                -- Ejecuta el FireServer con el KnifeClient habilitado
-                local function _doFireServer(knife, targetCF)
-                    if not knife or not targetCF then return end
-                    local kc     = knife:FindFirstChild("KnifeClient")
+                -- Paso 4: hookear TouchTapInWorld para interceptar el targetPos
+                -- Cuando el KnifeClient esta en HOLDING (u67=true), TouchTapInWorld
+                -- llama throwKnife(WeaponService:GetTargetPosition(x, y)).
+                -- Nosotros disparamos KnifeThrown:FireServer directamente con el SA target
+                -- justo antes de que el nativo lo haga, o lo dejamos pasar si no hay SA target.
+                local _ttwConn = UserInputService.TouchTapInWorld:Connect(function(pos, gp)
+                    if gp then return end
+                    if not KnifeSAState.enabled then return end
+                    -- Solo interceptar cuando hay un target SA valido
+                    local saCF = _getSATargetCF()
+                    if not saCF then return end  -- sin target: dejar pasar al KnifeClient nativo
+                    -- Hay target SA: obtener el knife y disparar con nuestro target
+                    local c     = LocalPlayer.Character
+                    local knife = c and c:FindFirstChild("Knife")
+                    if not knife then return end
                     local ev     = knife:FindFirstChild("Events")
                     local kt     = ev and ev:FindFirstChild("KnifeThrown")
                     local handle = knife:FindFirstChild("Handle")
                     if not kt then return end
-                    -- Habilitar KnifeClient para que el servidor procese el throw
-                    if kc then pcall(function() kc.Disabled = false end) end
-                    -- Usar Handle.CFrame real como el KnifeClient nativo
+                    -- Registrar tiempo para bloquear slash post-throw
+                    KnifeSAState._lastMobileThrowTime = os.clock()
+                    _G._mobileKSALastThrow = os.clock()
+                    -- FireServer con SA target (handle.CFrame real + SA targetCF)
                     local bladeCF = handle and handle.CFrame or CFrame.new()
                     local ok = false
-                    pcall(function() kt:FireServer(bladeCF, targetCF); ok = true end)
-                    if not ok then pcall(function() kt:FireServer(targetCF, bladeCF); ok = true end) end
-                    if not ok then pcall(function() kt:FireServer(targetCF) end) end
-                    -- Mantener KnifeClient habilitado (mobile necesita que este activo)
-                end
+                    pcall(function() kt:FireServer(bladeCF, saCF); ok = true end)
+                    if not ok then pcall(function() kt:FireServer(saCF, bladeCF); ok = true end) end
+                    if not ok then pcall(function() kt:FireServer(saCF) end) end
+                    -- NO retornamos ni bloqueamos el evento nativo:
+                    -- el KnifeClient nativo tambien llama FireServer con su target,
+                    -- pero el servidor solo procesa el primero (el nuestro con SA).
+                end)
+                table.insert(KnifeSAState._mobileConns, _ttwConn)
 
-                -- Secuencia principal
-                local function _runSequence()
-                    if _mobileSeqActive then return end
-                    _mobileSeqActive = true
-                    _throwState      = 0
-
-                    task.spawn(function()
-                        local function _cleanup()
-                            _mobileSeqActive = false
-                            _throwState      = 0
-                            _G._mobileThrowState = "IDLE"
+                -- Paso 5: re-habilitar KnifeClient en cada respawn
+                local _charConn = LocalPlayer.CharacterAdded:Connect(function(newChar)
+                    _G._mobileThrowState = "IDLE"
+                    newChar.ChildAdded:Connect(function(ch)
+                        if ch:IsA("Tool") and ch.Name == "Knife" then
+                            local kc2 = ch:FindFirstChild("KnifeClient")
+                            if kc2 then pcall(function() kc2.Disabled = false end) end
                         end
-
-                        local c     = LocalPlayer.Character
-                        local knife = c and c:FindFirstChild("Knife")
-                        local hum   = c and c:FindFirstChildOfClass("Humanoid")
-                        if not knife or not hum or hum.Health <= 0 then
-                            _cleanup(); return
-                        end
-
-                        -- Asegurar KnifeClient habilitado
-                        local kc = knife:FindFirstChild("KnifeClient")
-                        if kc then pcall(function() kc.Disabled = false end) end
-
-                        -- === ESTADO 1: CHARGING ===
-                        _throwState = 1
-                        _G._mobileThrowState = "CHARGING"
-                        task.wait(0.05)
-
-                        local chargeTrack = _msaPlay(knife, "ThrowCharge", false)
-                        _msaWait(chargeTrack, 0.6)
-                        task.wait(0.08)
-
-                        if not _mobileSeqActive then _cleanup(); return end
-
-                        -- === ESTADO 2: HOLDING ===
-                        _throwState = 2
-                        _G._mobileThrowState = "HOLDING"
-                        _msaPlay(knife, "ThrowHold", true)
-                        task.wait(0.08)  -- minimo antes de aceptar touch
-
-                        -- Esperar touch (maximo 30s)
-                        -- _throwState cambia a 3 cuando el touch handler lo confirma
-                        local wt = os.clock()
-                        repeat task.wait(0.016)
-                        until _throwState == 3
-                           or not _mobileSeqActive
-                           or (os.clock()-wt) > 30
-
-                        _msaStop("ThrowHold")
-                        _msaStop("ThrowCharge")
-
-                        if _throwState ~= 3 or not _mobileSeqActive then
-                            _cleanup(); return
-                        end
-
-                        -- Cooldown global
-                        local now = os.clock()
-                        if now - (_G._mobileKSALastThrow or -999) < 1.5 then
-                            _cleanup(); return
-                        end
-                        _G._mobileKSALastThrow            = now
-                        KnifeSAState._lastMobileThrowTime = now
-
-                        -- Calcular target SA antes de animar ThrowKnife
-                        local handleCF, targetCF = _calcTarget()
-
-                        -- === ESTADO 3: THROWING ===
-                        _G._mobileThrowState = "THROWING"
-                        task.wait(0.05)
-
-                        local throwTrack = _msaPlay(knife, "ThrowKnife", false)
-                        task.wait(0.10)  -- dejar que la animacion arranque
-
-                        -- FireServer con KnifeClient habilitado y Handle.CFrame real
-                        if targetCF then
-                            _doFireServer(knife, targetCF)
-                        end
-
-                        _msaWait(throwTrack, 0.5)
-                        _cleanup()
-                    end)
-                end
-
-                -- ----------------------------------------------------------------
-                -- HOOK AL BOTON THROW
-                -- Primer tap  -> inicia secuencia (IDLE)
-                -- Segundo tap en HOLDING -> confirma lanzamiento (HOLDING -> THROWING)
-                -- ----------------------------------------------------------------
-                task.spawn(function()
-                    local pg2  = LocalPlayer:WaitForChild("PlayerGui", 20)
-                    if not pg2 then return end
-                    local gcui = pg2:WaitForChild("GameplayControlsUI", 20)
-                    if not gcui then return end
-                    local tc   = gcui:WaitForChild("TouchControls", 20)
-                    if not tc then return end
-                    local rb   = tc:WaitForChild("RightBar", 20)
-                    if not rb then return end
-                    local throwBtn = rb:WaitForChild("Throw", 20)
-                    if not throwBtn then return end
-
-                    -- Usar Activated (funciona con TouchBinding.UIButton del juego nativo)
-                    -- Si no dispara, fallback a InputBegan con hit-test
-                    local function _onThrowTap()
-                        if not KnifeSAState.enabled then return end
-                        local c2 = LocalPlayer.Character
-                        if not (c2 and c2:FindFirstChild("Knife")) then return end
-                        if _throwState == 2 then
-                            -- Segundo tap: confirmar lanzamiento
-                            _throwState = 3
-                        elseif _throwState == 0 and not _mobileSeqActive then
-                            -- Primer tap: iniciar secuencia
-                            _runSequence()
-                        end
-                        -- En CHARGING (1) o THROWING (3): ignorar
-                    end
-
-                    -- Metodo 1: Activated (el mas confiable si el UIButton esta conectado)
-                    local conn1 = throwBtn.Activated:Connect(_onThrowTap)
-                    table.insert(KnifeSAState._mobileConns, conn1)
-
-                    -- Metodo 2: InputBegan hit-test como respaldo
-                    local conn2 = UserInputService.InputBegan:Connect(function(inp, gp)
-                        -- En HOLDING aceptamos aunque gp=true (el dedo puede estar sobre GUI)
-                        if _throwState ~= 2 and gp then return end
-                        if inp.UserInputType ~= Enum.UserInputType.Touch
-                        and inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-                        if not KnifeSAState.enabled then return end
-                        -- Hit-test: verificar que el touch cayo en el boton Throw
-                        local pos  = inp.Position
-                        local objs = pg2:GetGuiObjectsAtPosition(pos.X, pos.Y)
-                        for _, obj in ipairs(objs) do
-                            if obj == throwBtn or obj:IsDescendantOf(throwBtn) then
-                                _onThrowTap()
-                                return
-                            end
-                        end
-                    end)
-                    table.insert(KnifeSAState._mobileConns, conn2)
-
-                    LocalPlayer.CharacterAdded:Connect(function(newChar)
-                        _msaCache        = {}
-                        _mobileSeqActive = false
-                        _throwState      = 0
-                        _G._mobileThrowState = "IDLE"
-                        -- Re-habilitar KnifeClient en personaje nuevo
-                        newChar.ChildAdded:Connect(function(ch)
-                            if ch:IsA("Tool") and ch.Name == "Knife" then
-                                _msaCache = {}
-                                local kc2 = ch:FindFirstChild("KnifeClient")
-                                if kc2 then pcall(function() kc2.Disabled = false end) end
-                            end
-                        end)
                     end)
                 end)
-
-                -- ----------------------------------------------------------------
-                -- TOUCH EN PANTALLA (cualquier zona) -> confirma lanzamiento en HOLDING
-                -- Acepta gp=true porque el dedo puede tocar sobre controles del juego
-                -- ----------------------------------------------------------------
-                local _touchConfirmConn = UserInputService.InputBegan:Connect(function(inp, gp)
-                    -- No filtrar por gp en HOLDING: el dedo puede caer sobre GUI del juego
-                    if inp.UserInputType ~= Enum.UserInputType.Touch then return end
-                    if not KnifeSAState.enabled then return end
-                    if _throwState ~= 2 or not _mobileSeqActive then return end
-                    local c = LocalPlayer.Character
-                    if not (c and c:FindFirstChild("Knife")) then return end
-                    _throwState = 3
-                end)
-                table.insert(KnifeSAState._mobileConns, _touchConfirmConn)
+                table.insert(KnifeSAState._mobileConns, _charConn)
 
                 -- Limpieza al desactivar SA
                 table.insert(KnifeSAState._mobileConns, {
                     Disconnect = function()
-                        _mobileSeqActive = false
-                        _throwState      = 0
                         _G._mobileThrowState = "IDLE"
-                        _msaCache        = {}
                     end
                 })
             end
