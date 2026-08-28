@@ -64969,6 +64969,31 @@ task.spawn(function()
         local kc = knife:FindFirstChild("KnifeClient")
         if not kc then return end
 
+        -- ---- FIX SKIP: deshabilitar KnifeClient INMEDIATAMENTE ----
+        -- Esto evita que el KnifeClient nativo capture el tap y dispare
+        -- su propio ThrowKnife saltando la fase ThrowHold.
+        -- El Hub re-habilita KnifeClient solo al momento exacto del FireServer.
+        pcall(function() kc.Disabled = true end)
+
+        -- ---- FIX MOVIMIENTO: guardar WalkSpeed/JumpPower actuales ----
+        -- Al habilitar KnifeClient brevemente para el FireServer, el script
+        -- nativo puede resetear WalkSpeed a 0 o cambiar el estado del Humanoid.
+        -- Guardamos los valores antes del throw para restaurarlos después.
+        local _savedWalkSpeed  = 16
+        local _savedJumpPower  = 50
+        local _savedJumpHeight = nil
+        pcall(function()
+            local hum = getHum()
+            if hum then
+                _savedWalkSpeed  = hum.WalkSpeed
+                _savedJumpPower  = hum.JumpPower
+                -- Roblox nuevo usa JumpHeight en vez de JumpPower
+                if hum:GetPropertyChangedSignal("JumpHeight") then
+                    _savedJumpHeight = hum.JumpHeight
+                end
+            end
+        end)
+
         -- ---- FASE 1: CHARGING ----
         _setState("CHARGING")
 
@@ -65032,6 +65057,17 @@ task.spawn(function()
             stopTrack(chargeTrack)
             stopTrack(holdTrack)
             pcall(function() if _knifeWeld and _knifeWeld.Parent then _knifeWeld:Destroy() end end)
+            -- Restaurar KnifeClient al estado original si se canceló
+            pcall(function() kc.Disabled = false end)
+            -- Restaurar movimiento
+            pcall(function()
+                local hum = getHum()
+                if hum then
+                    hum.WalkSpeed = _savedWalkSpeed
+                    hum.JumpPower = _savedJumpPower
+                    if _savedJumpHeight then hum.JumpHeight = _savedJumpHeight end
+                end
+            end)
             _setState("IDLE")
             return
         end
@@ -65079,12 +65115,33 @@ task.spawn(function()
                 if not fired then pcall(function() knifeThrown:FireServer(targetCF, handleCF); fired = true end) end
                 if not fired then pcall(function() knifeThrown:FireServer(targetCF); fired = true end) end
                 if not fired then pcall(function() knifeThrown:FireServer(handleCF) end) end
-                -- Volver a deshabilitar KnifeClient despues de un frame
+                -- ---- FIX MOVIMIENTO: restaurar WalkSpeed/JumpPower INMEDIATAMENTE ----
+                -- El KnifeClient nativo al habilitarse puede resetear WalkSpeed a 0,
+                -- poner al personaje en estado "muerto" o activar NetworkOwnership
+                -- que lo hace caer. Restauramos antes de que el script nativo actúe.
+                pcall(function()
+                    local hum = getHum()
+                    if hum then
+                        hum.WalkSpeed = _savedWalkSpeed
+                        hum.JumpPower = _savedJumpPower
+                        if _savedJumpHeight then hum.JumpHeight = _savedJumpHeight end
+                    end
+                end)
+                -- Volver a deshabilitar KnifeClient en el mismo frame
                 -- para que no tome control del movimiento del personaje
                 task.defer(function()
                     if kc2 and kc2.Parent then
                         pcall(function() kc2.Disabled = true end)
                     end
+                    -- Restaurar movimiento también en defer (doble seguro)
+                    pcall(function()
+                        local hum = getHum()
+                        if hum then
+                            hum.WalkSpeed = _savedWalkSpeed
+                            hum.JumpPower = _savedJumpPower
+                            if _savedJumpHeight then hum.JumpHeight = _savedJumpHeight end
+                        end
+                    end)
                 end)
             end
         end
@@ -65096,6 +65153,18 @@ task.spawn(function()
         else
             task.wait(0.6)
         end
+
+        -- ---- FIX MOVIMIENTO: restaurar por tercera vez al final ----
+        -- Garantía final de que el personaje recupera su velocidad
+        -- aunque el ThrowKnife haya tardado o el KnifeClient haya interferido.
+        pcall(function()
+            local hum = getHum()
+            if hum then
+                hum.WalkSpeed = _savedWalkSpeed
+                hum.JumpPower = _savedJumpPower
+                if _savedJumpHeight then hum.JumpHeight = _savedJumpHeight end
+            end
+        end)
 
         _setState("IDLE")
     end
@@ -65171,6 +65240,61 @@ task.spawn(function()
         end)
     end
 
+    -- ----------------------------------------------------------------
+    -- TOUCH EN PANTALLA (zona libre de UI)
+    -- Permite lanzar/confirmar tocando cualquier parte de la pantalla
+    -- que NO sea el joystick ni los botones de la UI derecha.
+    -- ----------------------------------------------------------------
+    task.spawn(function()
+        local camera = workspace.CurrentCamera
+        -- Tiempo del último tap para debounce
+        local _lastScreenTap = 0
+        local SCREEN_TAP_DEBOUNCE = 0.15
+
+        -- Determinar si una posición en pantalla está sobre un elemento UI
+        local function posIsOnUI(pos)
+            -- Zona del joystick: cuarto inferior izquierdo de la pantalla
+            local vp = camera and camera.ViewportSize or Vector2.new(800, 600)
+            local leftZoneX = vp.X * 0.45   -- 45% izquierdo = zona joystick
+            local bottomZoneY = vp.Y * 0.55  -- 55% abajo = zona botones/joystick
+
+            if pos.X < leftZoneX and pos.Y > bottomZoneY then
+                return true  -- zona del joystick
+            end
+
+            -- Zona de botones derecha (Throw, Equip, etc.)
+            local rightZoneX = vp.X * 0.75  -- 75% derecho = zona botones
+            if pos.X > rightZoneX and pos.Y > bottomZoneY then
+                return true  -- zona de botones de acción
+            end
+
+            return false
+        end
+
+        UIS.TouchTap:Connect(function(positions, gameProcessed)
+            if gameProcessed then return end
+            if #positions == 0 then return end
+
+            local now = os.clock()
+            if now - _lastScreenTap < SCREEN_TAP_DEBOUNCE then return end
+
+            local tapPos = positions[1]
+            if posIsOnUI(tapPos) then return end
+
+            _lastScreenTap = now
+
+            -- Mismo comportamiento que el botón Throw
+            if THROW_STATE == "IDLE" then
+                local knife = findKnifeInChar()
+                if knife then
+                    task.spawn(startThrowSequence, nil)
+                end
+            elseif THROW_STATE == "HOLDING" then
+                _setState("THROWING")
+            end
+        end)
+    end)
+
     lp.CharacterAdded:Connect(function()
         _equipHooked  = false
         _throwHooked  = false
@@ -65180,5 +65304,5 @@ task.spawn(function()
     end)
 end)
 -- ================================================================
--- == FIN MOBILE KNIFE BUTTONS v6
+-- == FIN MOBILE KNIFE BUTTONS v6 (fixed)
 -- ================================================================
