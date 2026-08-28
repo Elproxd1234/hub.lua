@@ -49730,13 +49730,10 @@ function CreateCombatTab()
                         end
                     end
 
-                    -- ================================================================
-                    -- FIX KNIFE VISUAL: el servidor MM2 solo spawnea el ThrowingKnife
-                    -- si el KnifeClient esta HABILITADO en el momento del FireServer.
-                    -- Como SA lo mantiene desactivado, lo habilitamos un frame,
-                    -- disparamos, y lo volvemos a deshabilitar.
-                    -- ================================================================
-                    pcall(function() if kc then kc.Disabled = false end end)
+                    -- FIX IMÁN RAÍZ: KnifeClient se mantiene deshabilitado durante el throw.
+                    -- El servidor spawnea el ThrowingKnife en workspace por sí solo al recibir
+                    -- el FireServer. NO necesita que KnifeClient esté activo en el cliente.
+                    -- Habilitarlo antes del FireServer era la causa raíz del imán.
 
                     -- Reproducir ThrowKnife (track fresco, sin cache)
                     local throwTrack = _freshTrack("ThrowKnife", false, 1)
@@ -49808,25 +49805,16 @@ function CreateCombatTab()
                         end
                     end)
 
-                    -- CAPA 4: BodyVelocity anchor (0.35s) XYZ completo + zero velocity
-                    -- FIX IMÁN: el servidor aplica un impulso al HRP DESPUÉS del FireServer.
-                    -- 0.15s era demasiado corto; se extiende a 0.35s y se cubre también Y
-                    -- para absorber el impulso vertical. Se zeroa AssemblyLinearVelocity
-                    -- antes de poner el anchor para cancelar cualquier velocidad residual.
+                    -- CAPA 4: BodyVelocity anchor corto (0.15s) X/Z
                     local _ksaAnchor = nil
                     pcall(function()
                         local _ksaC3  = LocalPlayer.Character
                         local _ksaHRP = _ksaC3 and _ksaC3:FindFirstChild("HumanoidRootPart")
                         if _ksaHRP then
-                            -- Cancelar velocidad acumulada ANTES de poner el anchor
-                            pcall(function()
-                                _ksaHRP.AssemblyLinearVelocity  = Vector3.zero
-                                _ksaHRP.AssemblyAngularVelocity = Vector3.zero
-                            end)
                             _ksaAnchor          = Instance.new("BodyVelocity")
                             _ksaAnchor.Velocity = Vector3.zero
-                            _ksaAnchor.MaxForce = Vector3.new(4e4, 4e4, 4e4)  -- XYZ completo
-                            _ksaAnchor.P        = 1.2e4
+                            _ksaAnchor.MaxForce = Vector3.new(4e4, 0, 4e4)
+                            _ksaAnchor.P        = 8e3
                             _ksaAnchor.Parent   = _ksaHRP
                         end
                     end)
@@ -49838,33 +49826,6 @@ function CreateCombatTab()
                     if not fired then pcall(function() kt:FireServer(targetCF);          fired = true end) end
                     if not fired then pcall(function() kt:FireServer(bladeCF) end) end
 
-                    -- CAPA 5: Heartbeat velocity-clamp (0.35s) post-FireServer
-                    -- Zeroa velocidad horizontal excesiva en cada frame para bloquear el imán.
-                    local _ksaVelClamp = nil
-                    pcall(function()
-                        local _ksaC5  = LocalPlayer.Character
-                        local _ksaH5  = _ksaC5 and _ksaC5:FindFirstChild("HumanoidRootPart")
-                        if _ksaH5 then
-                            _ksaVelClamp = RunService.Heartbeat:Connect(function()
-                                if not _ksaH5 or not _ksaH5.Parent then
-                                    pcall(function() _ksaVelClamp:Disconnect() end); return
-                                end
-                                local v5 = _ksaH5.AssemblyLinearVelocity
-                                local hv5 = Vector3.new(v5.X, 0, v5.Z)
-                                if hv5.Magnitude > 2 then
-                                    pcall(function()
-                                        _ksaH5.AssemblyLinearVelocity = Vector3.new(0, v5.Y, 0)
-                                    end)
-                                end
-                            end)
-                            task.delay(0.35, function()
-                                pcall(function()
-                                    if _ksaVelClamp then _ksaVelClamp:Disconnect() end
-                                end)
-                            end)
-                        end
-                    end)
-
                     -- Deshabilitar KnifeClient de vuelta
                     task.defer(function()
                         if kc and kc.Parent and KnifeSAState.enabled then
@@ -49872,18 +49833,9 @@ function CreateCombatTab()
                         end
                     end)
 
-                    -- Soltar anchor a los 0.35s (extendido: cubre el impulso tardío del servidor)
-                    task.delay(0.35, function()
+                    -- Soltar anchor a los 0.15s
+                    task.delay(0.15, function()
                         pcall(function()
-                            local _ksaC4r = LocalPlayer.Character
-                            local _ksaHRPr = _ksaC4r and _ksaC4r:FindFirstChild("HumanoidRootPart")
-                            -- Zerear velocidad una vez más justo antes de destruir el anchor
-                            if _ksaHRPr then
-                                pcall(function()
-                                    _ksaHRPr.AssemblyLinearVelocity  = Vector3.zero
-                                    _ksaHRPr.AssemblyAngularVelocity = Vector3.zero
-                                end)
-                            end
                             if _ksaAnchor and _ksaAnchor.Parent then _ksaAnchor:Destroy() end
                         end)
                         pcall(function()
@@ -65310,64 +65262,29 @@ task.spawn(function()
                     end
                 end)
 
-                -- CAPA 4: BodyVelocity anchor (0.35s) XYZ completo + zero velocity
-                -- FIX IMÁN: 0.15s era insuficiente; el impulso del servidor llega tarde.
-                -- Se cubre XYZ (incluso Y) y se zeroa AssemblyLinearVelocity primero.
+                -- CAPA 4: BodyVelocity anchor corto (0.15s) solo en X/Z
                 local _anchor = nil
                 pcall(function()
                     local c   = getChar()
                     local hrp = c and c:FindFirstChild("HumanoidRootPart")
                     if hrp then
-                        -- Cancelar velocidad residual antes de poner el anchor
-                        pcall(function()
-                            hrp.AssemblyLinearVelocity  = Vector3.zero
-                            hrp.AssemblyAngularVelocity = Vector3.zero
-                        end)
                         _anchor          = Instance.new("BodyVelocity")
                         _anchor.Velocity = Vector3.zero
-                        _anchor.MaxForce = Vector3.new(4e4, 4e4, 4e4)  -- XYZ completo
-                        _anchor.P        = 1.2e4
+                        _anchor.MaxForce = Vector3.new(4e4, 0, 4e4)  -- X/Z solo, Y libre
+                        _anchor.P        = 8e3
                         _anchor.Parent   = hrp
                     end
                 end)
 
-                -- CAPA 5: Heartbeat velocity-clamp (0.35s)
-                -- Zeroa AssemblyLinearVelocity en cada frame durante la ventana crítica.
-                -- Esto cancela cualquier impulso que el servidor inyecte después del FireServer,
-                -- incluso si llega entre dos frames (lo que hace fallar al BodyVelocity solo).
-                local _velClampConn = nil
-                pcall(function()
-                    local c5   = getChar()
-                    local hrp5 = c5 and c5:FindFirstChild("HumanoidRootPart")
-                    if hrp5 then
-                        _velClampConn = RunService.Heartbeat:Connect(function()
-                            if not hrp5 or not hrp5.Parent then
-                                pcall(function() _velClampConn:Disconnect() end); return
-                            end
-                            local v = hrp5.AssemblyLinearVelocity
-                            -- Solo zerear si la magnitud horizontal supera 2 studs/s
-                            -- (permite gravedad normal, bloquea el impulso del imán)
-                            local hv = Vector3.new(v.X, 0, v.Z)
-                            if hv.Magnitude > 2 then
-                                pcall(function()
-                                    hrp5.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
-                                end)
-                            end
-                        end)
-                        task.delay(0.35, function()
-                            pcall(function()
-                                if _velClampConn then _velClampConn:Disconnect() end
-                            end)
-                        end)
-                    end
-                end)
+                -- FIX IMÁN RAÍZ: KnifeClient se mantiene SIEMPRE deshabilitado durante el throw.
+                -- El servidor spawnea el ThrowingKnife en workspace basándose en el FireServer
+                -- que recibe, sin importar si KnifeClient está activo en el cliente.
+                -- Habilitar KnifeClient antes del FireServer era la causa raíz del imán:
+                -- el LocalScript de MM2 detecta el throw y aplica AssemblyLinearVelocity
+                -- al HRP hacia el target, sacando al personaje volando.
+                -- El kc2.Disabled = false fue eliminado intencionalmente.
 
-                -- FIX KNIFE VISUAL: habilitar KnifeClient UN frame para que el
-                -- servidor pueda spawnear el ThrowingKnife en workspace
-                local kc2 = knife:FindFirstChild("KnifeClient")
-                if kc2 then pcall(function() kc2.Disabled = false end) end
-
-                -- Disparar
+                -- Disparar con KnifeClient SIEMPRE deshabilitado
                 local fired = false
                 pcall(function() knifeThrown:FireServer(handleCF, targetCF); fired = true end)
                 if not fired then pcall(function() knifeThrown:FireServer(targetCF, handleCF); fired = true end) end
@@ -65384,33 +65301,9 @@ task.spawn(function()
                     end
                 end)
 
-                -- Deshabilitar KnifeClient de vuelta en el mismo frame
-                task.defer(function()
-                    if kc2 and kc2.Parent then
-                        pcall(function() kc2.Disabled = true end)
-                    end
+                -- Soltar anchor después de 0.15s
+                task.delay(0.15, function()
                     pcall(function()
-                        local hum = getHum()
-                        if hum then
-                            hum.WalkSpeed = _savedWalkSpeed
-                            hum.JumpPower = _savedJumpPower
-                            if _savedJumpHeight then hum.JumpHeight = _savedJumpHeight end
-                        end
-                    end)
-                end)
-
-                -- Soltar anchor después de 0.35s (extendido: cubre impulso tardío del servidor)
-                task.delay(0.35, function()
-                    pcall(function()
-                        local c2r   = getChar()
-                        local hrp2r = c2r and c2r:FindFirstChild("HumanoidRootPart")
-                        -- Zerear velocidad una última vez antes de destruir el anchor
-                        if hrp2r then
-                            pcall(function()
-                                hrp2r.AssemblyLinearVelocity  = Vector3.zero
-                                hrp2r.AssemblyAngularVelocity = Vector3.zero
-                            end)
-                        end
                         if _anchor and _anchor.Parent then _anchor:Destroy() end
                     end)
                     pcall(function()
