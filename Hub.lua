@@ -49750,19 +49750,75 @@ function CreateCombatTab()
                     KnifeSAState._lastMobileThrowTime = os.clock()
                     _G._mobileKSALastThrow            = os.clock()
 
-                    -- ---- FIX IMPULSO (KSA): anclar HRP antes del FireServer ----
-                    -- Mismo fix que el sistema de botones: contrarrestar el impulso
-                    -- del servidor con un BodyVelocity local de duración muy corta.
+                    -- ================================================================
+                    -- FIX IMÁN (KSA): mismo sistema de 4 capas que el sistema
+                    -- de botones para evitar que el personaje siga al knife.
+                    -- ================================================================
+
+                    -- CAPA 1: blockThrowHoldAfterThrow ANTES del FireServer
+                    if KnifeSAState._blockThrowHoldAfterThrow then
+                        pcall(KnifeSAState._blockThrowHoldAfterThrow)
+                    end
+
+                    -- CAPA 2: interceptor AnimationPlayed propio (2s)
+                    local _ksaMagnetConn = nil
+                    local _ksaMagnetEnd  = os.clock() + 2.0
+                    pcall(function()
+                        local _ksaC    = LocalPlayer.Character
+                        local _ksaHum  = _ksaC and _ksaC:FindFirstChildOfClass("Humanoid")
+                        local _ksaAnim = _ksaHum and _ksaHum:FindFirstChildOfClass("Animator")
+                        if _ksaAnim then
+                            _ksaMagnetConn = _ksaAnim.AnimationPlayed:Connect(function(track)
+                                if os.clock() > _ksaMagnetEnd then
+                                    pcall(function() _ksaMagnetConn:Disconnect() end)
+                                    return
+                                end
+                                local n = (track.Name or track.Animation and track.Animation.Name or ""):lower()
+                                if n:find("throw") or n:find("hold") or n:find("charge") then
+                                    task.defer(function()
+                                        pcall(function()
+                                            if track and track.IsPlaying then
+                                                track.Looped = false
+                                                track:Stop(0)
+                                            end
+                                        end)
+                                    end)
+                                end
+                            end)
+                        end
+                    end)
+
+                    -- CAPA 3: PlatformStand=false continuo (1.5s)
+                    local _ksaPlatConn = nil
+                    pcall(function()
+                        local _ksaC2   = LocalPlayer.Character
+                        local _ksaHum2 = _ksaC2 and _ksaC2:FindFirstChildOfClass("Humanoid")
+                        if _ksaHum2 then
+                            _ksaPlatConn = RunService.Heartbeat:Connect(function()
+                                if not _ksaHum2 or not _ksaHum2.Parent then
+                                    pcall(function() _ksaPlatConn:Disconnect() end); return
+                                end
+                                if _ksaHum2.PlatformStand then
+                                    pcall(function() _ksaHum2.PlatformStand = false end)
+                                end
+                            end)
+                            task.delay(1.5, function()
+                                pcall(function() if _ksaPlatConn then _ksaPlatConn:Disconnect() end end)
+                            end)
+                        end
+                    end)
+
+                    -- CAPA 4: BodyVelocity anchor corto (0.15s) X/Z
                     local _ksaAnchor = nil
                     pcall(function()
-                        local _ksaChar = LocalPlayer.Character
-                        local _ksaHRP  = _ksaChar and _ksaChar:FindFirstChild("HumanoidRootPart")
+                        local _ksaC3  = LocalPlayer.Character
+                        local _ksaHRP = _ksaC3 and _ksaC3:FindFirstChild("HumanoidRootPart")
                         if _ksaHRP then
-                            _ksaAnchor = Instance.new("BodyVelocity")
-                            _ksaAnchor.Velocity  = Vector3.zero
-                            _ksaAnchor.MaxForce  = Vector3.new(1e5, 0, 1e5)
-                            _ksaAnchor.P         = 1e4
-                            _ksaAnchor.Parent    = _ksaHRP
+                            _ksaAnchor          = Instance.new("BodyVelocity")
+                            _ksaAnchor.Velocity = Vector3.zero
+                            _ksaAnchor.MaxForce = Vector3.new(4e4, 0, 4e4)
+                            _ksaAnchor.P        = 8e3
+                            _ksaAnchor.Parent   = _ksaHRP
                         end
                     end)
 
@@ -49773,29 +49829,30 @@ function CreateCombatTab()
                     if not fired then pcall(function() kt:FireServer(targetCF);          fired = true end) end
                     if not fired then pcall(function() kt:FireServer(bladeCF) end) end
 
-                    -- Volver a deshabilitar KnifeClient (un frame despues del FireServer)
-                    -- para que no tome control de animaciones/movimiento
+                    -- Deshabilitar KnifeClient de vuelta
                     task.defer(function()
                         if kc and kc.Parent and KnifeSAState.enabled then
                             pcall(function() kc.Disabled = true end)
                         end
                     end)
 
-                    -- Soltar el anchor después de 4 frames
-                    task.delay(0.07, function()
+                    -- Soltar anchor a los 0.15s
+                    task.delay(0.15, function()
                         pcall(function()
-                            if _ksaAnchor and _ksaAnchor.Parent then
-                                _ksaAnchor:Destroy()
+                            if _ksaAnchor and _ksaAnchor.Parent then _ksaAnchor:Destroy() end
+                        end)
+                        pcall(function()
+                            local _ksaC4  = LocalPlayer.Character
+                            local _ksaHum4 = _ksaC4 and _ksaC4:FindFirstChildOfClass("Humanoid")
+                            if _ksaHum4 and _ksaHum4.WalkSpeed == 0 then
+                                _ksaHum4.WalkSpeed = 16
                             end
                         end)
-                        -- Restaurar WalkSpeed al soltar
-                        pcall(function()
-                            local _ksaChar2 = LocalPlayer.Character
-                            local _ksaHum   = _ksaChar2 and _ksaChar2:FindFirstChildOfClass("Humanoid")
-                            if _ksaHum and _ksaHum.WalkSpeed == 0 then
-                                _ksaHum.WalkSpeed = 16
-                            end
-                        end)
+                    end)
+
+                    -- Limpiar interceptor a los 2s
+                    task.delay(2.0, function()
+                        pcall(function() if _ksaMagnetConn then _ksaMagnetConn:Disconnect() end end)
                     end)
 
                     -- Esperar que ThrowKnife termine antes de permitir el siguiente throw
@@ -65127,53 +65184,114 @@ task.spawn(function()
             local events = knife:FindFirstChild("Events")
             local knifeThrown = events and events:FindFirstChild("KnifeThrown")
             if knifeThrown then
-                -- Bloquear ThrowHold replicado por servidor
-                if KnifeSAState and KnifeSAState._blockThrowHoldAfterThrow then
-                    pcall(KnifeSAState._blockThrowHoldAfterThrow)
-                end
-                -- Registrar tiempo de throw mobile para bloquear slash post-throw
+
+                -- Registrar tiempo de throw mobile
                 if KnifeSAState then
                     KnifeSAState._lastMobileThrowTime = os.clock()
                 end
-                -- FIX KNIFE VISUAL: habilitar KnifeClient brevemente para que el
-                -- servidor pueda spawnear el ThrowingKnife en workspace.
-                -- Sin esto el knife no sale volando aunque el FireServer se ejecute.
-                local kc2 = knife:FindFirstChild("KnifeClient")
-                if kc2 then
-                    pcall(function() kc2.Disabled = false end)
+
+                -- ================================================================
+                -- FIX IMÁN: el servidor MM2 post-FireServer replica una animación
+                -- al cliente (internamente llamada "ThrowHold" o similar) que mueve
+                -- el HumanoidRootPart hacia donde viajó el knife. Esto es el "imán".
+                --
+                -- SOLUCIÓN EN 4 CAPAS:
+                --   1. _blockThrowHoldAfterThrow ANTES del FireServer
+                --   2. Interceptor de AnimationPlayed propio que cancela TODA
+                --      animación de throw/hold que llegue del servidor en los
+                --      próximos 2s
+                --   3. PlatformStand = false continuo para que el servidor no
+                --      pueda poner al personaje en modo "ragdoll/follow"
+                --   4. BodyVelocity anchor corto (0.15s) en X/Z para absorber
+                --      cualquier impulso residual
+                -- ================================================================
+
+                -- CAPA 1: bloquear ThrowHold del servidor
+                if KnifeSAState and KnifeSAState._blockThrowHoldAfterThrow then
+                    pcall(KnifeSAState._blockThrowHoldAfterThrow)
                 end
 
-                -- ---- FIX IMPULSO: anclar el HRP antes del FireServer ----
-                -- El servidor MM2 aplica un BodyVelocity/impulso al HRP cuando
-                -- recibe KnifeThrown. Creamos nuestro propio BodyVelocity con
-                -- velocidad cero para contrarrestarlo en el cliente.
-                -- Solo afecta al cliente local (no se replica al servidor).
-                local _anchor    = nil
-                local _hrp       = nil
-                local _savedVel  = Vector3.zero
+                -- CAPA 2: interceptor propio de AnimationPlayed (2 segundos)
+                local _magnetBlockConn = nil
+                local _magnetBlockEnd  = os.clock() + 2.0
                 pcall(function()
-                    local c = getChar()
-                    _hrp = c and c:FindFirstChild("HumanoidRootPart")
-                    if _hrp then
-                        -- Guardar velocidad actual para restaurarla después
-                        _savedVel = _hrp.AssemblyLinearVelocity or Vector3.zero
-                        -- Crear BodyVelocity que anula cualquier impulso entrante
-                        _anchor = Instance.new("BodyVelocity")
-                        _anchor.Velocity        = Vector3.zero  -- velocidad horizontal cero
-                        _anchor.MaxForce        = Vector3.new(1e5, 0, 1e5)  -- solo X y Z (no Y, para no bloquear saltos/gravedad)
-                        _anchor.P               = 1e4
-                        _anchor.Parent          = _hrp
+                    local c    = getChar()
+                    local hum  = c and c:FindFirstChildOfClass("Humanoid")
+                    local anim = hum and hum:FindFirstChildOfClass("Animator")
+                    if anim then
+                        _magnetBlockConn = anim.AnimationPlayed:Connect(function(track)
+                            if os.clock() > _magnetBlockEnd then
+                                pcall(function() _magnetBlockConn:Disconnect() end)
+                                return
+                            end
+                            local n = (track.Name or track.Animation and track.Animation.Name or ""):lower()
+                            -- Cancelar CUALQUIER anim de throw/hold que llegue del servidor
+                            if n:find("throw") or n:find("hold") or n:find("charge") then
+                                task.defer(function()
+                                    pcall(function()
+                                        if track and track.IsPlaying then
+                                            track.Looped = false
+                                            track:Stop(0)
+                                        end
+                                    end)
+                                end)
+                            end
+                        end)
                     end
                 end)
 
-                -- Disparar - probar firmas conocidas de KnifeThrown
+                -- CAPA 3: PlatformStand=false continuo durante 1.5s
+                -- El servidor puede poner PlatformStand=true para "soltar" al
+                -- personaje y que el knife lo arrastre via physics constraint
+                local _platStandConn = nil
+                pcall(function()
+                    local c   = getChar()
+                    local hum = c and c:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        _platStandConn = RunService.Heartbeat:Connect(function()
+                            if not hum or not hum.Parent then
+                                pcall(function() _platStandConn:Disconnect() end)
+                                return
+                            end
+                            if hum.PlatformStand then
+                                pcall(function() hum.PlatformStand = false end)
+                            end
+                        end)
+                        task.delay(1.5, function()
+                            pcall(function()
+                                if _platStandConn then _platStandConn:Disconnect() end
+                            end)
+                        end)
+                    end
+                end)
+
+                -- CAPA 4: BodyVelocity anchor corto (0.15s) solo en X/Z
+                local _anchor = nil
+                pcall(function()
+                    local c   = getChar()
+                    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        _anchor          = Instance.new("BodyVelocity")
+                        _anchor.Velocity = Vector3.zero
+                        _anchor.MaxForce = Vector3.new(4e4, 0, 4e4)  -- X/Z solo, Y libre
+                        _anchor.P        = 8e3
+                        _anchor.Parent   = hrp
+                    end
+                end)
+
+                -- FIX KNIFE VISUAL: habilitar KnifeClient UN frame para que el
+                -- servidor pueda spawnear el ThrowingKnife en workspace
+                local kc2 = knife:FindFirstChild("KnifeClient")
+                if kc2 then pcall(function() kc2.Disabled = false end) end
+
+                -- Disparar
                 local fired = false
                 pcall(function() knifeThrown:FireServer(handleCF, targetCF); fired = true end)
                 if not fired then pcall(function() knifeThrown:FireServer(targetCF, handleCF); fired = true end) end
-                if not fired then pcall(function() knifeThrown:FireServer(targetCF); fired = true end) end
+                if not fired then pcall(function() knifeThrown:FireServer(targetCF);           fired = true end) end
                 if not fired then pcall(function() knifeThrown:FireServer(handleCF) end) end
 
-                -- ---- FIX MOVIMIENTO: restaurar WalkSpeed/JumpPower INMEDIATAMENTE ----
+                -- Restaurar WalkSpeed inmediatamente
                 pcall(function()
                     local hum = getHum()
                     if hum then
@@ -65183,12 +65301,11 @@ task.spawn(function()
                     end
                 end)
 
-                -- Volver a deshabilitar KnifeClient y soltar el anchor en el mismo frame
+                -- Deshabilitar KnifeClient de vuelta en el mismo frame
                 task.defer(function()
                     if kc2 and kc2.Parent then
                         pcall(function() kc2.Disabled = true end)
                     end
-                    -- Restaurar WalkSpeed en defer (doble seguro)
                     pcall(function()
                         local hum = getHum()
                         if hum then
@@ -65199,16 +65316,11 @@ task.spawn(function()
                     end)
                 end)
 
-                -- Soltar el anchor después de 4 frames (~0.07s)
-                -- Tiempo suficiente para que el servidor procese el throw
-                -- pero sin bloquear el movimiento del jugador más de lo necesario
-                task.delay(0.07, function()
+                -- Soltar anchor después de 0.15s
+                task.delay(0.15, function()
                     pcall(function()
-                        if _anchor and _anchor.Parent then
-                            _anchor:Destroy()
-                        end
+                        if _anchor and _anchor.Parent then _anchor:Destroy() end
                     end)
-                    -- Restaurar WalkSpeed una vez más al soltar el anchor
                     pcall(function()
                         local hum = getHum()
                         if hum then
@@ -65216,6 +65328,13 @@ task.spawn(function()
                             hum.JumpPower = _savedJumpPower
                             if _savedJumpHeight then hum.JumpHeight = _savedJumpHeight end
                         end
+                    end)
+                end)
+
+                -- Limpiar el interceptor de AnimationPlayed después de 2s
+                task.delay(2.0, function()
+                    pcall(function()
+                        if _magnetBlockConn then _magnetBlockConn:Disconnect() end
                     end)
                 end)
             end
