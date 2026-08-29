@@ -49523,19 +49523,15 @@ function CreateCombatTab()
                 -- KnifeClient queda HABILITADO siempre. No reimplementamos nada.
                 -- ================================================================
 
-                -- Paso 1: asegurar KnifeClient habilitado
-                local function _enableKC()
-                    local c = LocalPlayer.Character
-                    local function _enable(parent)
-                        if not parent then return end
-                        local knife = parent:FindFirstChild("Knife")
-                        local kc = knife and knife:FindFirstChild("KnifeClient")
-                        if kc then pcall(function() kc.Disabled = false end) end
-                    end
-                    _enable(c)
-                    _enable(LocalPlayer.Backpack)
-                end
-                _enableKC()
+                -- Paso 1: KnifeClient se mantiene DESHABILITADO mientras KnifeSA está activo.
+                -- FIX IMÁN MOBILE (causa raíz): _enableKC() re-habilitaba el KnifeClient nativo
+                -- de MM2 permanentemente al activar Knife SA en mobile. Con KC habilitado,
+                -- el script nativo capturaba el mismo TouchTapInWorld que el hub y aplicaba
+                -- AssemblyLinearVelocity al HumanoidRootPart hacia la trayectoria del knife,
+                -- sacando al personaje volando. KC debe permanecer deshabilitado durante todo
+                -- el ciclo de vida del SA; _KnifeSA_setupKnife ya lo deshabilita al equipar.
+                -- _enableKC() y su llamada son reemplazados por este comentario intencionalmente.
+                -- NO eliminar: el stub vacío preserva la numeración para el bloque v18 que sigue.
 
                 -- Paso 2: obtener referencia a WeaponService (mismo que usa el KnifeClient)
                 local _weaponService = nil
