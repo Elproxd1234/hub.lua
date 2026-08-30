@@ -4915,7 +4915,7 @@ local Themes = {
         Primary         = Color3.fromRGB(220, 220, 220), -- blanco gris (borde)
         Secondary       = Color3.fromRGB(  3,   8,  18),    -- gris medio
         Accent          = Color3.fromRGB(160, 160, 160), -- gris claro
-        Background      = Color3.fromRGB(  3,   8,  18),    -- negro puro
+        Background      = Color3.fromRGB(  0,  25,  38),    -- negro puro
         BackgroundLight = Color3.fromRGB(  3,   8,  18),    -- gris muy oscuro
         TextPrimary     = Color3.fromRGB(240, 240, 240), -- blanco
         TextSecondary   = Color3.fromRGB(170, 170, 170), -- gris claro
@@ -4941,7 +4941,7 @@ local Themes = {
         Primary         = Color3.fromRGB(200, 0, 40),
         Secondary       = Color3.fromRGB(140, 0, 20),
         Accent          = Color3.fromRGB(255,   0,  40),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(255, 200, 200),
         TextSecondary   = Color3.fromRGB(220, 140, 140),
@@ -4954,7 +4954,7 @@ local Themes = {
         Primary         = Color3.fromRGB(  3,   8,  18),
         Secondary       = Color3.fromRGB(50, 50, 50),
         Accent          = Color3.fromRGB(130, 130, 130),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(220, 220, 220),
         TextSecondary   = Color3.fromRGB(160, 160, 160),
@@ -4967,7 +4967,7 @@ local Themes = {
         Primary         = Color3.fromRGB(255, 100, 0),
         Secondary       = Color3.fromRGB(64, 64, 64),
         Accent          = Color3.fromRGB(200, 60, 0),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(220, 220, 220),
         TextSecondary   = Color3.fromRGB(64, 64, 64),
@@ -4980,7 +4980,7 @@ local Themes = {
         Primary         = Color3.fromRGB(220, 30, 30),
         Secondary       = Color3.fromRGB(180, 80, 10),
         Accent          = Color3.fromRGB(57, 57, 57),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(255, 240, 200),
         TextSecondary   = Color3.fromRGB(180, 160, 255),
@@ -4993,7 +4993,7 @@ local Themes = {
         Primary         = Color3.fromRGB( 50, 255, 180),    -- Celeste Electrico
         Secondary       = Color3.fromRGB(200, 20, 100),    -- Azul Oceano
         Accent          = Color3.fromRGB(255, 200, 120),  -- Arena Dorada
-        Background      = Color3.fromRGB(  3,   8,  18),      -- Azul muy oscuro
+        Background      = Color3.fromRGB(  0,  25,  38),      -- Azul muy oscuro
         BackgroundLight = Color3.fromRGB(180, 40, 100),      -- Azul noche
         TextPrimary     = Color3.fromRGB(220, 245, 255),  -- Blanco celeste
         TextSecondary   = Color3.fromRGB(255, 200, 120),  -- Arena dorada
@@ -5006,7 +5006,7 @@ local Themes = {
         Primary         = Color3.fromRGB(20, 5, 45),
         Secondary       = Color3.fromRGB(64, 64, 64),
         Accent          = Color3.fromRGB(220, 50, 50),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(255, 255, 255),
         TextSecondary   = Color3.fromRGB(69, 69, 69),
@@ -5019,7 +5019,7 @@ local Themes = {
         Primary         = Color3.fromRGB( 50, 255, 180),    -- Cyan brillante
         Secondary       = Color3.fromRGB(0, 140, 180),    -- Cyan medio
         Accent          = Color3.fromRGB(120, 255, 255),  -- Cyan claro
-        Background      = Color3.fromRGB(  3,   8,  18),      -- Negro azulado
+        Background      = Color3.fromRGB(  0,  25,  38),      -- Negro azulado
         BackgroundLight = Color3.fromRGB(  3,   8,  18),      -- Gris azulado oscuro
         TextPrimary     = Color3.fromRGB(220, 255, 255),  -- Blanco cyan
         TextSecondary   = Color3.fromRGB(0, 200, 230),    -- Cyan suave
@@ -5032,7 +5032,7 @@ local Themes = {
         Primary         = Color3.fromRGB(92, 92, 92),
         Secondary       = Color3.fromRGB(53, 53, 53),
         Accent          = Color3.fromRGB(141, 141, 141),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(20, 20, 20),
         TextPrimary     = Color3.fromRGB(255, 255, 255),
         TextSecondary   = Color3.fromRGB(210, 85, 100),
@@ -5045,7 +5045,7 @@ local Themes = {
         Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon principal
         Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro
         Accent          = Color3.fromRGB(210, 85, 100),  -- Lila claro
-        Background      = Color3.fromRGB(  3,   8,  18),       -- Negro violaceo
+        Background      = Color3.fromRGB(  0,  25,  38),       -- Negro violaceo
         BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado muy oscuro
         TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
         TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5058,7 +5058,7 @@ local Themes = {
         Primary         = Color3.fromRGB(55, 55, 55),
         Secondary       = Color3.fromRGB(200, 120, 0),
         Accent          = Color3.fromRGB(255, 230, 60),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(255, 245, 200),
         TextSecondary   = Color3.fromRGB(200, 170, 100),
@@ -5071,7 +5071,7 @@ local Themes = {
         Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon
         Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro
         Accent          = Color3.fromRGB(210, 85, 100),  -- Lila neon
-        Background      = Color3.fromRGB(  3,   8,  18),         -- Negro azulado
+        Background      = Color3.fromRGB(  0,  25,  38),         -- Negro azulado
         BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado oscuro
         TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
         TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5084,7 +5084,7 @@ local Themes = {
         Primary         = Color3.fromRGB(80, 80, 85),       -- Gris medio
         Secondary       = Color3.fromRGB(55, 55, 60),       -- Gris oscuro
         Accent          = Color3.fromRGB(160, 160, 165),    -- Gris claro
-        Background      = Color3.fromRGB(  3,   8,  18),       -- Negro neutro
+        Background      = Color3.fromRGB(  0,  25,  38),       -- Negro neutro
         BackgroundLight = Color3.fromRGB(  3,   8,  18),       -- Panel gris muy oscuro
         TextPrimary     = Color3.fromRGB(235, 235, 235),    -- Blanco
         TextSecondary   = Color3.fromRGB(170, 170, 170),    -- Gris claro
@@ -5097,7 +5097,7 @@ local Themes = {
         Primary         = Color3.fromRGB(146, 146, 146),
         Secondary       = Color3.fromRGB(93, 93, 93),
         Accent          = Color3.fromRGB(187, 187, 187),
-        Background      = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB(  0,  25,  38),
         BackgroundLight = Color3.fromRGB(  3,   8,  18),
         TextPrimary     = Color3.fromRGB(255, 238, 195),
         TextSecondary   = Color3.fromRGB(176, 176, 176),
@@ -5110,7 +5110,7 @@ local Themes = {
         Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon
         Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro
         Accent          = Color3.fromRGB(210, 85, 100),  -- Lila neon
-        Background      = Color3.fromRGB(  3,   8,  18),         -- Negro azulado
+        Background      = Color3.fromRGB(  0,  25,  38),         -- Negro azulado
         BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado oscuro
         TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
         TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5151,7 +5151,7 @@ local Themes = {
     Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon principal
     Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro (sliders fondo)
     Accent          = Color3.fromRGB(210, 85, 100),  -- Lila (acentos)
-    Background      = Color3.fromRGB(  3,   8,  18),       -- Negro violaceo (fondo hub)
+    Background      = Color3.fromRGB(  0,  25,  38),       -- Negro violaceo (fondo hub)
     BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado oscuro (paneles internos)
     TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
     TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5162,17 +5162,17 @@ local Themes = {
 },
     ["Neon Green"] = {
     -- == BLUE HUB THEME ==
-    Primary         = Color3.fromRGB(  0, 200, 160),  -- azul borde brillante
-    Secondary       = Color3.fromRGB(  8,  50,  60),  -- azul filas/botones
-    Accent          = Color3.fromRGB( 60, 230, 180),  -- azul fill slider
-    Background      = Color3.fromRGB(  3,   8,  18),  -- azul oscuro profundo
-    BackgroundLight = Color3.fromRGB(  5,  25,  45),  -- azul fondo caja
-    TextPrimary     = Color3.fromRGB(200, 255, 235),  -- blanco azulado (texto)
-    TextSecondary   = Color3.fromRGB(  0, 190, 155),  -- azul claro titulo
-    Aurora1         = Color3.fromRGB(  0, 180, 140),  -- toggle ON azul
-    Aurora2         = Color3.fromRGB( 50, 255, 180),  -- knob ON azul intenso
-    Aurora3         = Color3.fromRGB(140,  60, 220),  -- badge Deluxe azul claro
-    Aurora4         = Color3.fromRGB( 15,  35,  70),  -- knob OFF grisaceo-azul
+    Primary         = Color3.fromRGB(  0, 150, 185),  -- azul borde brillante
+    Secondary       = Color3.fromRGB(  0,  52,  77),  -- azul filas/botones
+    Accent          = Color3.fromRGB(  0, 175, 205),  -- azul fill slider
+    Background      = Color3.fromRGB(  0,  25,  38),  -- azul oscuro profundo
+    BackgroundLight = Color3.fromRGB(  0,  64,  81),  -- azul fondo caja
+    TextPrimary     = Color3.fromRGB(225, 245, 250),  -- blanco azulado (texto)
+    TextSecondary   = Color3.fromRGB(  0, 180, 205),  -- azul claro titulo
+    Aurora1         = Color3.fromRGB(  0, 125, 155),  -- toggle ON azul
+    Aurora2         = Color3.fromRGB(  0, 205, 225),  -- knob ON azul intenso
+    Aurora3         = Color3.fromRGB(  0, 120, 155),  -- badge Deluxe azul claro
+    Aurora4         = Color3.fromRGB(  0,  40,  60),  -- knob OFF grisaceo-azul
 },
 }
 
@@ -5180,17 +5180,17 @@ local Themes = {
 currentThemeName = "Neon Green"
 
 local ThemeColors = {
-    Primary         = Color3.fromRGB(  0, 230, 180),  -- teal vibrante principal
-    Secondary       = Color3.fromRGB(  5,  40,  55),  -- fondo secundario oscuro
-    Accent          = Color3.fromRGB( 80, 255, 200),  -- teal brillante acento
-    Background      = Color3.fromRGB(  2,   6,  16),  -- negro azulado profundo
-    BackgroundLight = Color3.fromRGB(  4,  20,  40),  -- azul fondo caja
-    TextPrimary     = Color3.fromRGB(210, 255, 240),  -- blanco verdoso (texto)
-    TextSecondary   = Color3.fromRGB(  0, 200, 165),  -- teal claro titulo
-    Aurora1         = Color3.fromRGB(  0, 210, 160),  -- toggle ON teal
-    Aurora2         = Color3.fromRGB( 60, 255, 190),  -- knob ON teal intenso
-    Aurora3         = Color3.fromRGB(160,  70, 255),  -- badge purpura electrico
-    Aurora4         = Color3.fromRGB( 10,  30,  60),  -- knob OFF azul noche
+    Primary         = Color3.fromRGB(  0, 150, 185),  -- teal vibrante principal
+    Secondary       = Color3.fromRGB(  0,  52,  77),  -- fondo secundario oscuro
+    Accent          = Color3.fromRGB(  0, 175, 205),  -- teal brillante acento
+    Background      = Color3.fromRGB(  0,  25,  38),  -- negro azulado profundo
+    BackgroundLight = Color3.fromRGB(  0,  64,  81),  -- azul fondo caja
+    TextPrimary     = Color3.fromRGB(225, 245, 250),  -- blanco verdoso (texto)
+    TextSecondary   = Color3.fromRGB(  0, 180, 205),  -- teal claro titulo
+    Aurora1         = Color3.fromRGB(  0, 125, 155),  -- toggle ON teal
+    Aurora2         = Color3.fromRGB(  0, 205, 225),  -- knob ON teal intenso
+    Aurora3         = Color3.fromRGB(  0, 120, 155),  -- badge purpura electrico
+    Aurora4         = Color3.fromRGB(  0,  40,  60),  -- knob OFF azul noche
 }
 
 ThemeObjects = {}
@@ -13210,7 +13210,7 @@ function _makeTwoColumns()
     end)
 
     -- == COLUMNAS ===============================================
-    local COL_TOP = SEARCH_H + 68
+    local COL_TOP = SEARCH_H + 8
     local GAP = 4
     -- Leer preferencia de doble columna
     local _useDoubleCol = _G._hubSettings and _G._hubSettings.doubleColumn or false
@@ -13220,7 +13220,7 @@ function _makeTwoColumns()
     lCol.BackgroundTransparency = 1
     lCol.BorderSizePixel = 0
     lCol.ScrollBarThickness = 3
-    lCol.ScrollBarImageColor3 = ThemeColors.Primary
+    lCol.ScrollBarImageColor3 = Color3.fromRGB(83, 126, 218)
     lCol.CanvasSize = UDim2.new(0,0,0,0)
     lCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
     lCol.ElasticBehavior = Enum.ElasticBehavior.Never
@@ -13240,7 +13240,7 @@ function _makeTwoColumns()
         rCol.BackgroundTransparency = 1
         rCol.BorderSizePixel = 0
         rCol.ScrollBarThickness = 3
-        rCol.ScrollBarImageColor3 = ThemeColors.Primary
+        rCol.ScrollBarImageColor3 = Color3.fromRGB(83, 126, 218)
         rCol.CanvasSize = UDim2.new(0,0,0,0)
         rCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
         local rlayout = Instance.new("UIListLayout", rCol)
@@ -13486,9 +13486,9 @@ function CreateSection(parent, icono, titulo, color)
     section.ZIndex = 9  -- FIX: menor que el label del toggle (11) para no taparlo
     Instance.new("UICorner", section).CornerRadius = UDim.new(0, 6)
     local _csStroke = Instance.new("UIStroke", section)
-    _csStroke.Color = Color3.fromRGB( 50, 255, 180)
-    _csStroke.Thickness = 1
-    _csStroke.Transparency = 0.3
+    _csStroke.Color = Color3.fromRGB(83, 126, 218)
+    _csStroke.Thickness = 1.3
+    _csStroke.Transparency = 0.35
     _csStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local padding = Instance.new("UIPadding", section)
     padding.PaddingTop = UDim.new(0, 0)
@@ -13691,59 +13691,43 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
     local _initVal = (_G._sliderVals and _G._sliderVals[_sliderKey] ~= nil)
                      and _G._sliderVals[_sliderKey] or defaultVal
 
-    -- ==============================================================
-    --  SLIDER -- estilo nuevo: fondo azul claro translucido redondeado
-    --  Titulo izquierda | Value box derecha con borde | Track grueso 10px
-    --  Fill azul claro | Thumb circular blanco 18px
-    -- ==============================================================
+    -- Paleta identica a pestanas del dock
+    local C_BG        = Color3.fromRGB(42, 77, 160)
+    local C_STROKE    = Color3.fromRGB(83, 126, 218)
+    local C_TEXT      = Color3.fromRGB(244, 247, 255)
+    local C_DARK      = Color3.fromRGB(24, 54, 122)
+    local C_TRACK_BG  = Color3.fromRGB(15, 30, 80)
+    local C_TRACK_FG  = Color3.fromRGB(83, 126, 218)
+    local C_THUMB     = Color3.fromRGB(244, 247, 255)
+    local C_VAL_STROKE= Color3.fromRGB(83, 126, 218)
+    local CONTAINER_H = 70
 
-    -- === SLIDER REDESIGN: sin fondo/recuadro, flotante y elegante ===
-    local C_BG_MAIN  = Color3.fromRGB(0, 0, 0)              -- transparente total
-    local C_STROKE   = Color3.fromRGB( 50, 255, 180)         -- teal aurora
-    local C_TEXT     = Color3.fromRGB(220, 255, 245)         -- texto blanco verdoso
-    local C_TRACK_BG = Color3.fromRGB(15, 35, 50)            -- pista oscura azul noche
-    local C_TRACK_FG = Color3.fromRGB(0, 220, 170)           -- fill teal brillante
-    local C_THUMB    = Color3.fromRGB(255, 255, 255)         -- knob blanco
-    local C_VALBG    = Color3.fromRGB(0, 0, 0)               -- fondo value box (trans)
-    local CONTAINER_H = 54
-
-    -- Contenedor SIN fondo ni recuadro: completamente transparente
+    -- Contenedor: mismo estilo que tabs y toggles
     local container = Instance.new("Frame", actualParent)
     container.Name                   = "SliderWrapper_" .. nombre
     container.Size                   = UDim2.new(1, 0, 0, CONTAINER_H)
-    container.BackgroundTransparency = 1   -- SIN fondo
+    container.BackgroundColor3       = C_BG
+    container.BackgroundTransparency = 0.72
     container.BorderSizePixel        = 0
     container.ClipsDescendants       = false
     container.ZIndex                 = 10
-    -- Sin UICorner ni UIStroke (sin recuadro)
-    do
-        -- Separador sutil debajo: linea de 1px aurora semitransparente
-        local _divLine = Instance.new("Frame", container)
-        _divLine.Size                   = UDim2.new(0.92, 0, 0, 1)
-        _divLine.Position               = UDim2.new(0.04, 0, 1, -1)
-        _divLine.BackgroundColor3       = Color3.fromRGB(0, 180, 140)
-        _divLine.BackgroundTransparency = 0.72
-        _divLine.BorderSizePixel        = 0
-        _divLine.ZIndex                 = 10
-        local _dg = Instance.new("UIGradient", _divLine)
-        _dg.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,0,0)),
-            ColorSequenceKeypoint.new(0.2, Color3.fromRGB(0, 200, 160)),
-            ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0, 180, 140)),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(0,0,0)),
-        })
-    end
+    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 9)
+    local _contStroke = Instance.new("UIStroke", container)
+    _contStroke.Color       = C_STROKE
+    _contStroke.Thickness   = 1.3
+    _contStroke.Transparency = 0.30
+    _contStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-    -- Titulo izquierda: texto flotante elegante, sin fondo
+    -- Titulo (izquierda, parte superior)
     local titleLabel = Instance.new("TextLabel", container)
     titleLabel.Name                   = "TitleLabel"
-    titleLabel.Size                   = UDim2.new(1, -86, 0, 28)
-    titleLabel.Position               = UDim2.new(0, 10, 0, 4)
+    titleLabel.Size                   = UDim2.new(1, -90, 0, 32)
+    titleLabel.Position               = UDim2.new(0, 12, 0, 6)
     titleLabel.BackgroundTransparency = 1
     titleLabel.Text                   = nombre
     titleLabel.TextXAlignment         = Enum.TextXAlignment.Left
     titleLabel.TextYAlignment         = Enum.TextYAlignment.Center
-    titleLabel.TextColor3             = Color3.fromRGB(200, 240, 230)
+    titleLabel.TextColor3             = C_TEXT
     titleLabel.FontFace               = Font.fromEnum(Enum.Font.GothamSemibold)
     titleLabel.TextSize               = 13
     titleLabel.TextTruncate           = Enum.TextTruncate.AtEnd
@@ -13756,20 +13740,18 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
         end
     end
 
-    -- Value box: pill flotante sin fondo solido, solo borde aurora sutil
+    -- Value box (derecha, mismo nivel que titulo) - estilo imagen 2
     local valueFrame = Instance.new("Frame", container)
     valueFrame.Name                   = "ValueFrame"
-    valueFrame.Size                   = UDim2.new(0, 72, 0, 24)
-    valueFrame.Position               = UDim2.new(1, -78, 0, 6)
-    valueFrame.BackgroundColor3       = Color3.fromRGB(0, 40, 35)
-    valueFrame.BackgroundTransparency = 0.55
+    valueFrame.Size                   = UDim2.new(0, 72, 0, 26)
+    valueFrame.Position               = UDim2.new(1, -82, 0, 9)
+    valueFrame.BackgroundColor3       = C_DARK
+    valueFrame.BackgroundTransparency = 0.10
     valueFrame.BorderSizePixel        = 0
     valueFrame.ZIndex                 = 12
-    do
-        local vc = Instance.new("UICorner", valueFrame); vc.CornerRadius = UDim.new(1, 0)
-        local vs = Instance.new("UIStroke", valueFrame)
-        vs.Color = Color3.fromRGB(0, 220, 170); vs.Thickness = 1.2; vs.Transparency = 0.3
-    end
+    Instance.new("UICorner", valueFrame).CornerRadius = UDim.new(0, 6)
+    local vs = Instance.new("UIStroke", valueFrame)
+    vs.Color = C_VAL_STROKE; vs.Thickness = 1.5; vs.Transparency = 0.20
 
     local valueLabel = Instance.new("TextBox", valueFrame)
     valueLabel.Name                   = "ValueLabel"
@@ -13778,69 +13760,73 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
     valueLabel.Text                   = string.format("%.2f", _initVal)
     valueLabel.TextXAlignment         = Enum.TextXAlignment.Center
     valueLabel.TextYAlignment         = Enum.TextYAlignment.Center
-    valueLabel.TextColor3             = Color3.fromRGB(0, 240, 190)
+    valueLabel.TextColor3             = C_TEXT
     valueLabel.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
     valueLabel.TextSize               = 13
     valueLabel.ZIndex                 = 13
     valueLabel.ClearTextOnFocus       = true
     valueLabel.PlaceholderText        = string.format("%.2f", _initVal)
-    valueLabel.PlaceholderColor3      = Color3.fromRGB(0, 180, 140)
+    valueLabel.PlaceholderColor3      = Color3.fromRGB(180, 200, 240)
 
-    -- Track elegante: delgado, sin borde externo, solo fill teal luminoso
+    -- Track (franja inferior del contenedor) - estilo imagen 2
     local sliderTrack = Instance.new("Frame", container)
     sliderTrack.Name                   = "SliderTrack"
-    sliderTrack.Size                   = UDim2.new(1, -20, 0, 5)
+    sliderTrack.Size                   = UDim2.new(1, -20, 0, 6)
     sliderTrack.Position               = UDim2.new(0, 10, 1, -14)
-    sliderTrack.BackgroundColor3       = Color3.fromRGB(8, 30, 40)
-    sliderTrack.BackgroundTransparency = 0.3
+    sliderTrack.BackgroundColor3       = C_TRACK_BG
+    sliderTrack.BackgroundTransparency = 0.20
     sliderTrack.BorderSizePixel        = 0
     sliderTrack.ClipsDescendants       = false
     sliderTrack.ZIndex                 = 12
-    do
-        Instance.new("UICorner", sliderTrack).CornerRadius = UDim.new(1, 0)
-        -- Sin UIStroke en el track (mas limpio)
-    end
+    Instance.new("UICorner", sliderTrack).CornerRadius = UDim.new(1, 0)
 
     local fillRatio = math.clamp((_initVal - minVal) / math.max(maxVal - minVal, 0.001), 0, 1)
 
     local sliderFill = Instance.new("Frame", sliderTrack)
     sliderFill.Name                   = "FillBar"
     sliderFill.Size                   = UDim2.new(fillRatio, 0, 1, 0)
-    sliderFill.BackgroundColor3       = Color3.fromRGB(0, 220, 170)
+    sliderFill.BackgroundColor3       = C_TRACK_FG
     sliderFill.BackgroundTransparency = 0
     sliderFill.BorderSizePixel        = 0
     sliderFill.ZIndex                 = 13
     Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
-    -- Gradiente en el fill para efecto glow
-    local _sfGrad = Instance.new("UIGradient", sliderFill)
-    _sfGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 180, 140)),
-        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 240, 190)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(80, 255, 210)),
-    })
 
-    -- Thumb elegante: anillo teal con nucleo blanco brillante
-    local _thumbSize = UserInputService.TouchEnabled and 22 or 14
-    local _thumbSizeHover = UserInputService.TouchEnabled and 26 or 18
+    -- Thumb circular (blanco, mismo estilo que el fill azul brillante)
+    local _thumbSize      = UserInputService.TouchEnabled and 22 or 16
+    local _thumbSizeHover = UserInputService.TouchEnabled and 26 or 20
 
     local sliderThumb = Instance.new("ImageButton", sliderTrack)
     sliderThumb.Name                   = "SliderThumb"
     sliderThumb.Size                   = UDim2.new(0, _thumbSize, 0, _thumbSize)
     sliderThumb.AnchorPoint            = Vector2.new(0.5, 0.5)
     sliderThumb.Position               = UDim2.new(fillRatio, 0, 0.5, 0)
-    sliderThumb.BackgroundColor3       = Color3.fromRGB(255, 255, 255)
+    sliderThumb.BackgroundColor3       = C_THUMB
     sliderThumb.BackgroundTransparency = 0
     sliderThumb.BorderSizePixel        = 0
     sliderThumb.ZIndex                 = 15
     Instance.new("UICorner", sliderThumb).CornerRadius = UDim.new(1, 0)
-    -- Anillo de color aurora alrededor del thumb
     local _thumbRing = Instance.new("UIStroke", sliderThumb)
-    _thumbRing.Color           = Color3.fromRGB(0, 220, 170)
+    _thumbRing.Color           = C_STROKE
     _thumbRing.Thickness       = 2.5
     _thumbRing.Transparency    = 0
     _thumbRing.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-    -- Logica
+    local _hoverTi = TweenInfo.new(0.12)
+    container.MouseEnter:Connect(function()
+        TweenService:Create(container, _hoverTi, {
+            BackgroundColor3    = Color3.fromRGB(83, 126, 218),
+            BackgroundTransparency = 0.04,
+        }):Play()
+        TweenService:Create(_contStroke, _hoverTi, {Thickness = 1.8, Transparency = 0.05}):Play()
+    end)
+    container.MouseLeave:Connect(function()
+        TweenService:Create(container, _hoverTi, {
+            BackgroundColor3    = C_BG,
+            BackgroundTransparency = 0.72,
+        }):Play()
+        TweenService:Create(_contStroke, _hoverTi, {Thickness = 1.3, Transparency = 0.30}):Play()
+    end)
+
     local currentValue = _initVal
     local dragging     = false
 
@@ -13861,15 +13847,10 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
 
     applyValue(_initVal)
 
-    -- Permitir escribir un valor directamente en la caja
-    valueLabel.FocusLost:Connect(function(enterPressed)
+    valueLabel.FocusLost:Connect(function()
         local typed = tonumber(valueLabel.Text)
-        if typed then
-            applyValue(typed)
-        else
-            -- Si escribieron algo invalido, restaurar el valor actual
-            valueLabel.Text = string.format("%.2f", currentValue)
-        end
+        if typed then applyValue(typed)
+        else valueLabel.Text = string.format("%.2f", currentValue) end
     end)
 
     local function updateFromInput(inputObj)
@@ -13885,10 +13866,6 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
         applyValue(minVal + pct * (maxVal - minVal))
     end
 
-    local function updateFromMouse()
-        updateFromInput(nil)
-    end
-
     sliderThumb.MouseEnter:Connect(function()
         TweenService:Create(sliderThumb, TweenInfo.new(0.10),
             {Size = UDim2.new(0, _thumbSizeHover, 0, _thumbSizeHover)}):Play()
@@ -13899,12 +13876,10 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
                 {Size = UDim2.new(0, _thumbSize, 0, _thumbSize)}):Play()
         end
     end)
-
     sliderThumb.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1
         or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            _G._sliderDragging = true
+            dragging = true; _G._sliderDragging = true
             TweenService:Create(sliderThumb, TweenInfo.new(0.08),
                 {Size = UDim2.new(0, _thumbSizeHover, 0, _thumbSizeHover)}):Play()
         end
@@ -13918,8 +13893,7 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
     local _c1 = UserInputService.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1
         or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            _G._sliderDragging = false
+            dragging = false; _G._sliderDragging = false
             TweenService:Create(sliderThumb, TweenInfo.new(0.10),
                 {Size = UDim2.new(0, _thumbSize, 0, _thumbSize)}):Play()
         end
@@ -13938,14 +13912,8 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
         TweenService:Create(sliderThumb, TweenInfo.new(0.18), {
             BackgroundColor3 = enabled and C_THUMB or Color3.fromRGB(140, 140, 150),
         }):Play()
-        TweenService:Create(titleLabel, TweenInfo.new(0.18), {
-            TextColor3 = enabled and C_TEXT or Color3.fromRGB(120, 130, 160),
-        }):Play()
-        sliderThumb.Active       = enabled
-        sliderThumb.Interactable = enabled
     end
 
-    -- FIX SCROLL: el container del slider no debe absorber el MouseWheel
     pcall(function() _attachScrollPassthrough(container, sliderThumb) end)
 
     return { frame = container, SetEnabled = _setSliderEnabled }
@@ -27758,7 +27726,7 @@ function makeCoinBoard(obj)
     lbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
     lbl.TextSize               = 13
     lbl.TextColor3             = ThemeColors.TextPrimary
-    lbl.TextStrokeTransparency = 0.3
+    lbl.TextStrokeTransparency = 0.55
     lbl.Text                   = " Coin"
     ESPBoards.coin[obj] = bb
 end
@@ -31241,69 +31209,60 @@ end
 function CreateAuroraToggle(parent, nombre, callback, initialValue)
     local actualParent = _currentMainSectionFrame or parent
     local _trackedCol = (actualParent == leftColumn or (actualParent and actualParent.Parent == leftColumn)) and leftColumn or rightColumn
-    _colHeights[_trackedCol == leftColumn and "left" or "right"] = (_colHeights[_trackedCol == leftColumn and "left" or "right"] or 0) + 48
+    _colHeights[_trackedCol == leftColumn and "left" or "right"] = (_colHeights[_trackedCol == leftColumn and "left" or "right"] or 0) + 70
 
     _G._toggleStates = _G._toggleStates or {}
     local savedState = _G._toggleStates[nombre]
     local estado = (savedState ~= nil) and savedState or (initialValue or false)
 
-    -- REGISTRO DE CALLBACKS: guardar el callback por nombre para poder
-    -- restaurar toggles del World Tab (y otros) desde el auto-restore
     if callback then
         _G._toggleCallbacks = _G._toggleCallbacks or {}
         _G._toggleCallbacks[nombre] = callback
     end
-    -- REGISTRO DE APPLYSTATE: guardar la funcion visual del knob para que
-    -- el auto-restore del World Tab pueda actualizar el indicador a verde
-    -- sin depender de la closure local (inaccesible desde fuera de la funcion).
-    -- Se sobreescribe al re-crear el toggle (cambio de tab) con la nueva instancia.
     _G._toggleApplyStates = _G._toggleApplyStates or {}
 
-    -- FIX: C_IND_ON/C_IND_OFF eliminadas (variables muertas de version anterior,
-    -- nunca usadas; C_IND_OFF=rojo podia aplicarse por error en algunos paths).
-    local TWEEN_T   = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    -- Paleta identica a las pestanas del dock
+    local C_BG      = Color3.fromRGB(42, 77, 160)    -- azul panel (igual a tabs)
+    local C_STROKE  = Color3.fromRGB(83, 126, 218)   -- azul brillante (igual a tabs)
+    local C_TEXT    = Color3.fromRGB(244, 247, 255)   -- blanco azulado (igual a tabs)
+    local C_ON_BG   = Color3.fromRGB(50, 180, 80)    -- verde ON
+    local C_ON_KN   = Color3.fromRGB(240, 255, 240)  -- knob ON blanco verdoso
+    local C_OFF_BG  = Color3.fromRGB(180, 30, 30)    -- rojo OFF
+    local C_OFF_KN  = Color3.fromRGB(255, 230, 230)  -- knob OFF blanco rojizo
+    local ROW_H     = 70
+    local PILL_W    = 54
+    local PILL_H    = 28
+    local KNOB_SZ   = 22
 
-    -- Detectar m?vil para ajustar tama?os
-    local _isMobileTog = pcall(function() return UserInputService.TouchEnabled end) and UserInputService.TouchEnabled
-    local _toggleBgW   = 80
-    local _toggleBgH   = 38
-    local _knobSize    = 28
-    local _knobOffR    = -(_knobSize + 5)
-    local _knobOffL    = 4
-    local _labelTxtSz  = 16
-    local _labelWScale = 0.55
-    local _rowH        = 48
-    local _toggleRightOff = -6
-
-    -- Marco principal: fila transparente para ver el juego detras
+    -- Contenedor principal: mismo look que los botones del dock
     local container = Instance.new("Frame", actualParent)
     container.Name                   = "AuroraToggleRow_" .. nombre
-    container.Size                   = UDim2.new(1, 0, 0, _rowH)
-    -- FIX ROJO AUTOSAVE: usar el color guardado si existe, sino el color por defecto azul oscuro
-    local _ccc = _G._toggleColorCurrent
-    container.BackgroundColor3       = (_ccc and _ccc.bg) or Color3.fromRGB(  5,  18,  50)
-    container.BackgroundTransparency = (_ccc and _ccc.bgT) or 0.72
+    container.Size                   = UDim2.new(1, 0, 0, ROW_H)
+    container.BackgroundColor3       = C_BG
+    container.BackgroundTransparency = 0.72
     container.BorderSizePixel        = 0
     container.ZIndex                 = 20
+    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 9)
+    local _contStroke = Instance.new("UIStroke", container)
+    _contStroke.Color       = C_STROKE
+    _contStroke.Thickness   = 1.3
+    _contStroke.Transparency = 0.30
+    _contStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-    -- Etiqueta de texto (mitad izquierda) - mas grande y visible
+    -- Etiqueta de nombre (lado izquierdo)
     local label = Instance.new("TextLabel", container)
-    label.Size             = UDim2.new(_labelWScale, 0, 1, 0)
-    label.Position         = UDim2.new(0, 8, 0, 0)
+    label.Size             = UDim2.new(1, -(PILL_W + 24), 1, 0)
+    label.Position         = UDim2.new(0, 12, 0, 0)
     label.BackgroundTransparency = 1
     label.Text             = nombre
-    label.TextSize         = 16
-    label.FontFace         = Font.fromEnum(Enum.Font.GothamBold)
-    label.TextColor3       = Color3.fromRGB(230, 255, 245)  -- blanco azulado brillante
+    label.TextSize         = 14
+    label.FontFace         = Font.fromEnum(Enum.Font.GothamSemibold)
+    label.TextColor3       = C_TEXT
     label.TextXAlignment   = Enum.TextXAlignment.Left
     label.TextYAlignment   = Enum.TextYAlignment.Center
     label.TextTruncate     = Enum.TextTruncate.AtEnd
     label.ZIndex           = 22
-    -- Sombra negra fuerte para que se lea bien sobre el fondo transparente
-    label.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
-    label.TextStrokeTransparency = 0.0  -- sombra solida
 
-    -- Registro de traduccion
     if _LangObjects then
         table.insert(_LangObjects, {obj=label, key=nombre, prefix="", suffix=""})
         if _G.HubLanguage and _LangStrings then
@@ -31312,474 +31271,110 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         end
     end
 
-    -- Toggle estilo Combat (pill/switch): track con thumb deslizante y numero 1/0
-    local _TRACK_W, _TRACK_H = 100, 44
-    local _THUMB_W, _THUMB_H = 40, 34
-    local _THUMB_PAD = 4
-    local _C_TRACK_OFF  = Color3.fromRGB( 12,  25,  40)
-    local _C_TRACK_ON   = Color3.fromRGB(  0, 200, 160)
-    local _C_THUMB_ON   = Color3.fromRGB( 50, 255, 180)
-    local _C_THUMB_OFF  = Color3.fromRGB(  3,   8,  18)
-    local _POS_THUMB_ON  = UDim2.new(1, -(_THUMB_W + _THUMB_PAD), 0.5, -_THUMB_H/2)
-    local _POS_THUMB_OFF = UDim2.new(0, _THUMB_PAD, 0.5, -_THUMB_H/2)
-    local _POS_NUM_ON    = UDim2.new(0, _THUMB_PAD, 0, 0)
-    local _POS_NUM_OFF   = UDim2.new(0.5, 0, 0, 0)
+    -- Pildora ON/OFF (lado derecho) - estilo imagen 1
+    local pill = Instance.new("Frame", container)
+    pill.Name                   = "TogglePill"
+    pill.Size                   = UDim2.new(0, PILL_W, 0, PILL_H)
+    pill.AnchorPoint            = Vector2.new(1, 0.5)
+    pill.Position               = UDim2.new(1, -10, 0.5, 0)
+    pill.BackgroundColor3       = estado and C_ON_BG or C_OFF_BG
+    pill.BackgroundTransparency = 0
+    pill.BorderSizePixel        = 0
+    pill.ZIndex                 = 23
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(0, 6)
 
-    local track = Instance.new("Frame", container)
-    track.Name                   = "ToggleTrack"
-    track.Size                   = UDim2.new(0, _TRACK_W, 0, _TRACK_H)
-    track.AnchorPoint            = Vector2.new(1, 0.5)
-    track.Position               = UDim2.new(1, _toggleRightOff, 0.5, 0)
-    track.BackgroundColor3       = estado and _C_TRACK_ON or _C_TRACK_OFF
-    track.BackgroundTransparency = 0
-    track.BorderSizePixel        = 0
-    track.ZIndex                 = 21
-    track.ClipsDescendants       = false
-    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+    local pillStroke = Instance.new("UIStroke", pill)
+    pillStroke.Color       = estado and Color3.fromRGB(80, 220, 100) or Color3.fromRGB(220, 60, 60)
+    pillStroke.Thickness   = 1.5
+    pillStroke.Transparency = 0.2
 
-    local thumb = Instance.new("Frame", track)
-    thumb.Size                   = UDim2.new(0, _THUMB_W, 0, _THUMB_H)
-    thumb.Position               = estado and _POS_THUMB_ON or _POS_THUMB_OFF
-    thumb.BackgroundColor3       = estado and _C_THUMB_ON or _C_THUMB_OFF
-    thumb.BackgroundTransparency = 0
-    thumb.BorderSizePixel        = 0
-    thumb.ZIndex                 = 24
-    Instance.new("UICorner", thumb).CornerRadius = UDim.new(0, 8)
-
-    -- Borde brillante del track para el efecto muelle
-    local _trackStroke = Instance.new("UIStroke", track)
-    _trackStroke.Name        = "TOGGLE_TRACK_STROKE"
-    _trackStroke.Thickness   = 1.5
-    _trackStroke.Color       = estado and Color3.fromRGB(50, 255, 180) or Color3.fromRGB(15, 40, 60)
-    _trackStroke.Transparency = 0.2
-
-    -- ANIMACION ARCOIRIS EN EL THUMB (cicla colores del muelle cuando esta ON)
-    local _dokkRainbowConn = nil
-    local _dokkHue = 0
-    local _dokkPalette = {
-        Color3.fromRGB(  0, 255, 180),
-        Color3.fromRGB( 60, 255, 120),
-        Color3.fromRGB(  0, 180, 255),
-        Color3.fromRGB(140,  60, 255),
-        Color3.fromRGB(  0, 230, 200),
-        Color3.fromRGB( 80, 255, 150),
-    }
-    local function _dokkStartRainbow()
-        if _dokkRainbowConn then return end
-        _dokkRainbowConn = RunService.Heartbeat:Connect(function(dt)
-            if not (thumb and thumb.Parent) then
-                if _dokkRainbowConn then _dokkRainbowConn:Disconnect(); _dokkRainbowConn = nil end
-                return
-            end
-            _dokkHue = (_dokkHue + dt * 0.45) % 1
-            local n = #_dokkPalette
-            local rawPos = _dokkHue * n
-            local i1 = math.floor(rawPos) % n + 1
-            local i2 = i1 % n + 1
-            local t  = rawPos - math.floor(rawPos)
-            local c1, c2 = _dokkPalette[i1], _dokkPalette[i2]
-            local newC = Color3.new(
-                c1.R + (c2.R - c1.R) * t,
-                c1.G + (c2.G - c1.G) * t,
-                c1.B + (c2.B - c1.B) * t
-            )
-            pcall(function() thumb.BackgroundColor3 = newC end)
-            pcall(function() _trackStroke.Color = newC end)
-            pcall(function()
-                track.BackgroundColor3 = Color3.new(newC.R*0.28, newC.G*0.28, newC.B*0.28)
-            end)
-        end)
-    end
-    local function _dokkStopRainbow()
-        if _dokkRainbowConn then _dokkRainbowConn:Disconnect(); _dokkRainbowConn = nil end
-        pcall(function() thumb.BackgroundColor3 = _C_THUMB_OFF end)
-        pcall(function() _trackStroke.Color = Color3.fromRGB(15, 40, 60) end)
-        pcall(function() track.BackgroundColor3 = _C_TRACK_OFF end)
-    end
-    if estado then task.spawn(_dokkStartRainbow) end
-
-    local numLabel = Instance.new("TextLabel", track)
-    numLabel.Size                   = UDim2.new(0.5, 0, 1, 0)
-    numLabel.Position               = estado and _POS_NUM_ON or _POS_NUM_OFF
-    numLabel.BackgroundTransparency = 1
-    numLabel.Text                   = estado and "ON" or "OFF"
-    numLabel.Font                   = Enum.Font.GothamBold
-    numLabel.TextSize               = 11
-    numLabel.TextColor3             = Color3.fromRGB(200, 255, 235)
-    numLabel.TextXAlignment         = Enum.TextXAlignment.Center
-    numLabel.ZIndex                 = 23
+    -- Knob dentro de la pildora
+    local knob = Instance.new("Frame", pill)
+    knob.Name                   = "Knob"
+    knob.Size                   = UDim2.new(0, KNOB_SZ, 0, KNOB_SZ)
+    knob.AnchorPoint            = Vector2.new(0.5, 0.5)
+    knob.Position               = estado
+        and UDim2.new(1, -KNOB_SZ/2 - 2, 0.5, 0)
+        or  UDim2.new(0, KNOB_SZ/2 + 2, 0.5, 0)
+    knob.BackgroundColor3       = estado and C_ON_KN or C_OFF_KN
+    knob.BackgroundTransparency = 0
+    knob.BorderSizePixel        = 0
+    knob.ZIndex                 = 25
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(0, 5)
 
     -- Boton invisible sobre todo el row
     local clickRow = Instance.new("TextButton", container)
     clickRow.Size                   = UDim2.new(1, 0, 1, 0)
     clickRow.BackgroundTransparency = 1
     clickRow.Text                   = ""
-    clickRow.ZIndex                 = 25
+    clickRow.ZIndex                 = 30
     clickRow.AutoButtonColor        = false
 
-    -- Funcion de actualizacion visual (con arcoiris muelle nocturno)
+    local _ti = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
     local function ApplyState(on, animate)
-        local _tiTrack = TweenInfo.new(animate and 0.20 or 0, Enum.EasingStyle.Quad)
-        local _tiThumb = TweenInfo.new(animate and 0.22 or 0, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        local knobPosOn  = UDim2.new(1, -KNOB_SZ/2 - 2, 0.5, 0)
+        local knobPosOff = UDim2.new(0, KNOB_SZ/2 + 2, 0.5, 0)
         if animate then
-            if on then
-                -- Flash blanco al activar -> luego inicia arcoiris
-                _dokkStopRainbow()
-                TweenService:Create(thumb, TweenInfo.new(0.07), {BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
-                TweenService:Create(track, _tiTrack, {BackgroundColor3 = _C_TRACK_ON}):Play()
-                TweenService:Create(thumb, _tiThumb, {Position = _POS_THUMB_ON}):Play()
-                TweenService:Create(numLabel, _tiTrack, {Position = _POS_NUM_ON}):Play()
-                task.delay(0.09, function()
-                    if thumb and thumb.Parent then _dokkStartRainbow() end
-                end)
-            else
-                -- Detener arcoiris y volver a oscuro
-                _dokkStopRainbow()
-                TweenService:Create(track, _tiTrack, {BackgroundColor3 = _C_TRACK_OFF}):Play()
-                TweenService:Create(thumb, _tiThumb, {Position = _POS_THUMB_OFF}):Play()
-                TweenService:Create(thumb, TweenInfo.new(0.20), {BackgroundColor3 = _C_THUMB_OFF}):Play()
-                TweenService:Create(numLabel, _tiTrack, {Position = _POS_NUM_OFF}):Play()
-            end
+            TweenService:Create(pill, _ti, {BackgroundColor3 = on and C_ON_BG or C_OFF_BG}):Play()
+            TweenService:Create(knob, _ti, {
+                Position = on and knobPosOn or knobPosOff,
+                BackgroundColor3 = on and C_ON_KN or C_OFF_KN,
+            }):Play()
+            TweenService:Create(pillStroke, _ti, {
+                Color = on and Color3.fromRGB(80, 220, 100) or Color3.fromRGB(220, 60, 60)
+            }):Play()
         else
-            track.BackgroundColor3 = on and _C_TRACK_ON or _C_TRACK_OFF
-            thumb.Position         = on and _POS_THUMB_ON or _POS_THUMB_OFF
-            thumb.BackgroundColor3 = on and _C_THUMB_ON or _C_THUMB_OFF
-            numLabel.Position      = on and _POS_NUM_ON or _POS_NUM_OFF
-            if on then task.spawn(_dokkStartRainbow) else _dokkStopRainbow() end
+            pill.BackgroundColor3   = on and C_ON_BG or C_OFF_BG
+            knob.Position           = on and knobPosOn or knobPosOff
+            knob.BackgroundColor3   = on and C_ON_KN or C_OFF_KN
+            pillStroke.Color        = on and Color3.fromRGB(80, 220, 100) or Color3.fromRGB(220, 60, 60)
         end
-        numLabel.Text = on and "ON" or "OFF"
     end
-    -- FIX AUTO-RESTORE VISUAL: exponer ApplyState globalmente para que el
-    -- bloque de restauracion del World Tab pueda actualizar el knob a ON/OFF
-    -- sin necesitar acceso a esta closure. Se sobreescribe si el toggle se re-crea.
+
     _G._toggleApplyStates[nombre] = ApplyState
     ApplyState(estado, false)
 
-    -- Hover: resaltar fondo del container
-    local _hoverTi = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    -- Hover: iluminar como tabs activos
     clickRow.MouseEnter:Connect(function()
-        TweenService:Create(container, _hoverTi, {BackgroundTransparency = 0.30}):Play()
+        TweenService:Create(container, _ti, {
+            BackgroundColor3    = Color3.fromRGB(83, 126, 218),
+            BackgroundTransparency = 0.04,
+        }):Play()
+        TweenService:Create(_contStroke, _ti, {Thickness = 1.8, Transparency = 0.05}):Play()
     end)
     clickRow.MouseLeave:Connect(function()
-        TweenService:Create(container, _hoverTi, {BackgroundTransparency = 0.55}):Play()
+        TweenService:Create(container, _ti, {
+            BackgroundColor3    = C_BG,
+            BackgroundTransparency = 0.72,
+        }):Play()
+        TweenService:Create(_contStroke, _ti, {Thickness = 1.3, Transparency = 0.30}):Play()
     end)
-    -- Logica de toggle
-    local _doToggleLastTime = 0  -- FIX DOBLE ACTIVACION: debounce guard
+
+    local _doToggleLastTime = 0
     local function doToggle()
-        -- FIX DOBLE ACTIVACION: ignorar si se llama dos veces en menos de 0.25s
         local _now = tick()
         if (_now - _doToggleLastTime) < 0.25 then return end
         _doToggleLastTime = _now
-        -- PASO 1: Invertir el booleano en la tabla de estado
         estado = not estado
         _G._toggleStates[nombre] = estado
-
-        -- PASO 2: Actualizar la UI (colores/animacion del knob)
         ApplyState(estado, true)
         PlayToggleSound(estado)
-
-        -- PASO 3: Auto-guardar (throttled: agrupa saves rapidos para no lagear)
         pcall(_saveConfigThrottled)
-
-        -- AUTO-SAFE POR TOGGLE: guardar estado en archivo .txt propio
-        -- Identico a la logica del LocalScript de referencia:
-        -- activar -> escribe "true", desactivar -> escribe "false"
-        -- Al re-unirse al juego, se lee este archivo y se auto-activa
-        if not (_neverRestoreToggles and _neverRestoreToggles[nombre]) then
-            pcall(_saveToggleFile, nombre, estado)
-        end
-
-        -- PASO 4: Ejecutar la accion real del toggle (callback del feature)
-        -- FIX: suprimir notificaciones al activar/desactivar manualmente,
-        -- EXCEPTO toggles de tipo "Information" (muestran paneles de informacion).
+        pcall(function() _saveToggleFile(nombre, estado) end)
         if callback then
-            local _isInfoToggle = nombre:lower():find("^information")
-            if _isInfoToggle then
-                callback(estado)
-            else
-                local _origNotif = CreateCustomNotification
-                CreateCustomNotification = function() end
-                pcall(callback, estado)
-                CreateCustomNotification = _origNotif
-            end
+            task.spawn(function() pcall(callback, estado) end)
         end
-
-        -- FIX: forzar tick inmediato del instanceLoop para que los visuals
-        -- se apliquen o limpien en el proximo Heartbeat sin esperar el intervalo
-        _G._forceInstanceTick = true
-        -- FIX: al desactivar, forzar limpieza inmediata de todos los visuals.
-        -- FIX DISAPPEAR OUTLINE: los toggles de Outline tienen su propio cleanup
-        -- (_refreshOutlineOnly en el callback) que borra solo BoxHandleAdornments
-        -- sin tocar los ESP/Cham Highlights de otros jugadores.
-        -- Si se usara _vcRefreshAll aqui para toggles de Outline, removeHighlight()
-        -- destruiria los highlights de ESP/Cham de TODOS los jugadores, haciendolos
-        -- "desaparecer" hasta que el instanceLoop los re-cree (hasta 2s de delay).
-        local _nombreLow = nombre:lower()
-        local _isOutlineToggle = _nombreLow:find("^outline ") and not _nombreLow:find("outline throwingknife") and not _nombreLow:find("outline tk")
-        if not estado and _vcRefreshAll and not _isOutlineToggle then
-            task.defer(_vcRefreshAll)
-        end
-    end
-
-    -- =====================================================================
-    -- AUTO-SAFE POR TOGGLE (lectura del .txt individual)
-    -- Si el archivo .txt de este toggle dice "true" Y el estado actual
-    -- es false (el JSON no lo captur?, ej: salida sin guardar, re-join),
-    -- forzar el estado a true para que el bloque de auto-activacion lo dispare.
-    -- Exactamente igual que el LocalScript de referencia:
-    --   success, data = pcall(readfile, fileName)
-    --   if success and data == "true" then isEnabled = true end
-    -- =====================================================================
-    if not (_neverRestoreToggles and _neverRestoreToggles[nombre])
-       and not (_G._isTabRebuild == true) then
-        local _fileState = _readToggleFile(nombre)
-        if _fileState == true and not estado then
-            -- El archivo dice ON pero el JSON no lo tenia: sincronizar
-            estado = true
-            _G._toggleStates[nombre] = true
-            -- Actualizar visual del knob a ON
-            pcall(function() ApplyState(true, false) end)
-        elseif _fileState == false and estado and savedState == nil then
-            -- El archivo dice OFF explicitamente Y el JSON no tenia estado guardado:
-            -- el usuario lo apago y el JSON no lo capturo (ej: autoguardado estaba OFF).
-            -- FIX MAIN TAB ROJO: si el JSON SI tenia el estado (savedState ~= nil),
-            -- el JSON gana sobre el .txt para evitar que toggles del main tab aparezcan
-            -- en rojo al cargar aunque el JSON los tenga como true.
-            estado = false
-            _G._toggleStates[nombre] = false
-            pcall(function() ApplyState(false, false) end)
-        end
-    end
-
-    -- Auto-activar al cargar (misma logica que antes)
-    local _isBoostNoAuto = _G._boostNoAutoThisSession and _G._boostNoAutoThisSession[nombre]
-    -- _isNeverRestore: true solo si esta en _neverRestoreToggles Y NO esta en _autoRestoreOnReexec
-    -- Los toggles en _autoRestoreOnReexec SIEMPRE se restauran en re-ejecucion real
-    local _isNeverRestore = (_neverRestoreToggles and _neverRestoreToggles[nombre])
-                            and not (_autoRestoreOnReexec and _autoRestoreOnReexec[nombre])
-    -- _isAutoRestore: toggle que debe restaurarse en re-ejecucion (no en tab rebuild)
-    local _isAutoRestore  = _autoRestoreOnReexec and _autoRestoreOnReexec[nombre]
-    -- AUTORESTORE v2 + AUTO-RESTORE ON REEXEC:
-    -- _wasUserSet    ? habia un estado guardado (en disco o en sesion)
-    -- _isTabRebuild  ? es solo un cambio de pestana (UI se recrea, funcionalidad ya corre)
-    -- Diferencia clave:
-    --   Tab rebuild:   _G._isTabRebuild == true  ? NO llamar callback (ya esta corriendo)
-    --   Re-ejecucion:  _G._isTabRebuild == false/nil ? SI llamar callback (hub nuevo, nada corre)
-    -- Caso A: toggle sin estado previo con initialValue=true ? auto-activar (comportamiento original)
-    -- Caso B: toggle con savedState=true y NO es tab rebuild ? restaurar desde disco
-    -- Caso C (_autoRestoreOnReexec): savedState=true + NO tab rebuild ? restaurar Y disparar funcion
-    local _wasUserSet   = (savedState ~= nil)
-    local _isTabRebuild = (_G._isTabRebuild == true)
-    -- Para _autoRestoreOnReexec: activar si el disco dice true Y no es tab rebuild
-    -- FIX v21: _noAutoActivateWorld solo bloquea cuando se esta construyendo
-    -- el World Tab (idx 2). Combat, Visuals y otros tabs NO se bloquean.
-    local _worldBlockActive = _G._noAutoActivateWorld and (_G._currentBuildingTabIdx == 2)
-
-    -- FIX DOBLE ACTIVACION v2: verificar _activatedToggles ANTES de calcular
-    -- _shouldAutoActivate para cortar el path lo mas temprano posible.
-    -- Tab rebuild (_isTabRebuild=true) SIEMPRE bloquea la auto-activacion:
-    -- el callback ya esta corriendo y re-dispararlo duplica loops/efectos.
-    local _alreadyFired = _G._activatedToggles and _G._activatedToggles[nombre]
-
-    local _shouldAutoActivate = estado and callback
-        and not _isBoostNoAuto
-        and not _worldBlockActive
-        and not _isNeverRestore
-        and not _alreadyFired
-        and not _isTabRebuild   -- nunca re-activar en tab rebuild (ya corre)
-        and (not _wasUserSet or (savedState == true))
-    if _shouldAutoActivate then
-        -- Marcar como disparado para que futuras reconstrucciones del toggle
-        -- (cambios de tab, reloads) no vuelvan a llamar el callback.
-        if _G._activatedToggles then _G._activatedToggles[nombre] = true end
-    end
-    -- BLOQUEO PREMIUM: si el toggle es Premium y no tiene verificacion, forzar OFF
-    -- aunque el archivo .txt o JSON diga true (puede haber quedado guardado de antes)
-    if _shouldAutoActivate and nombre:find("%(Premium%)") and not _G._discordPremiumVerified then
-        _shouldAutoActivate = nil
-        estado = false
-        _G._toggleStates[nombre] = false
-        pcall(function() ApplyState(false, false) end)
-        -- Borrar el archivo .txt para que no se reactive en el proximo join
-        pcall(function() _saveToggleFile(nombre, false) end)
-    end
-    if _shouldAutoActivate then
-        local lower = nombre:lower()
-
-        -- FIX DOBLE ACTIVACION v2: _isTabRebuild ya esta bloqueado arriba,
-        -- por lo que aqui solo llegamos en re-ejecucion real (hub nuevo).
-        -- Todos los toggles fisicos esperan a que su tab este construido
-        -- antes de disparar el callback para evitar upvalues nil.
-        local lower = nombre:lower()
-        local isPhysical = (
-            lower:find("swim fly") or lower:find("fly %+") or lower:find("fly+")
-            or (lower:find("fly") and not lower:find("firefly"))
-            or lower:find("noclip") or lower:find("no%-clip")
-            or lower:find("swim") or lower:find("float")
-            or lower:find("spinbot") or lower:find("spin bot")
-            or lower:find("^lay$") or lower:find(" lay$") or lower:find("^lay ")
-            or lower:find("ragdoll") or lower:find("orbit")
-            or lower:find("platform stand") or lower:find("bhop") or lower:find("bunny hop")
-            or lower:find("fling self") or lower:find("auto fling")
-            or lower:find("knife aura") or lower:find("auto click") or lower:find("kill all")
-            or lower:find("touch fling") or lower:find("hitbox expander") or lower:find("hitbox")
-            or lower:find("knife hitbox") or lower:find("kill except") or lower:find("auto kill")
-            or lower:find("fling todos") or lower:find("fling sheriff") or lower:find("fling all")
-            or lower:find("kill aura") or lower:find("aura auto")
-            or lower:find("anti bang") or lower:find("bang murder") or lower:find("bang sheriff")
-            or lower:find("bang random") or lower:find("bang innocent")
-            or lower:find("goto murder") or lower:find("goto sheriff")
-            or lower:find("goto innocent") or lower:find("goto selected")
-            or lower:find("instant interact") or lower:find("interactions distance")
-            or lower:find("tp to am") or lower:find("tp to void")
-            or lower:find("tp to lobby") or lower:find("tp to vm")
-            or lower:find("bindable button")
-            or lower:find("expose murderer") or lower:find("expose roles")
-            or lower:find("auto shoot") or lower:find("shoot murder")
-            or lower:find("shoot pick") or lower:find("wall check")
-            or lower:find("silent aim") or lower:find("aimlock")
-            or lower:find("pierce bullet") or lower:find("shoot camuflado")
-            or lower:find("shooper") or lower:find("shoot spam")
-            or lower:find("strafe prediction") or lower:find("tianca prediction")
-            or lower:find("throwing knife") or lower:find("bullet tracer")
-            or lower:find("prediction tracer") or lower:find("velocity prediction")
-            or lower:find("auto ping") or lower:find("ping boost")
-            or lower:find("auto stab") or lower:find("auto slash")
-            or lower:find("fast slash") or lower:find("auto throw")
-            or lower:find("fast throw") or lower:find("instant throw")
-            or lower:find("knife silent") or lower:find("speed glitch")
-            or lower:find("enable walkspeed") or lower:find("always speed")
-            or lower:find("power jump") or lower:find("infinite jump")
-            or lower:find("infinity jump") or lower:find("auto jump")
-            or lower:find("wall hop") or lower:find("spin")
-            or lower:find("click tp") or lower:find("tp low map")
-            or lower:find("auto tp") or lower:find("auto teleport")
-            or lower:find("auto farm") or lower:find("auto prestige")
-            or lower:find("auto grab gun") or lower:find("auto equip gun")
-            or lower:find("auto remove")
-            or lower:find("dual knife") or lower:find("dual gun")
-            or lower:find("invisible") or lower:find("xray")
-            or lower:find("second life") or lower:find("skip death")
-            or lower:find("trap immune") or lower:find("bug tramp")
-            or lower:find("auto esquivar") or lower:find("auto spectate")
-            or lower:find("auto announce") or lower:find("auto reset")
-            or lower:find("own ping") or lower:find("ping mode")
-            or lower:find("spoof method") or lower:find("shoot condition")
-            or lower:find("spoof") or lower:find("secure tp")
-        )
-
-        if isPhysical then
-            -- Toggle fisico: esperar a que el tab que lo contiene este construido
-            -- y el personaje este listo antes de disparar el callback.
+        if not estado then
             task.spawn(function()
-                task.wait(0.3)
-                if _G._tabBuilt then
-                    local _waitTick = 0
-                    local _lowerN = nombre:lower()
-                    local _targetTabIdx = nil
-                    if _lowerN:find("silent aim") or _lowerN:find("aimlock") or _lowerN:find("shoot")
-                    or _lowerN:find("auto stab") or _lowerN:find("auto slash") or _lowerN:find("fast slash")
-                    or _lowerN:find("auto throw") or _lowerN:find("fast throw") or _lowerN:find("instant throw")
-                    or _lowerN:find("knife silent") or _lowerN:find("throwing knife") or _lowerN:find("bullet tracer")
-                    or _lowerN:find("prediction tracer") or _lowerN:find("velocity prediction")
-                    or _lowerN:find("strafe prediction") or _lowerN:find("tianca prediction")
-                    or _lowerN:find("pierce bullet") or _lowerN:find("shooper") or _lowerN:find("bindable silent")
-                    or _lowerN:find("shoot pick") or _lowerN:find("wall check") or _lowerN:find("auto ping")
-                    or _lowerN:find("lead time") or _lowerN:find("jump prediction") or _lowerN:find("lag compensation")
-                    or _lowerN:find("shoot studs") or _lowerN:find("shoot view") or _lowerN:find("trajectory")
-                    or _lowerN:find("dual knife") or _lowerN:find("dual gun") or _lowerN:find("auto shoot") then
-                        _targetTabIdx = 6
-                    elseif _lowerN:find("fly") or _lowerN:find("noclip") or _lowerN:find("walkspeed")
-                    or _lowerN:find("speed glitch") or _lowerN:find("power jump") or _lowerN:find("infinite jump")
-                    or _lowerN:find("infinity jump") or _lowerN:find("auto jump") or _lowerN:find("wall hop")
-                    or _lowerN:find("spin") or _lowerN:find("click tp") or _lowerN:find("tp low map")
-                    or _lowerN:find("orbit") or _lowerN:find("invisible") or _lowerN:find("second life")
-                    or _lowerN:find("trap immune") or _lowerN:find("bug tramp") or _lowerN:find("skip death")
-                    or _lowerN:find("auto farm") or _lowerN:find("auto prestige") or _lowerN:find("auto grab")
-                    or _lowerN:find("auto equip") or _lowerN:find("coin aura") or _lowerN:find("auto remove")
-                    or _lowerN:find("auto esquivar") or _lowerN:find("auto spectate") or _lowerN:find("auto announce")
-                    or _lowerN:find("auto reset") or _lowerN:find("ping boost") or _lowerN:find("own ping")
-                    or _lowerN:find("secure auto") or _lowerN:find("booster") or _lowerN:find("bindable boton")
-                    or _lowerN:find("show bindable") then
-                        _targetTabIdx = 7
-                    end
-                    if _targetTabIdx then
-                        local _waitStart = tick()
-                        while not (_G._tabBuilt and _G._tabBuilt[_targetTabIdx]) and _waitTick < 150 do
-                            task.wait(0.1)
-                            _waitTick = _waitTick + 1
-                            if _G._toggleCallbacks and _G._toggleCallbacks[nombre] then break end
-                        end
-                        task.wait(0.05)
-                    end
-                end
-                -- FIX MULTI-FIRE INVISIBLE: guard para toggles que modifican transparencia
-                -- del personaje (invisible, xray). Si ya hay una ejecucion corriendo,
-                -- no disparar otra vez para evitar que el fondo/personaje quede opaco.
-                local _lowerFire = nombre:lower()
-                local _isInvisToggle = _lowerFire:find("invisible") or _lowerFire:find("xray")
-                local _fireKey = "_autoFiring_" .. nombre:gsub("[^%w]", "_")
-                if _isInvisToggle then
-                    if _G[_fireKey] then
-                        -- Ya hay una activacion en curso para este toggle: saltar
-                        return
-                    end
-                    _G[_fireKey] = true
-                end
-                local _orig = CreateCustomNotification
-                CreateCustomNotification = function() end
-                pcall(callback, true)
-                CreateCustomNotification = _orig
-                pcall(function() ApplyState(true, true) end)
-                -- Liberar guard despues de que el callback termino
-                if _isInvisToggle then
-                    task.defer(function() _G[_fireKey] = nil end)
-                end
-            end)
-        else
-            -- Toggle no fisico (visual, setting): disparar escalonado para no saturar un frame.
-            _G._autoActivateCount = (_G._autoActivateCount or 0) + 1
-            local _myDelay = (_G._autoActivateCount - 1) * 0.02
-            task.delay(_myDelay, function()
-                local _orig = CreateCustomNotification
-                CreateCustomNotification = function() end
-                pcall(callback, true)
-                CreateCustomNotification = _orig
-                pcall(function() ApplyState(true, false) end)
-                local _ln = nombre:lower()
-                local _isVisualToggle = _ln:find("^esp ") or _ln:find("^cham ") or _ln:find("^box esp")
-                    or _ln:find("^outline ") or _ln:find("^skeleton ") or _ln:find("^tracer ")
-                    or _ln:find("^highlight ") or _ln:find("^view trap") or _ln:find("esp display")
-                    or _ln:find("esp dropped") or _ln:find("esp gun") or _ln:find("esp knife")
-                    or _ln:find("coin.*esp") or _ln:find("esp.*coin")
-                if _isVisualToggle then
-                    _G._forceInstanceTick = true
-                    task.defer(function()
-                        task.wait(0.12)
-                        if _vcRefreshAll then pcall(_vcRefreshAll) end
-                    end)
-                end
+                task.wait(0.016)
+                _DoToggleRestore(nombre)
             end)
         end
     end
 
-    -- FIX MOBILE: Activated responde a touch en celu; MouseButton1Click no siempre lo hace
     clickRow.Activated:Connect(doToggle)
-
-    -- FIX SCROLL: TextButton absorbe MouseWheel y Touch, impide scroll en PC y mobile.
-    clickRow.Selectable = false
     _attachScrollPassthrough(clickRow)
-
-    -- FIX LEAK: desconectar _dokkRainbowConn cuando el container se destruye.
-    -- Sin esto, cada cambio de pesta?a deja conexiones Heartbeat huerfanas
-    -- corriendo a 60Hz (una por cada toggle ON). Con 185 toggles y N cambios
-    -- de pestana el numero de conexiones crece indefinidamente.
-    container.Destroying:Connect(function()
-        if _dokkRainbowConn then
-            pcall(function() _dokkRainbowConn:Disconnect() end)
-            _dokkRainbowConn = nil
-        end
-    end)
 
     return container
 end
@@ -43183,8 +42778,8 @@ function CreateExclusiveTab()
                 do
                     dock.Position = UDim2.new(0.65, 0, 0.14, 0)
                     dock.Size = UDim2.new(0.35, 0, 0.86, 0)
-                    contentContainer.Position = UDim2.new(0, 0, 0, 36)
-                    contentContainer.Size = UDim2.new(0.65, 0, 1, -36)
+                    contentContainer.Position = UDim2.new(0, 0, 0, 52)
+                    contentContainer.Size = UDim2.new(0.65, 0, 1, -52)
                     if dockLayout then
                         dockLayout.FillDirection       = Enum.FillDirection.Vertical
                         dockLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -43221,7 +42816,7 @@ function CreateExclusiveTab()
                 elseif mode == 2 then
                     -- LAYOUT 2: Barra superior horizontal (44px de alto)
                     TweenService:Create(dock, ti, {
-                        Position = UDim2.new(0, 0, 0, 36),
+                        Position = UDim2.new(0.35, 0, 0, 52),
                         Size     = UDim2.new(1, 0, 0, 44)
                     }):Play()
                     TweenService:Create(contentContainer, ti, {
@@ -43265,7 +42860,7 @@ function CreateExclusiveTab()
                         Size     = UDim2.new(0, 200, 1, -36)
                     }):Play()
                     TweenService:Create(contentContainer, ti, {
-                        Position = UDim2.new(0, 0, 0, 36),
+                        Position = UDim2.new(0.35, 0, 0, 52),
                         Size     = UDim2.new(1, -200, 1, -36)
                     }):Play()
                     if dockLayout then
@@ -43305,7 +42900,7 @@ function CreateExclusiveTab()
                         Size     = UDim2.new(1, 0, 0, 48)
                     }):Play()
                     TweenService:Create(contentContainer, ti, {
-                        Position = UDim2.new(0, 0, 0, 36),
+                        Position = UDim2.new(0.35, 0, 0, 52),
                         Size     = UDim2.new(1, 0, 1, -84)
                     }):Play()
                     if dockLayout then
@@ -43594,7 +43189,7 @@ function CreateExclusiveTab()
                 sc.Scale = v / 100
                 -- Mantener el tama?o base correcto segun dispositivo
                 do
-                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 900, 0, 480)
+                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
                     if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
                 end
             end)
@@ -44808,7 +44403,7 @@ function CreateExclusiveTab()
     -- ================================================================
     do
         local _vp         = workspace.CurrentCamera.ViewportSize
-        local _origSize   = _G._setHubFrameSize and UDim2.new(0, 900, 0, 480) or mainFrame.Size
+        local _origSize   = _G._setHubFrameSize and UDim2.new(0, 780, 0, 460) or mainFrame.Size
         local _origPos    = UDim2.new(0.5, 0, 0.5, 0)
         local _origAnchor = Vector2.new(0.5, 0.5)
         local _origScale  = nil
@@ -57495,7 +57090,7 @@ minimizeBtn.Activated:Connect(function()
                 -- FIX TAMA?O REOPEN MOBILE: ajustar escala ANTES de Enabled=true
                 -- para que el hub nunca aparezca un solo frame al tama?o incorrecto.
                 if mainFrame then
-                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 900, 0, 480)
+                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
                     if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
                     mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
                     mainFrame.BackgroundTransparency = 1
@@ -57772,7 +57367,7 @@ closeBtn.Activated:Connect(function()
             if existingHub and _G._hubHidden then
                 -- FIX TAMA?O REOPEN MOBILE: ajustar escala ANTES de Enabled=true
                 if mainFrame then
-                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 900, 0, 480)
+                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
                     if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
                     mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
                     mainFrame.BackgroundTransparency = 1
@@ -59080,7 +58675,7 @@ function abrirHub()
         -- para que el hub nunca aparezca ni un frame al tama?o incorrecto.
         local _targetSc = (_getTargetScale and _getTargetScale() or 0.70)
         if mainFrame then
-            local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 820, 0, 460)
+            local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
             if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
             mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
             mainFrame.BackgroundTransparency = 1
@@ -59204,8 +58799,8 @@ print("3: mainFrame creado")
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 -- mainFrame con fondo transparente para ver el juego detras
-mainFrame.BackgroundColor3 = Color3.fromRGB(  5,  15,  40)  -- azul vibrante
-mainFrame.BackgroundTransparency = 0.30
+mainFrame.BackgroundColor3 = Color3.fromRGB(24, 54, 122)
+mainFrame.BackgroundTransparency = 0.22
 mainFrame.BorderSizePixel = 0
 mainFrame.ClipsDescendants = true
 -- FIX MOBILE CRITICO: Active=false hace que el frame NO absorba los toques del juego
@@ -59231,11 +58826,11 @@ do
     hubBgImage.Size            = UDim2.new(1, 0, 1, 0)
     hubBgImage.Position        = UDim2.new(0, 0, 0, 0)
     hubBgImage.ZIndex          = 1
-    hubBgImage.Image           = "rbxassetid://96937964432645"
-    hubBgImage.ImageTransparency = 0.30   -- discreta: los orbs pulsantes dan la profundidad visual
+    hubBgImage.Image           = ""
+    hubBgImage.ImageTransparency = 1   -- sin imagen de fondo
     hubBgImage.BackgroundTransparency = 1
     hubBgImage.ScaleType       = Enum.ScaleType.Stretch
-    hubBgImage.ImageRectSize   = Vector2.new(900, 480)
+    hubBgImage.ImageRectSize   = Vector2.new(780, 460)
     hubBgImage.ImageRectOffset = Vector2.new(0, 0)
     Instance.new("UICorner", hubBgImage).CornerRadius = UDim.new(0, 8)
     _G._hubBgMainImageRef = hubBgImage
@@ -59335,7 +58930,7 @@ do
         orbF.BorderSizePixel = 0
         orbF.ZIndex       = 2
         orbF.BackgroundColor3 = Color3.fromHSV(od.hue, 0.9, 0.8)
-        orbF.BackgroundTransparency = 0.72
+        orbF.BackgroundTransparency = 1
         Instance.new("UICorner", orbF).CornerRadius = UDim.new(1, 0)
         -- Gradiente radial simulado: UIGradient de 0% a 100% transparente
         local og = Instance.new("UIGradient", orbF)
@@ -59404,6 +58999,7 @@ do
     local _auroraB, _gradB = _makeAuroraStrip(0.28, 0.55, 2, -10)
     local _auroraC, _gradC = _makeAuroraStrip(0.52, 0.50, 2,  16)
     local _auroraD, _gradD = _makeAuroraStrip(0.72, 0.40, 2,  -5)
+    _auroraA.Visible = false; _auroraB.Visible = false; _auroraC.Visible = false; _auroraD.Visible = false
 
     local function _applyAuroraPalette(pal)
         local c0, c1, c2, c3 = pal[1], pal[2], pal[3], pal[4]
@@ -59481,6 +59077,7 @@ do
         local sz = tier == 1 and math.random(1, 3) or tier == 2 and math.random(3, 6) or math.random(6, 10)
         p.Size = UDim2.new(0, sz, 0, sz)
         p.BackgroundTransparency = 1
+        p.Visible = false
         p.BorderSizePixel = 0
         p.ZIndex = 3
         Instance.new("UICorner", p).CornerRadius = UDim.new(1, 0)
@@ -59557,6 +59154,7 @@ do
     _vigFrame.BackgroundTransparency = 1
     _vigFrame.BorderSizePixel = 0
     _vigFrame.ZIndex = 4
+    _vigFrame.Visible = false
     Instance.new("UICorner", _vigFrame).CornerRadius = UDim.new(0, 8)
     local _vigGrad = Instance.new("UIGradient", _vigFrame)
     _vigGrad.Color = ColorSequence.new({
@@ -59590,6 +59188,7 @@ do
     _shimFrame.BackgroundTransparency = 1
     _shimFrame.BorderSizePixel = 0
     _shimFrame.ZIndex = 5
+    _shimFrame.Visible = false
     _shimFrame.ClipsDescendants = false
     local _shimGrad = Instance.new("UIGradient", _shimFrame)
     _shimGrad.Color = ColorSequence.new({
@@ -59641,7 +59240,7 @@ end)
 _G._isMobileHub = _isMobileHub
 
 -- Tama?o base fijo: UIScale se encarga de ajustar segun dispositivo
-mainFrame.Size = UDim2.new(0, 900, 0, 480)
+mainFrame.Size = UDim2.new(0, 700, 0, 410)
 
 -- ================================================================
 -- == GUARDIAN DE FORMA DEL HUB v1
@@ -59652,7 +59251,7 @@ mainFrame.Size = UDim2.new(0, 900, 0, 480)
 -- script pise el frame del hub.
 -- ================================================================
 do
-    local _guardSize   = UDim2.new(0, 900, 0, 480)
+    local _guardSize   = UDim2.new(0, 780, 0, 460)
     local _guardPos    = UDim2.new(0.5, 0, 0.5, 0)
     local _guardAnchor = Vector2.new(0.5, 0.5)
     local _guardBusy   = false   -- re-entrancy lock
@@ -59714,7 +59313,7 @@ end
 -- Se muestra como overlay encima del fondo del hub cada cierto tiempo.
 -- ================================================================
 do
-    local BLINK_ASSET    = "rbxassetid://124196125990159"
+    local BLINK_ASSET    = ""
     local BLINK_DELAY    = 3     -- segundos antes del primer parpadeo
     local BLINK_CLOSED   = 0.18  -- tiempo con los ojos cerrados
     local BLINK_OPEN_T   = 0.12  -- duracion del fade al abrir
@@ -59730,7 +59329,7 @@ do
     blinkOverlay.BackgroundTransparency = 1
     blinkOverlay.ImageTransparency      = 1                              -- empieza invisible
     blinkOverlay.ScaleType              = Enum.ScaleType.Stretch         -- igual al fondo principal
-    blinkOverlay.ImageRectSize          = Vector2.new(900, 480)          -- igual al fondo principal
+    blinkOverlay.ImageRectSize          = Vector2.new(780, 460)          -- igual al fondo principal
     blinkOverlay.ImageRectOffset        = Vector2.new(0, 0)              -- igual al fondo principal
     blinkOverlay.ZIndex                 = 3
     blinkOverlay.Active                 = false
@@ -59766,7 +59365,7 @@ end
 -- ================================================================
 
 -- Fondo: referencia guardada en el bloque do de arriba; aplicar ID si se provee uno
-_G._applyHubBackground = function(id)
+_G._applyHubBackground = function(id)  id = ""  -- fondos eliminados
     local ref = _G._hubBgMainImageRef
     if not ref or not ref.Parent then
         ref = mainFrame and mainFrame:FindFirstChild("HubBackground")
@@ -59864,11 +59463,11 @@ end
 
 -- Helper global: siempre 750x420 (UIScale se encarga de la escala)
 _getHubSize = function()
-    return UDim2.new(0, 900, 0, 480)
+    return UDim2.new(0, 780, 0, 460)
 end
 
 uiScale = Instance.new("UIScale", mainFrame)
-uiScale.Scale = 0.80  -- escala PC 80%
+uiScale.Scale = 0.88  -- escala PC 88%
 
 -- ================================================================
 -- == ESCALA AUTOMATICA POR DISPOSITIVO
@@ -59888,14 +59487,14 @@ _getTargetScale = function()
     _log("SCALE DEBUG VP=", tostring(_vpNow.X), "x", tostring(_vpNow.Y), "isMobile=", tostring(_isMobileNow))
     if _isMobileNow then
         -- Calcular escala exacta para que el frame 900x480 entre en pantalla con margen
-        local _scaleByW = (_vpNow.X - 24) / 900
-        local _scaleByH = (_vpNow.Y - 24) / 480
-        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.30, 0.55)
+        local _scaleByW = (_vpNow.X - 24) / 700
+        local _scaleByH = (_vpNow.Y - 24) / 410
+        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.30, 0.90)
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
     else
-        -- PC: 70%
-        return 0.80
+        -- Replica canvas: 700x410 at native PC scale.
+        return 1.0
     end
 end
 do
@@ -60474,7 +60073,7 @@ particles = {}
     -- ============================================================
     header = Instance.new("Frame", mainFrame)
     header.Name = "TopBar"
-    header.Size = UDim2.new(1, 0, 0, 36)
+    header.Size = UDim2.new(1, 0, 0, 52)
     header.Position = UDim2.new(0, 0, 0, 0)
     header.BackgroundColor3 = Color3.fromRGB(  0,  20,  80)  -- azul vibrante
     header.BackgroundTransparency = 0.45  -- transparente para ver el juego
@@ -60881,10 +60480,10 @@ particles = {}
     -- ContentContainer: panel izquierdo del hub (contenido de tabs)
     contentContainer = Instance.new("Frame", mainFrame)
     contentContainer.Name = "ContentContainer"
-    contentContainer.Size = UDim2.new(0.78, 0, 1, -36)
-    contentContainer.Position = UDim2.new(0, 0, 0, 36)
-    contentContainer.BackgroundColor3 = Color3.fromRGB(  5,  15,  45)  -- azul profundo vibrante
-    contentContainer.BackgroundTransparency = 0.60  -- transparente para ver el juego
+    contentContainer.Size = UDim2.new(0.65, 0, 1, -52)
+    contentContainer.Position = UDim2.new(0, 0, 0, 52)
+    contentContainer.BackgroundColor3 = Color3.fromRGB(24, 54, 122)   -- azul tab dark (igual al dock)
+    contentContainer.BackgroundTransparency = 0.20  -- ligeramente transparente
     contentContainer.BorderSizePixel = 0
     contentContainer.ClipsDescendants = true
     contentContainer.ZIndex = 50
@@ -60892,7 +60491,7 @@ particles = {}
     local _ccCorner = Instance.new("UICorner", contentContainer)
     _ccCorner.CornerRadius = UDim.new(0, 0)
     local _ccStroke = Instance.new("UIStroke", contentContainer)
-    _ccStroke.Color = Color3.fromRGB( 30, 100, 200)  -- borde azul vibrante
+    _ccStroke.Color = Color3.fromRGB(83, 126, 218)   -- borde azul brillante (igual a tabs)
     _ccStroke.Thickness = 1
     _ccStroke.Transparency = 0.5
     _ccStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -61094,704 +60693,263 @@ particles = {}
     local function _applyBtnState(i, isActive)
         local btn = sideButtons[i]
         if not btn then return end
-        local r      = _G._tabBtnRefs[i]
+        local r = _G._tabBtnRefs[i]
         local stroke = r and r.stroke
-        local lbl2   = r and r.lbl2
-        local _ind    = btn:FindFirstChild("TabIndicator")
-        local _accentBar = btn:FindFirstChild("AccentBar")
-        local _iconImg   = btn:FindFirstChild("TabIcon")
-        local _tint      = btn:FindFirstChild("TinteDiagonal")
-
-        local _accent = _tabAccentMap[i] or _HUB_COLOR
-        local _ti_smooth = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-
+        local lbl2 = r and r.lbl2
         if isActive then
-            -- ACTIVA: mas transparente + muy iluminado
-            TweenService:Create(btn, _ti_smooth, {
-                BackgroundTransparency = 0.30,
-                BackgroundColor3       = Color3.fromRGB(0, 80, 100),
+            TweenService:Create(btn, TweenInfo.new(0.16), {
+                BackgroundColor3 = Color3.fromRGB(83, 126, 218),
+                BackgroundTransparency = 0.04,
             }):Play()
-            if stroke then TweenService:Create(stroke, _ti_smooth, {
-                Transparency = 0.0,
-                Color        = _accent,
-                Thickness    = 2.5,
+            if stroke then TweenService:Create(stroke, TweenInfo.new(0.16), {
+                Color = Color3.fromRGB(83, 126, 218),
+                Thickness = 1.8,
+                Transparency = 0.05,
             }):Play() end
-            if _ind then TweenService:Create(_ind, _ti_smooth, {
-                BackgroundColor3       = _accent,
-                BackgroundTransparency = 0,
-                Size                   = UDim2.new(0, 3, 0.75, 0),
-            }):Play() end
-            if _accentBar then TweenService:Create(_accentBar, _ti_smooth, {
-                BackgroundTransparency = 0.0,
-                Size = UDim2.new(0, 3, 0.75, 0),
-            }):Play() end
-            if _iconImg then TweenService:Create(_iconImg, _ti_smooth, {
-                TextColor3 = Color3.fromRGB(255, 255, 255),
-                TextSize   = 1,
-            }):Play() end
-            if lbl2 then TweenService:Create(lbl2, _ti_smooth, {
-                TextColor3  = Color3.fromRGB(255, 255, 255),
-                TextSize    = 15,
-            }):Play() end
-            if _tint then TweenService:Create(_tint, _ti_smooth, {
-                BackgroundTransparency = 0.85,
+            if lbl2 then TweenService:Create(lbl2, TweenInfo.new(0.16), {
+                TextColor3 = Color3.fromRGB(244, 247, 255),
+                TextSize = 14,
             }):Play() end
         else
-            -- INACTIVA: transparente, texto visible
-            TweenService:Create(btn, _ti_smooth, {
-                BackgroundTransparency = 0.65,
-                BackgroundColor3       = Color3.fromRGB(0, 60, 80),
+            TweenService:Create(btn, TweenInfo.new(0.16), {
+                BackgroundColor3 = Color3.fromRGB(42, 77, 160),
+                BackgroundTransparency = 0.16,
             }):Play()
-            if stroke then TweenService:Create(stroke, _ti_smooth, {
-                Transparency = 0.55,
-                Color        = _accent,
-                Thickness    = 1.5,
+            if stroke then TweenService:Create(stroke, TweenInfo.new(0.16), {
+                Color = Color3.fromRGB(83, 126, 218),
+                Thickness = 1.3,
+                Transparency = 0.30,
             }):Play() end
-            if _ind then TweenService:Create(_ind, _ti_smooth, {
-                BackgroundColor3       = _accent,
-                BackgroundTransparency = 1,
-                Size                   = UDim2.new(0, 3, 0.65, 0),
-            }):Play() end
-            if _accentBar then TweenService:Create(_accentBar, _ti_smooth, {
-                BackgroundTransparency = 0.4,
-                Size = UDim2.new(0, 3, 0.65, 0),
-            }):Play() end
-            if _iconImg then TweenService:Create(_iconImg, _ti_smooth, {
-                TextColor3 = _accent,
-                TextSize   = 1,
-            }):Play() end
-            if lbl2 then TweenService:Create(lbl2, _ti_smooth, {
-                TextColor3  = Color3.fromRGB(220, 255, 240),
-                TextSize    = 14,
-            }):Play() end
-            if _tint then TweenService:Create(_tint, _ti_smooth, {
-                BackgroundTransparency = 1,
+            if lbl2 then TweenService:Create(lbl2, TweenInfo.new(0.16), {
+                TextColor3 = Color3.fromRGB(244, 247, 255),
+                TextSize = 13,
             }):Play() end
         end
     end
-
-    function SetActiveTab(idx)
-        if idx == activeTabIdx and _tabBuilt[idx] then return end  -- OPT: no hacer nada si ya es la tab activa Y ya fue construida
-        -- FIX: asegurarse de que contentContainer sea visible al cargar cualquier tab
-        if contentContainer and not contentContainer.Visible then
-            contentContainer.Visible = true
-        end
-        _G._activeTabIdx = idx  -- trackear tab activo para que el recheck sepa donde estamos
-        _saveToggleStates(activeTabIdx)
-
-        -- FIX PREMIUM: si se abandona el tab Premium sin estar verificado,
-        -- destruir el tabFrame cacheado y resetear el built flag para que
-        -- se reconstruya limpio la proxima vez (evita lockFrame superpuesto)
-        local _PREMIUM_IDX = 4
-        if activeTabIdx == _PREMIUM_IDX and not _G._discordPremiumVerified then
-            local _premFrame = _tabCache[_PREMIUM_IDX]
-            if _premFrame then
-                pcall(function() _premFrame:Destroy() end)
-                _tabCache[_PREMIUM_IDX] = nil
-            end
-            _tabBuilt[_PREMIUM_IDX] = nil
-            if _G._tabScrollFrames then _G._tabScrollFrames[_PREMIUM_IDX] = nil end
-        end
-
-        -- Guardar scroll y ocultar tab actual
-        local _oldFrame = _tabCache[activeTabIdx]
-        if not _oldFrame and contentContainer then
-            -- buscar frame huerfano que quedo visible del tab anterior
-            for _, ch in ipairs(contentContainer:GetChildren()) do
-                if ch.Name == "TabCache_" .. tostring(activeTabIdx) then
-                    _oldFrame = ch
-                    break
-                end
-            end
-        end
-        if _oldFrame then
-            -- OPT: guardar scroll sin GetDescendants (usa cache de scrollframes por tab)
-            local _sfCache = _G._tabScrollFrames and _G._tabScrollFrames[activeTabIdx]
-            if _sfCache then
-                tabScrollPositions[activeTabIdx] = tabScrollPositions[activeTabIdx] or {}
-                for _, sf in ipairs(_sfCache) do
-                    if sf and sf.Parent then
-                        tabScrollPositions[activeTabIdx][sf.Name] = sf.CanvasPosition
-                    end
-                end
-            end
-            _oldFrame.Visible = false
-        end
-        -- FIX SUPERPOSICION: ocultar todos los tabFrames (cacheados y huerfanos)
-        -- para garantizar que nunca quede mas de uno visible a la vez
-        if contentContainer then
-            for _, ch in ipairs(contentContainer:GetChildren()) do
-                if ch.Name:sub(1, 9) == "TabCache_" then
-                    ch.Visible = false
-                end
-            end
-        end
-        for _cachedIdx, _cachedFrame in pairs(_tabCache) do
-            if _cachedFrame and _cachedFrame.Parent and _cachedIdx ~= idx then
-                _cachedFrame.Visible = false
-            end
-        end
-        -- OPT: animar SOLO el boton anterior (idle) y el nuevo (active) ? no el loop completo
-        _applyBtnState(activeTabIdx, false)
-        activeTabIdx = idx
-        _applyBtnState(idx, true)
-        -- Construir solo la primera vez; luego mostrar instantaneamente (sin lag)
-        -- FIX CLICK RAPIDO: _showTab se llama como callback cuando el build termina.
-        -- Si el tab ya estaba construido, el callback se llama inmediatamente.
-        -- Si estaba en cola (mutex ocupado), se llama cuando le toque construirse.
-        -- Esto evita que clickear rapido durante la carga deje todas las pestanas vacias.
-        local function _showTab()
-            -- Si el usuario cambio de tab mientras esperabamos, no mostrar este
-            if activeTabIdx ~= idx then return end
-            _G._reloadActiveTab = function()
-                if not _tabCache[idx] or not _tabCache[idx].Parent then
-                    _tabBuilt[idx] = nil
-                    _tabCache[idx] = nil
-                    _G._isTabRebuild = true
-                    _buildTabCached(idx)
-                    _G._isTabRebuild = false
-                end
-            end
-            if _tabCache[idx] then
-                local _tc = _tabCache[idx]
-                local si = _tc:FindFirstChild("SearchInput", true)
-                if si then si.Text = "" end
-                -- Animacion de entrada suave: slide desde la derecha + fade
-                _tc.Position = UDim2.new(0.04, 0, 0, 0)
-                _tc.Visible  = true
-                TweenService:Create(_tc,
-                    TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                    {Position = UDim2.new(0, 0, 0, 0)}
-                ):Play()
-                -- FIX DOUBLE COLUMN INVISIBLE: forzar refresh de columnas tras hacerse visible
-                task.defer(function()
-                    if not _tc or not _tc.Parent then return end
-                    local wrapper = _tc:FindFirstChild("TwoColumnWrapper")
-                    if wrapper then
-                        local lc = wrapper:FindFirstChild("LeftColumn")
-                        local rc = wrapper:FindFirstChild("RightColumn")
-                        if lc then lc.Visible = false; lc.Visible = true end
-                        if rc then rc.Visible = false; rc.Visible = true end
-                    end
-                end)
-            end
-        end
-        _buildTabCached(idx, _showTab)
-        _restoreToggleStates(idx)
-        -- Restaurar posicion de scroll
-        if tabScrollPositions[idx] and _tabCache[idx] then
-            -- OPT: restaurar scroll usando cache de ScrollingFrames por tab
-            local _sfCache = _G._tabScrollFrames and _G._tabScrollFrames[idx]
-            if _sfCache then
-                task.defer(function()
-                    local saved = tabScrollPositions[idx]
-                    for _, sf in ipairs(_sfCache) do
-                        if sf and sf.Parent and saved[sf.Name] then
-                            sf.CanvasPosition = saved[sf.Name]
-                        end
-                    end
-                end)
-            end
-        end
-    end
-
-
-    -- -- DOCK DE TABS EXTERNO  barra flotante DEBAJO del hub --------------
-    -- SIDEBAR VERTICAL IZQUIERDA dentro del mainFrame (siempre visible)
-    -- tabDockGui es dummy para compatibilidad
-    local tabDockGui = Instance.new("ScreenGui")
-    tabDockGui.Name = "BypasTabDock"
-    tabDockGui.ResetOnSpawn = false
-    tabDockGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    tabDockGui.DisplayOrder = 1000
-    tabDockGui.IgnoreGuiInset = true
-    tabDockGui.Parent = playerGui
 
     -- ============================================================
-    -- PANEL DERECHO: botones de tabs ? estilo imagen de referencia
+    -- TAB BUTTONS: exact visual language of MM2_GUI_Replica_LocalScript
+    -- Rounded blue cards, compact spacing, text only, no emojis/icons.
     -- ============================================================
-    local _isMobileLayout = false
-    local SIDEBAR_W = 0  -- sin sidebar separada, el rightPanel ocupa 27% del mainFrame
-
-    local tabDockFrame = Instance.new("Frame", mainFrame)
-    _G._hubTabDockFrame = tabDockFrame
-    tabDockFrame.Name = "TabDock"
-    tabDockFrame.AnchorPoint = Vector2.new(0, 0)
-    tabDockFrame.BorderSizePixel = 0
-    tabDockFrame.ZIndex = 12
-    tabDockFrame.ClipsDescendants = false
-    -- Dock colorido y transparente para ver el juego detras
-    -- DISE?O MOBILE: fondo m?s oscuro y vibrante en celular
-    local _isMobileFrame = false
-    pcall(function()
-        local _uis3 = game:GetService("UserInputService")
-        _isMobileFrame = _uis3.TouchEnabled and not _uis3.KeyboardEnabled
-    end)
-    tabDockFrame.BackgroundColor3 = _isMobileFrame
-        and Color3.fromRGB(5, 40, 55)  -- fondo panel mobile (Secondary hub)
-        or  Color3.fromRGB(5, 15, 50)
-    tabDockFrame.BackgroundTransparency = _isMobileFrame and 0.65 or 0.55
-    tabDockFrame.Position = UDim2.new(0.78, 0, 0, 36)
-    tabDockFrame.Size = UDim2.new(0.22, 0, 1, -36)
-    tabDockFrame.Visible  = true
-
-    -- Gradiente lateral neon para celular
-    if _isMobileFrame then
-        local _mobileGrad = Instance.new("UIGradient", tabDockFrame)
-        _mobileGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,    Color3.fromRGB(0, 80, 100)),
-            ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(0, 55, 75)),
-            ColorSequenceKeypoint.new(1,    Color3.fromRGB(0, 40, 60)),
-        })
-        _mobileGrad.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0,   0.45),
-            NumberSequenceKeypoint.new(0.5, 0.55),
-            NumberSequenceKeypoint.new(1,   0.50),
-        })
-        _mobileGrad.Rotation = 180
-
-        -- Borde izquierdo neon animado (solo mobile)
-        local _neonLine = Instance.new("Frame", tabDockFrame)
-        _neonLine.Size = UDim2.new(0, 2, 1, 0)
-        _neonLine.Position = UDim2.new(0, 0, 0, 0)
-        _neonLine.BackgroundColor3 = Color3.fromRGB(0, 220, 180)
-        _neonLine.BackgroundTransparency = 0
-        _neonLine.BorderSizePixel = 0
-        _neonLine.ZIndex = 14
-        local _nlGrad = Instance.new("UIGradient", _neonLine)
-        _nlGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 255, 200)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 180, 255)),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 60, 255)),
-        })
-        _nlGrad.Rotation = 90
-        task.spawn(function()
-            local _r2 = 0
-            while _neonLine and _neonLine.Parent do
-                task.wait(0.05)
-                _r2 = (_r2 + 3) % 360
-                pcall(function() _nlGrad.Rotation = 90 + math.sin(math.rad(_r2)) * 30 end)
-            end
-        end)
-    end
-    -- Gradiente colorido en el panel de tabs
-    local _dockBgGrad = Instance.new("UIGradient", tabDockFrame)
-    _dockBgGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,  30, 80)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(10, 20, 60)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(20, 0,  70)),
-    })
-    _dockBgGrad.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0,   0.45),
-        NumberSequenceKeypoint.new(0.5, 0.55),
-        NumberSequenceKeypoint.new(1,   0.45),
-    })
-    _dockBgGrad.Rotation = 90
+    local _replicaBlue      = Color3.fromRGB(46, 91, 190)
+    local _replicaBlueDark  = Color3.fromRGB(24, 54, 122)
+    local _replicaBluePanel = Color3.fromRGB(42, 77, 160)
+    local _replicaBright    = Color3.fromRGB(83, 126, 218)
+    local _replicaWhite     = Color3.fromRGB(244, 247, 255)
+    local _replicaSub       = Color3.fromRGB(202, 214, 241)
 
     -- ============================================================
-    -- POSITION GUARD: proteger posiciones contra desincronizacion
-    -- Cuando toggles se auto-activan crean ScreenGuis que pueden
-    -- forzar un recalculo del layout y desplazar el header o el dock.
-    -- Este guard re-ancla ambos al detectar cualquier cambio.
+    -- TAB DOCK REPLICA: crear siempre el contenedor antes de estilizarlo.
+    -- Esto evita el error "attempt to index nil with GetChildren" al abrir.
     -- ============================================================
-    local _HEADER_POS    = UDim2.new(0, 0, 0, 0)
-    local _TABDOCK_POS   = UDim2.new(0.78, 0, 0, 36)
-    local _TABDOCK_SIZE  = UDim2.new(0.22, 0, 1, -36)
-    local _CONTENT_POS   = UDim2.new(0, 0, 0, 36)
-    local _CONTENT_SIZE  = UDim2.new(0.78, 0, 1, -36)
-    local _guardBusy     = false
-
-    local function _reanchorLayout()
-        if _guardBusy then return end
-        _guardBusy = true
-        task.defer(function()
-            pcall(function()
-                if header and header.Parent then
-                    header.Position = _HEADER_POS
-                end
-                if tabDockFrame and tabDockFrame.Parent then
-                    tabDockFrame.Position = _TABDOCK_POS
-                    tabDockFrame.Size     = _TABDOCK_SIZE
-                end
-                if contentContainer and contentContainer.Parent and contentContainer.Visible then
-                    contentContainer.Position = _CONTENT_POS
-                    contentContainer.Size     = _CONTENT_SIZE
-                end
-            end)
-            _guardBusy = false
-        end)
+    if not tabDockFrame or not tabDockFrame.Parent then
+        tabDockFrame = Instance.new("Frame")
+        tabDockFrame.Name = "TabDock"
+        tabDockFrame.Parent = mainFrame
+        tabDockFrame.Position = UDim2.new(0.65, 0, 0, 52)
+        tabDockFrame.Size = UDim2.new(0.35, 0, 1, -52)
+        tabDockFrame.BackgroundColor3 = Color3.fromRGB(24, 54, 122)
+        tabDockFrame.BackgroundTransparency = 0.08
+        tabDockFrame.BorderSizePixel = 0
+        tabDockFrame.ZIndex = 10
+        tabDockFrame.ClipsDescendants = true
+        _G._hubTabDockFrame = tabDockFrame
     end
 
-    -- Escuchar cambios en el header
-    pcall(function()
-        header:GetPropertyChangedSignal("Position"):Connect(function()
-            if header.Position ~= _HEADER_POS then
-                _reanchorLayout()
-            end
-        end)
-    end)
-    -- Escuchar cambios en el contentContainer (posicion Y tamano)
-    pcall(function()
-        contentContainer:GetPropertyChangedSignal("Position"):Connect(function()
-            if contentContainer.Visible and contentContainer.Position ~= _CONTENT_POS then
-                _reanchorLayout()
-            end
-        end)
-        contentContainer:GetPropertyChangedSignal("Size"):Connect(function()
-            if contentContainer.Visible and contentContainer.Size ~= _CONTENT_SIZE then
-                _reanchorLayout()
-            end
-        end)
-    end)
-    -- Escuchar cambios en el tabDockFrame
-    pcall(function()
-        tabDockFrame:GetPropertyChangedSignal("Position"):Connect(function()
-            if tabDockFrame.Position ~= _TABDOCK_POS then
-                _reanchorLayout()
-            end
-        end)
-        tabDockFrame:GetPropertyChangedSignal("Size"):Connect(function()
-            if tabDockFrame.Size ~= _TABDOCK_SIZE then
-                _reanchorLayout()
-            end
-        end)
-    end)
-
-    local _dockStroke = Instance.new("UIStroke", tabDockFrame)
-    _dockStroke.Color           = Color3.fromRGB(0, 140, 110)
-    _dockStroke.Thickness       = 1
-    _dockStroke.Transparency    = 0.6
-    _dockStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    -- Separador izquierdo: linea teal oscura con gradiente
-    local _dockDivider = Instance.new("Frame", tabDockFrame)
-    _dockDivider.Name = "DockDivider"
-    _dockDivider.Size = UDim2.new(0, 2, 1, 0)
-    _dockDivider.Position = UDim2.new(0, 0, 0, 0)
-    _dockDivider.BackgroundColor3 = Color3.fromRGB(0, 180, 140)
-    _dockDivider.BackgroundTransparency = 0.3
-    _dockDivider.BorderSizePixel = 0
-    _dockDivider.ZIndex = 14
-    -- Gradiente en el separador para efecto de profundidad
-    local _dividerGrad = Instance.new("UIGradient", _dockDivider)
-    _dividerGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 120, 100)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 220, 170)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 100, 80)),
-    })
-    _dividerGrad.Rotation = 90
-
-    local tabDockList = Instance.new("ScrollingFrame", tabDockFrame)
-    tabDockList.Name = "DockList"
-    tabDockList.Size = UDim2.new(1, 0, 1, 0)
-    tabDockList.Position = UDim2.new(0, 0, 0, 0)
-    tabDockList.BackgroundTransparency = 1
-    tabDockList.ZIndex = 13
-    -- SCROLL PESTANAS: activado para cuando hay muchas tabs
-    local _isMobileScroll = false
-    pcall(function()
-        local _uis2 = game:GetService("UserInputService")
-        _isMobileScroll = _uis2.TouchEnabled and not _uis2.KeyboardEnabled
-    end)
-    tabDockList.ScrollBarThickness    = _isMobileScroll and 5 or 3
-    tabDockList.ScrollingDirection    = Enum.ScrollingDirection.Y
-    tabDockList.ScrollingEnabled      = true
-    tabDockList.CanvasSize            = UDim2.new(0, 0, 0, 0)
-    tabDockList.AutomaticCanvasSize   = Enum.AutomaticSize.Y
-    tabDockList.ClipsDescendants      = true
-    tabDockList.ElasticBehavior       = Enum.ElasticBehavior.WhenScrollable
-    tabDockList.ScrollBarImageColor3  = Color3.fromRGB(0, 220, 180)
-    tabDockList.ScrollBarImageTransparency = 0.25
-    tabDockList.TopImage  = ""
-    tabDockList.BottomImage = ""
-
-    -- Flechas de scroll en celular
-    if _isMobileScroll then
-        local _arrowUp = Instance.new("TextLabel", tabDockFrame)
-        _arrowUp.Name = "DockArrowUp"
-        _arrowUp.Size = UDim2.new(1, 0, 0, 18)
-        _arrowUp.Position = UDim2.new(0, 0, 0, 0)
-        _arrowUp.BackgroundColor3 = Color3.fromRGB(0, 180, 140)
-        _arrowUp.BackgroundTransparency = 0.6
-        _arrowUp.BorderSizePixel = 0
-        _arrowUp.Text = "?"
-        _arrowUp.TextColor3 = Color3.fromRGB(0, 255, 210)
-        _arrowUp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        _arrowUp.TextSize = 11
-        _arrowUp.ZIndex = 20
-        _arrowUp.Visible = false
-        local _arrowDn = Instance.new("TextLabel", tabDockFrame)
-        _arrowDn.Name = "DockArrowDn"
-        _arrowDn.Size = UDim2.new(1, 0, 0, 18)
-        _arrowDn.Position = UDim2.new(0, 0, 1, -18)
-        _arrowDn.BackgroundColor3 = Color3.fromRGB(0, 180, 140)
-        _arrowDn.BackgroundTransparency = 0.6
-        _arrowDn.BorderSizePixel = 0
-        _arrowDn.Text = "?"
-        _arrowDn.TextColor3 = Color3.fromRGB(0, 255, 210)
-        _arrowDn.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        _arrowDn.TextSize = 11
-        _arrowDn.ZIndex = 20
-        tabDockList:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-            local pos = tabDockList.CanvasPosition.Y
-            local maxS = math.max(0, tabDockList.AbsoluteCanvasSize.Y - tabDockList.AbsoluteSize.Y)
-            pcall(function()
-                _arrowUp.Visible = pos > 8
-                _arrowDn.Visible = maxS > 8 and pos < maxS - 8
-            end)
-        end)
+    if not tabDockList or not tabDockList.Parent then
+        tabDockList = Instance.new("ScrollingFrame")
+        tabDockList.Name = "DockList"
+        tabDockList.Parent = tabDockFrame
+        tabDockList.Position = UDim2.new(0, 0, 0, 0)
+        tabDockList.Size = UDim2.new(1, 0, 1, 0)
+        tabDockList.BackgroundTransparency = 1
+        tabDockList.BorderSizePixel = 0
+        tabDockList.ZIndex = 11
+        tabDockList.ScrollBarThickness = 3
+        tabDockList.ScrollBarImageColor3 = Color3.fromRGB(83, 126, 218)
+        tabDockList.ScrollingDirection = Enum.ScrollingDirection.Y
+        tabDockList.CanvasSize = UDim2.new(0, 0, 0, 0)
+        tabDockList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        tabDockList.ElasticBehavior = Enum.ElasticBehavior.Never
     end
 
-    local dockLayout = Instance.new("UIListLayout", tabDockList)
-    dockLayout.FillDirection = Enum.FillDirection.Vertical
-    dockLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    dockLayout.Padding = UDim.new(0, 5)
+    -- Clean old dock decorations.
+    for _, child in ipairs(tabDockFrame:GetChildren()) do
+        if child:IsA("UIGradient") then pcall(function() child:Destroy() end) end
+        if child.Name == "DockDivider" or child.Name == "DockArrowUp" or child.Name == "DockArrowDn" then
+            pcall(function() child:Destroy() end)
+        end
+    end
+    tabDockFrame.BackgroundColor3 = _replicaBlueDark
+    tabDockFrame.BackgroundTransparency = 0.08
+
+    local oldDockStroke = tabDockFrame:FindFirstChildOfClass("UIStroke")
+    if oldDockStroke then
+        oldDockStroke.Color = _replicaBright
+        oldDockStroke.Thickness = 1.5
+        oldDockStroke.Transparency = 0.20
+    else
+        local st = Instance.new("UIStroke", tabDockFrame)
+        st.Color = _replicaBright
+        st.Thickness = 1.5
+        st.Transparency = 0.20
+    end
+    local dc = tabDockFrame:FindFirstChildOfClass("UICorner") or Instance.new("UICorner", tabDockFrame)
+    dc.CornerRadius = UDim.new(0, 9)
+
+    local dockLayout = tabDockList and tabDockList:FindFirstChildOfClass("UIListLayout")
+    if not dockLayout then dockLayout = Instance.new("UIListLayout", tabDockList) end
+    dockLayout.Padding = UDim.new(0, 8)
     dockLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    local dockPad = Instance.new("UIPadding", tabDockList)
-    dockPad.PaddingTop    = UDim.new(0, 5)
-    dockPad.PaddingBottom = UDim.new(0, 5)
-    dockPad.PaddingLeft   = UDim.new(0, 3)
-    dockPad.PaddingRight  = UDim.new(0, 3)
-
-    -- Panel izquierdo: contentContainer (area de contenido de tabs)
-    contentContainer.Position = UDim2.new(0, 0, 0, 36)
-    contentContainer.Size = UDim2.new(0.78, 0, 1, -36)
-    contentContainer.Visible  = true  -- visible desde el inicio para rellenar el espacio rojo
-
-    -- Mismos colores que CreateAuroraToggle
-    local C_TOG_BG      = Color3.fromRGB(  8,  50,  60)  -- azul igual que toggle
-    local C_TOG_STROKE  = Color3.fromRGB(  5,  25,  45)    -- borde azul
-    local C_KNOB_BG     = Color3.fromRGB(  3,   8,  18)    -- fondo del area del knob
-    local C_KNOB_ON     = Color3.fromRGB( 50, 255, 180)     -- azul = tab activa
-    local C_KNOB_OFF    = Color3.fromRGB(  5,  25,  45)      -- azul oscuro = tab inactiva
-
-    -- Tama?os del knob (igual que en CreateAuroraToggle)
-    local _isMobileTog  = pcall(function() return UserInputService.TouchEnabled end) and UserInputService.TouchEnabled
-    local _knobBgW      = _isMobileTog and 62 or 80
-    local _knobBgH      = _isMobileTog and 30 or 38
-    local _knobSz       = _isMobileTog and 22 or 28
-    local _knobOffR     = _isMobileTog and -(_knobSz + 5) or -32
-    local _lblTxtSz     = _isMobileTog and 14 or 16
-    local _rowH         = _isMobileTog and 80 or 58
-
-    local function _syncDockPos() end  -- no-op
+    local dockPad = tabDockList and tabDockList:FindFirstChildOfClass("UIPadding")
+    if not dockPad then dockPad = Instance.new("UIPadding", tabDockList) end
+    dockPad.PaddingTop = UDim.new(0, 8)
+    dockPad.PaddingBottom = UDim.new(0, 8)
+    dockPad.PaddingLeft = UDim.new(0, 8)
+    dockPad.PaddingRight = UDim.new(0, 8)
 
     -- ============================================================
-    -- TAB BUTTONS: estilo imagen de referencia
-    -- Barra compacta granate oscuro, borde rojo fino, texto
-    -- pequeno a la izquierda, sin padding excesivo.
+    -- SetActiveTab: core function (defined before buttons use it)
+    -- Builds the tab if needed, then shows/hides frames and updates
+    -- button states to reflect the newly active tab.
     -- ============================================================
-    local _tabScaleH = 1 / #tabNames
-    for i = 1, #tabNames do
-
-        -- ============================================================
-        -- TAB BTN REDISENO: estilo glassmorphism moderno, sin texto
-        -- aburrido. Cada tab tiene icono + nombre vertical compacto,
-        -- con borde aurora animado al activarse.
-        -- ============================================================
-        local btn = Instance.new("Frame", tabDockList)
-        btn.Name                   = tabNames[i] .. "SideBtn"
-        btn.Size                   = UDim2.new(1, 0, _tabScaleH, 0)
-        btn.BackgroundColor3       = Color3.fromRGB(0, 60, 80)
-        btn.BackgroundTransparency = 0.45
-        btn.BorderSizePixel        = 0
-        btn.ClipsDescendants       = false
-        btn.ZIndex                 = 13
-        btn.LayoutOrder            = i
-
-        local _tabTag  = Instance.new("StringValue", btn)
-        _tabTag.Name   = "TAB_BTN_PROTECTED"
-        _tabTag.Value  = "1"
-
-        local _btnCorner = Instance.new("UICorner", btn)
-        _btnCorner.CornerRadius = UDim.new(0, 10)
-
-        -- Gradiente diagonal vibrante (base inactiva - mas iluminado)
-        local _btnGrad = Instance.new("UIGradient", btn)
-        _btnGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,    Color3.fromRGB(8,  25, 65)),
-            ColorSequenceKeypoint.new(0.45, Color3.fromRGB(15, 45, 100)),
-            ColorSequenceKeypoint.new(1,    Color3.fromRGB(5,  18, 50)),
-        })
-        _btnGrad.Rotation = 135
-
-        -- Borde izquierdo de acento: color uniforme igual al hub
-        local _accentColor = Color3.fromRGB(5, 15, 40)
-
-        -- Barra de acento lateral (3px, color unico por tab)
-        local _accentBar = Instance.new("Frame", btn)
-        _accentBar.Name                   = "AccentBar"
-        _accentBar.Size                   = UDim2.new(0, 3, 0.65, 0)
-        _accentBar.AnchorPoint            = Vector2.new(0, 0.5)
-        _accentBar.Position               = UDim2.new(0, 2, 0.5, 0)
-        _accentBar.BackgroundColor3       = _accentColor
-        _accentBar.BackgroundTransparency = 0.6
-        _accentBar.BorderSizePixel        = 0
-        _accentBar.ZIndex                 = 16
-        Instance.new("UICorner", _accentBar).CornerRadius = UDim.new(1, 0)
-
-        -- Borde exterior: sutil, se ilumina al hover/activo
-        local btnStroke           = Instance.new("UIStroke", btn)
-        btnStroke.Color           = _accentColor
-        btnStroke.Thickness       = 1.2
-        btnStroke.Transparency    = 0.72
-        btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-
-        -- Indicador activo (barra derecha que aparece al seleccionar)
-        local _tabIndicator = Instance.new("Frame", btn)
-        _tabIndicator.Name                   = "TabIndicator"
-        _tabIndicator.Size                   = UDim2.new(0, 3, 0.7, 0)
-        _tabIndicator.AnchorPoint            = Vector2.new(1, 0.5)
-        _tabIndicator.Position               = UDim2.new(1, -1, 0.5, 0)
-        _tabIndicator.BackgroundColor3       = _accentColor
-        _tabIndicator.BackgroundTransparency = 1
-        _tabIndicator.BorderSizePixel        = 0
-        _tabIndicator.ZIndex                 = 16
-        Instance.new("UICorner", _tabIndicator).CornerRadius = UDim.new(1, 0)
-
-        -- Overlay glow (se activa al seleccionar)
-        local tintOverlay = Instance.new("Frame", btn)
-        tintOverlay.Name               = "TinteDiagonal"
-        tintOverlay.Size               = UDim2.new(1, 0, 1, 0)
-        tintOverlay.BackgroundColor3   = _accentColor
-        tintOverlay.BackgroundTransparency = 1
-        tintOverlay.BorderSizePixel    = 0
-        tintOverlay.ZIndex             = 14
-        Instance.new("UICorner", tintOverlay).CornerRadius = UDim.new(0, 10)
-
-        -- Icono emoji: deshabilitado (sin emojis por solicitud del usuario)
-        local _iconImg = Instance.new("TextLabel", btn)
-        _iconImg.Name                   = "TabIcon"
-        _iconImg.Size                   = UDim2.new(0, 0, 0, 0)
-        _iconImg.AnchorPoint            = Vector2.new(0.5, 0)
-        _iconImg.Position               = UDim2.new(0.5, 0, 0, 0)
-        _iconImg.BackgroundTransparency = 1
-        _iconImg.Text                   = ""
-        _iconImg.TextColor3             = _accentColor
-        _iconImg.Font                   = Enum.Font.GothamBold
-        _iconImg.TextSize               = 1
-        _iconImg.TextXAlignment         = Enum.TextXAlignment.Center
-        _iconImg.TextYAlignment         = Enum.TextYAlignment.Center
-        _iconImg.ZIndex                 = 17
-        _iconImg.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
-        _iconImg.TextStrokeTransparency = 1
-
-        -- Texto centrado y grande (sin icono encima)
-        local lbl               = Instance.new("TextLabel", btn)
-        lbl.Name                = "TabLabel"
-        lbl.Size                = UDim2.new(1, -4, 1, 0)
-        lbl.AnchorPoint         = Vector2.new(0.5, 0.5)
-        lbl.Position            = UDim2.new(0.5, 0, 0.5, 0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text                = tabNames[i]
-        lbl.Font                = Enum.Font.GothamBold
-        lbl.TextScaled          = false
-        lbl.TextSize            = 14
-        lbl.TextColor3          = Color3.fromRGB(220, 255, 240)
-        lbl.TextXAlignment      = Enum.TextXAlignment.Center
-        lbl.TextYAlignment      = Enum.TextYAlignment.Center
-        lbl.TextWrapped         = false
-        lbl.TextTruncate        = Enum.TextTruncate.AtEnd
-        -- Sombra para que se lea bien sobre cualquier fondo
-        lbl.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
-        lbl.TextStrokeTransparency = 0.3
-        lbl.ZIndex              = 16
-
-        do
-            local _tabKey = tabNames[i]:lower():gsub(" ", "_")
-            table.insert(_LangObjects, {obj=lbl, key=_tabKey, prefix="", suffix=""})
-            if _G.HubLanguage and _LangStrings then
-                local _dict = _LangStrings[_G.HubLanguage]
-                if _dict and _dict[_tabKey] then lbl.Text = _dict[_tabKey] end
+    SetActiveTab = function(idx)
+        if not tabNames[idx] then return end
+        -- Hide all cached tab frames
+        for i, frame in pairs(_tabCache) do
+            if frame and frame.Parent then
+                frame.Visible = false
             end
         end
+        -- Update button visual states
+        for i = 1, #tabNames do
+            pcall(function() _applyBtnState(i, i == idx) end)
+        end
+        activeTabIdx = idx
+        _G._activeTabIdx = idx
+        -- Build tab if not yet built, then show its frame
+        _buildTabCached(idx, function()
+            local frame = _tabCache[idx]
+            if frame and frame.Parent then
+                frame.Visible = true
+            end
+        end)
+    end
+    -- ============================================================
 
-        -- -- Boton invisible que captura clicks ------------------
-        local clickRow              = Instance.new("TextButton", btn)
-        clickRow.Size               = UDim2.new(1, 0, 1, 0)
+    for i = 1, #tabNames do
+        local btn = Instance.new("Frame", tabDockList)
+        btn.Name = tabNames[i] .. "SideBtn"
+        btn.Size = UDim2.new(1, 0, 0, 70)
+        btn.BackgroundColor3 = _replicaBluePanel
+        btn.BackgroundTransparency = (i == 1) and 0.04 or 0.16
+        btn.BorderSizePixel = 0
+        btn.ClipsDescendants = true
+        btn.LayoutOrder = i
+        btn.ZIndex = 13
+
+        local cr = Instance.new("UICorner", btn)
+        cr.CornerRadius = UDim.new(0, 9)
+        local bs = Instance.new("UIStroke", btn)
+        bs.Color = _replicaBright
+        bs.Thickness = (i == 1) and 1.8 or 1.3
+        bs.Transparency = (i == 1) and 0.05 or 0.30
+        bs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        local lbl = Instance.new("TextLabel", btn)
+        lbl.Name = "TabLabel"
+        lbl.BackgroundTransparency = 1
+        lbl.Size = UDim2.new(1, -12, 1, 0)
+        lbl.Position = UDim2.new(0, 6, 0, 0)
+        lbl.Text = tabNames[i]
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = (i == 1) and 14 or 13
+        lbl.TextColor3 = _replicaWhite
+        lbl.TextXAlignment = Enum.TextXAlignment.Center
+        lbl.TextYAlignment = Enum.TextYAlignment.Center
+        lbl.TextWrapped = false
+        lbl.TextTruncate = Enum.TextTruncate.AtEnd
+        lbl.ZIndex = 16
+
+        local clickRow = Instance.new("TextButton", btn)
+        clickRow.Name = "TabClick"
+        clickRow.Size = UDim2.new(1, 0, 1, 0)
         clickRow.BackgroundTransparency = 1
-        clickRow.Text               = ""
-        clickRow.ZIndex             = 20
-        clickRow.AutoButtonColor    = false
+        clickRow.Text = ""
+        clickRow.AutoButtonColor = false
+        clickRow.ZIndex = 20
 
-        local ti = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local _tabKey = tabNames[i]:lower():gsub(" ", "_")
+        table.insert(_LangObjects, {obj=lbl, key=_tabKey, prefix="", suffix=""})
+        if _G.HubLanguage and _LangStrings then
+            local dict = _LangStrings[_G.HubLanguage]
+            if dict and dict[_tabKey] then lbl.Text = dict[_tabKey] end
+        end
 
-        -- Hover: encender acento y borde
+        local ti = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         clickRow.MouseEnter:Connect(function()
             if activeTabIdx ~= i then
-                PlayHoverSound()
-                TweenService:Create(btn,        ti, {BackgroundTransparency = 0.20, BackgroundColor3 = Color3.fromRGB(15, 45, 110)}):Play()
-                TweenService:Create(btnStroke,  ti, {Transparency = 0.10, Thickness = 2.0}):Play()
-                TweenService:Create(_accentBar, ti, {BackgroundTransparency = 0.1}):Play()
-                TweenService:Create(lbl,        ti, {TextColor3 = Color3.fromRGB(255, 255, 255), TextSize = 15}):Play()
-                TweenService:Create(_iconImg,   ti, {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+                TweenService:Create(btn, ti, {
+                    BackgroundColor3 = _replicaBlue,
+                    BackgroundTransparency = 0.05,
+                }):Play()
+                TweenService:Create(bs, ti, {
+                    Color = _replicaBright,
+                    Thickness = 1.8,
+                    Transparency = 0.05,
+                }):Play()
+                TweenService:Create(lbl, ti, {
+                    TextColor3 = _replicaWhite,
+                    TextSize = 14,
+                }):Play()
             end
         end)
         clickRow.MouseLeave:Connect(function()
             if activeTabIdx ~= i then
-                TweenService:Create(btn,        ti, {BackgroundTransparency = 0.45, BackgroundColor3 = Color3.fromRGB(10, 30, 70)}):Play()
-                TweenService:Create(btnStroke,  ti, {Transparency = 0.55, Thickness = 1.5}):Play()
-                TweenService:Create(_accentBar, ti, {BackgroundTransparency = 0.4}):Play()
-                TweenService:Create(lbl,        ti, {TextColor3 = Color3.fromRGB(220, 255, 240), TextSize = 14}):Play()
-                TweenService:Create(_iconImg,   ti, {TextColor3 = _accentColor}):Play()
+                TweenService:Create(btn, ti, {
+                    BackgroundColor3 = _replicaBluePanel,
+                    BackgroundTransparency = 0.16,
+                }):Play()
+                TweenService:Create(bs, ti, {
+                    Color = _replicaBright,
+                    Thickness = 1.3,
+                    Transparency = 0.30,
+                }):Play()
+                TweenService:Create(lbl, ti, {
+                    TextColor3 = _replicaWhite,
+                    TextSize = 13,
+                }):Play()
             end
         end)
 
-        clickRow.Selectable = false
-        local _tabBtnLastTime = 0
+        local lastClick = 0
         clickRow.Activated:Connect(function()
-            local _t = tick()
-            if (_t - _tabBtnLastTime) < 0.30 then return end
-            _tabBtnLastTime = _t
+            local now = tick()
+            if now - lastClick < 0.30 then return end
+            lastClick = now
             PlayTabSound()
-            -- contentContainer siempre visible; solo garantizar posicion correcta
             contentContainer.Visible = true
-            contentContainer.Position = UDim2.new(0, 0, 0, 36)
+            contentContainer.Position = UDim2.new(0, 0, 0, 52)
             SetActiveTab(i)
             _G._tabContentActive = true
         end)
 
         sideButtons[i] = btn
         _G._tabBtnRefs[i] = {
-            icon      = nil,
-            stroke    = btnStroke,
-            activeBar = _tabIndicator,
-            knob      = nil,
-            knobBg    = nil,
-            lbl2      = lbl,
-            tint      = tintOverlay,
+            icon = nil,
+            stroke = bs,
+            activeBar = nil,
+            knob = nil,
+            knobBg = nil,
+            lbl2 = lbl,
+            tint = nil,
         }
-    end
-
-    -- ============================================================
-    -- ELEMENTOS SETTINGS FIJOS (avatar + barras info) en mainFrame
-    -- Se muestran solo cuando se activa la pesta?a SETTINGS (idx 5)
-    -- ============================================================
-    local function _makeSettingsFixedFrame(name, size, pos)
-        local f = Instance.new("Frame", mainFrame)
-        f.Name = name
-        f.Size = size
-        f.Position = pos
-        f.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
-        f.BackgroundTransparency = 0.55
-        f.BorderSizePixel = 0
-        f.ZIndex = 20
-        f.Visible = false
-        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
-        local st = Instance.new("UIStroke", f)
-        st.Color = Color3.fromRGB(  5,  25,  45)
-        st.Thickness = 2
-        st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        return f
     end
 
     -- Caja de avatar del jugador
     local _sfFixedElements = {}
 
-    -- Hook: al cambiar de pesta?a (avatar removido, hook simplificado)
-    local _origSetActiveTab = SetActiveTab
-    SetActiveTab = function(idx)
-        _origSetActiveTab(idx)
-    end
+    -- Hook: avatar removido; SetActiveTab ya definido arriba correctamente
     -- ============================================================
 
     local serverPanel, restoreBtn = CreateServerPanel(mainFrame)
@@ -61833,7 +60991,7 @@ particles = {}
             -- Restaurar dock de tabs
             if tabDockFrame then TweenService:Create(tabDockFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.55}):Play() end
             if contentContainer.Visible then
-                TweenService:Create(contentContainer, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 36)}):Play()
+                TweenService:Create(contentContainer, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0.35, 0, 0, 52)}):Play()
             end
         end
     end
@@ -62163,10 +61321,10 @@ particles = {}
             task.defer(function()
                 _G._tabContentActive = false
                 contentContainer.Visible = true
-                contentContainer.Size     = UDim2.new(0.78, 0, 1, -36)
-                contentContainer.Position = UDim2.new(0, 0, 0, 36)
-                tabDockFrame.Size         = UDim2.new(0.22, 0, 1, -36)
-                tabDockFrame.Position     = UDim2.new(0.78, 0, 0, 36)
+                contentContainer.Size     = UDim2.new(0.65, 0, 1, -52)
+                contentContainer.Position = UDim2.new(0, 0, 0, 52)
+                tabDockFrame.Size         = UDim2.new(0.35, 0, 1, -52)
+                tabDockFrame.Position     = UDim2.new(0.65, 0, 0, 52)
                 pcall(function() SetActiveTab(1) end)
                 task.delay(1.5, function()
                     local _savedBg = _G._hubBackgrounds and _G._hubBackgrounds.current or 0
@@ -62253,10 +61411,10 @@ particles = {}
         task.defer(function()
             _G._tabContentActive = false
             contentContainer.Visible = true
-            contentContainer.Size     = UDim2.new(0.78, 0, 1, -36)
-            contentContainer.Position = UDim2.new(0, 0, 0, 36)
-            tabDockFrame.Size         = UDim2.new(0.22, 0, 1, -36)
-            tabDockFrame.Position     = UDim2.new(0.78, 0, 0, 36)
+            contentContainer.Size     = UDim2.new(0.65, 0, 1, -52)
+            contentContainer.Position = UDim2.new(0, 0, 0, 52)
+            tabDockFrame.Size         = UDim2.new(0.35, 0, 1, -52)
+            tabDockFrame.Position     = UDim2.new(0.65, 0, 0, 52)
             pcall(function() SetActiveTab(1) end)
             task.delay(0.5, function()
                 local _savedBg = _G._hubBackgrounds and _G._hubBackgrounds.current or 0
@@ -62291,7 +61449,7 @@ particles = {}
             task.defer(function()
                 _G._tabContentActive = false
                 contentContainer.Visible = true
-                contentContainer.Position = UDim2.new(0, 0, 0, 36)
+                contentContainer.Position = UDim2.new(0, 0, 0, 52)
                 pcall(function() SetActiveTab(1) end)
             end)
         end
@@ -64412,10 +63570,10 @@ local function _ZerqonLoadingScreen(onComplete)
     loadHubBg.Size                   = UDim2.new(1, 0, 1, 0)
     loadHubBg.Position               = UDim2.new(0, 0, 0, 0)
     loadHubBg.BackgroundTransparency = 1
-    loadHubBg.Image                  = "rbxassetid://96937964432645"
-    loadHubBg.ImageTransparency      = 0.30
+    loadHubBg.Image                  = ""
+    loadHubBg.ImageTransparency      = 1
     loadHubBg.ScaleType              = Enum.ScaleType.Stretch
-    loadHubBg.ImageRectSize          = Vector2.new(900, 480)
+    loadHubBg.ImageRectSize          = Vector2.new(780, 460)
     loadHubBg.ImageRectOffset        = Vector2.new(0, 0)
     loadHubBg.ZIndex                 = 10  -- debajo del contenido pero sobre el fondo solido
 
@@ -64428,7 +63586,7 @@ local function _ZerqonLoadingScreen(onComplete)
     loadBlinkOverlay.Image                  = "rbxassetid://124196125990159"
     loadBlinkOverlay.ImageTransparency      = 1   -- empieza invisible
     loadBlinkOverlay.ScaleType              = Enum.ScaleType.Stretch
-    loadBlinkOverlay.ImageRectSize          = Vector2.new(900, 480)
+    loadBlinkOverlay.ImageRectSize          = Vector2.new(780, 460)
     loadBlinkOverlay.ImageRectOffset        = Vector2.new(0, 0)
     loadBlinkOverlay.ZIndex                 = 11  -- encima del HubBackground, debajo del contenido
     loadBlinkOverlay.Active                 = false
@@ -65497,3 +64655,293 @@ end)
 -- ================================================================
 -- == FIN MOBILE KNIFE BUTTONS v6 (fixed)
 -- ================================================================
+
+
+-- ============================================================================
+-- MM2 GUI REPLICA SKIN v1
+-- Pure visual skin: keeps the existing hub logic/callbacks and changes only UI.
+-- Inspired by the supplied MM2 GUI replica: compact blue panels, rounded cards,
+-- compact switches, right-side tabs, clean typography, no emoji/icon graphics.
+-- ============================================================================
+do
+    local _MM2 = {
+        Blue        = Color3.fromRGB(46, 91, 190),
+        BlueBright  = Color3.fromRGB(73, 116, 218),
+        BlueDark    = Color3.fromRGB(18, 43, 101),
+        BluePanel   = Color3.fromRGB(38, 73, 151),
+        BlueSoft    = Color3.fromRGB(57, 91, 174),
+        Track       = Color3.fromRGB(65, 103, 190),
+        TrackOn     = Color3.fromRGB(73, 116, 218),
+        White       = Color3.fromRGB(244, 247, 255),
+        Sub         = Color3.fromRGB(194, 207, 235),
+    }
+
+    local function _corner(o, r)
+        local c = o:FindFirstChildOfClass("UICorner")
+        if not c then c = Instance.new("UICorner", o) end
+        c.CornerRadius = UDim.new(0, r)
+    end
+
+    local function _stroke(o, color, thickness, transparency)
+        local st = o:FindFirstChildOfClass("UIStroke")
+        if not st then st = Instance.new("UIStroke", o) end
+        st.Color = color
+        st.Thickness = thickness
+        st.Transparency = transparency
+        st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    end
+
+    local function _styleText(o, active)
+        if not (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) then return end
+        o.TextColor3 = active and _MM2.White or _MM2.Sub
+        if o:IsA("TextLabel") or o:IsA("TextButton") then
+            pcall(function() o.FontFace = Font.fromEnum(active and Enum.Font.Gotham or Enum.Font.Gotham) end)
+        end
+        -- Replica has clean text without the heavy black shadow.
+        pcall(function() o.TextStrokeTransparency = 1 end)
+    end
+
+    local function _styleObject(o)
+        if not o or not o.Parent then return end
+
+        -- Remove decorative image/emoji-like elements from the hub.
+        if o:IsA("ImageLabel") or o:IsA("ImageButton") then
+            o.Visible = false
+            return
+        end
+
+        -- Remove gradients/nebulas/shimmer from the hub skin.
+        if o:IsA("UIGradient") then
+            o.Transparency = NumberSequence.new(1)
+            return
+        end
+
+        local n = tostring(o.Name or "")
+        local low = n:lower()
+
+        -- Main shell.
+        if o == mainFrame then
+            o.BackgroundColor3 = _MM2.BlueDark
+            o.BackgroundTransparency = 0.10
+            o.BorderSizePixel = 0
+            _corner(o, 10)
+            _stroke(o, _MM2.BlueBright, 2, 0.15)
+            return
+        end
+
+        -- Header.
+        if low == "header" then
+            o.BackgroundColor3 = _MM2.Blue
+            o.BackgroundTransparency = 0.05
+            o.BorderSizePixel = 0
+            _corner(o, 8)
+            _stroke(o, _MM2.BlueBright, 1.5, 0.18)
+            return
+        end
+
+        -- Main content surface.
+        if low == "contentcontainer" then
+            o.BackgroundColor3 = _MM2.BlueDark
+            o.BackgroundTransparency = 0.08
+            o.BorderSizePixel = 0
+            _corner(o, 8)
+            _stroke(o, _MM2.BlueBright, 1.5, 0.28)
+            return
+        end
+
+        -- Tab dock / tab cards.
+        if low == "tabdock" or low == "tabdockframe" then
+            o.BackgroundColor3 = _MM2.BlueDark
+            o.BackgroundTransparency = 0.04
+            _corner(o, 8)
+            _stroke(o, _MM2.BlueBright, 1.5, 0.25)
+            return
+        end
+
+        -- Compact toggle row from the replica.
+        if low:sub(1, 15) == "auroratogglerow_" then
+            o.BackgroundColor3 = _MM2.BluePanel
+            o.BackgroundTransparency = 0.12
+            o.BorderSizePixel = 0
+            _corner(o, 7)
+            _stroke(o, _MM2.BlueBright, 1.2, 0.30)
+            return
+        end
+
+        -- Toggle track.
+        if low == "toggletrack" then
+            o.BackgroundColor3 = _MM2.Track
+            o.BackgroundTransparency = 0
+            _corner(o, 4)
+            _stroke(o, _MM2.BlueBright, 1, 0.35)
+            return
+        end
+
+        -- Toggle knob.
+        if low == "toggleknob" or low == "knob" then
+            o.BackgroundColor3 = _MM2.White
+            o.BackgroundTransparency = 0
+            _corner(o, 3)
+            return
+        end
+
+        -- Slider wrappers/rows: turn the transparent sliders into blue rounded cards.
+        if low:find("sliderwrapper", 1, true) or low:find("sliderrow", 1, true)
+            or low:find("predslider", 1, true) or low:find("gunslider", 1, true) then
+            if o:IsA("Frame") then
+                o.BackgroundColor3 = _MM2.BluePanel
+                o.BackgroundTransparency = 0.10
+                o.BorderSizePixel = 0
+                _corner(o, 8)
+                _stroke(o, _MM2.BlueBright, 1.3, 0.25)
+            end
+            return
+        end
+
+        -- Common slider tracks.
+        if low:find("track", 1, true) or low:find("slider", 1, true) then
+            if o:IsA("Frame") then
+                -- Don't repaint the card if this is a text/section container.
+                if o.AbsoluteSize.Y <= 18 then
+                    o.BackgroundColor3 = _MM2.Track
+                    o.BackgroundTransparency = 0
+                    _corner(o, 4)
+                end
+            end
+        end
+
+        -- Value fields on sliders.
+        if low:find("value", 1, true) or low:find("valbox", 1, true) then
+            if o:IsA("Frame") or o:IsA("TextLabel") or o:IsA("TextBox") then
+                o.BackgroundColor3 = _MM2.BlueDark
+                o.BackgroundTransparency = 0.05
+                _corner(o, 6)
+                _stroke(o, _MM2.BlueBright, 1.3, 0.10)
+                _styleText(o, true)
+            end
+        end
+
+        -- Default replica surface: replace legacy dark/teal card colors with the blue palette.
+        if (o:IsA("Frame") or o:IsA("TextButton") or o:IsA("TextBox"))
+            and o ~= mainFrame and low ~= "header" and low ~= "contentcontainer" and low ~= "tabdock" and low ~= "docklist" then
+            if o.BackgroundTransparency < 1 then
+                o.BackgroundColor3 = _MM2.BluePanel
+                if o:IsA("TextButton") then o.AutoButtonColor = false end
+            end
+        end
+
+        -- Section cards.
+        if low:find("section", 1, true) or low:find("bordered", 1, true) then
+            if o:IsA("Frame") then
+                o.BackgroundColor3 = _MM2.BluePanel
+                o.BackgroundTransparency = 0.16
+                _corner(o, 8)
+                _stroke(o, _MM2.BlueBright, 1.2, 0.32)
+            end
+        end
+
+        -- Tab buttons: rounded blue cards, text only.
+        -- The existing hub uses Frames named "...SideBtn" with a transparent
+        -- click layer, so style both the frame and its visible text.
+        if low:sub(-7) == "sidebtn" or (low:find("tab", 1, true) and o:IsA("TextButton")) then
+            if o:IsA("GuiObject") then
+                o.BackgroundColor3 = _MM2.BluePanel
+                o.BackgroundTransparency = 0.06
+                o.BorderSizePixel = 0
+                _corner(o, 8)
+                _stroke(o, _MM2.BlueBright, 1.5, 0.22)
+            end
+            if o:IsA("TextButton") then o.AutoButtonColor = false end
+        end
+
+        -- The old tab icon placeholders are hidden: the replica is text-only.
+        if low == "tabicon" or low == "icon" then
+            o.Visible = false
+        end
+
+        if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+            _styleText(o, false)
+        end
+    end
+
+    local function _applyMM2Skin()
+        if not mainFrame or not mainFrame.Parent then return end
+
+        -- Match the proportions of the reference while keeping the existing
+        -- relative layout used by the hub.
+        pcall(function()
+            mainFrame.Size = UDim2.new(0, 700, 0, 410)
+        end)
+
+        -- Force the reference layout: content left, tabs right.
+        pcall(function()
+            if header then
+                header.Size = UDim2.new(1, 0, 0, 52)
+                header.Position = UDim2.new(0, 0, 0, 0)
+            end
+            if contentContainer then
+                contentContainer.Position = UDim2.new(0, 0, 0, 52)
+                contentContainer.Size = UDim2.new(0.65, 0, 1, -52)
+            end
+            if _G._hubTabDockFrame then
+                _G._hubTabDockFrame.Position = UDim2.new(0.65, 0, 0, 52)
+                _G._hubTabDockFrame.Size = UDim2.new(0.35, 0, 1, -52)
+            end
+        end)
+
+        -- Exact tab-card styling pass (the replica uses simple rounded blue cards).
+        for i, btn in ipairs(sideButtons) do
+            pcall(function()
+                btn.Size = UDim2.new(1, 0, 0, 70)
+                btn.BackgroundColor3 = (i == activeTabIdx) and _MM2.BlueBright or _MM2.BluePanel
+                btn.BackgroundTransparency = (i == activeTabIdx) and 0.04 or 0.16
+                btn.BorderSizePixel = 0
+                local c = btn:FindFirstChildOfClass("UICorner") or Instance.new("UICorner", btn)
+                c.CornerRadius = UDim.new(0, 9)
+                for _, ch in ipairs(btn:GetChildren()) do
+                    if ch:IsA("UIGradient") or ch.Name == "AccentBar" or ch.Name == "TabIndicator" or ch.Name == "TinteDiagonal" or ch.Name == "TabIcon" then
+                        ch:Destroy()
+                    elseif ch:IsA("TextLabel") and ch.Name == "TabLabel" then
+                        ch.TextColor3 = _MM2.White
+                        ch.Font = Enum.Font.Gotham
+                        ch.TextSize = (i == activeTabIdx) and 14 or 13
+                        ch.TextStrokeTransparency = 1
+                    end
+                end
+                local click = btn:FindFirstChild("TabClick")
+                if click and click:IsA("TextButton") then click.AutoButtonColor = false end
+            end)
+        end
+
+        for _, d in ipairs(mainFrame:GetDescendants()) do
+            pcall(_styleObject, d)
+        end
+        _styleObject(mainFrame)
+    end
+
+    -- Apply after all cached tabs have had a chance to build.
+    task.defer(function()
+        task.wait(0.15)
+        _applyMM2Skin()
+        task.wait(0.75)
+        _applyMM2Skin()
+    end)
+
+    -- Keep newly-created/cached tab contents in the same appearance.
+    pcall(function()
+        mainFrame.DescendantAdded:Connect(function(obj)
+            task.defer(function()
+                if obj and obj.Parent then
+                    _styleObject(obj)
+                    local p = obj.Parent
+                    if p and p:IsA("Frame") then
+                        local pn = tostring(p.Name or ""):lower()
+                        if pn:find("sliderwrapper", 1, true) or pn:find("predslider", 1, true) then
+                            _styleObject(p)
+                        end
+                    end
+                end
+            end)
+        end)
+    end)
+end
