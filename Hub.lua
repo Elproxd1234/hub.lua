@@ -38,6 +38,13 @@ end
 -- == FIN COMPAT SHIM v18
 -- ================================================================
 
+-- FIX #1: _DEBUG flag - silencia todos los warn/print identificables en produccion
+-- MOVIDO aqui (antes del guard) para que _log este disponible desde la linea 1
+local _DEBUG = false
+local function _log(...)
+    if _DEBUG then warn("[ZQ]", ...) end
+end
+
 -- ================================================================
 -- == GUARD DE RE-EJECUCION DE SCRIPT (v1)
 -- Evita que todo el script corra dos veces si el usuario lo ejecuta
@@ -62,14 +69,31 @@ if _G._hubScriptExecuted then
         pcall(function()
             local _mf = _existing:FindFirstChildOfClass("Frame") or (_existing:GetChildren()[1])
             local _uiSc = _mf and _mf:FindFirstChildOfClass("UIScale")
-            if _uiSc and _getTargetScale then _uiSc.Scale = _getTargetScale() end
+            local _scaleFn = (type(_getTargetScale) == "function" and _getTargetScale)
+                          or (type(_G._getTargetScale) == "function" and _G._getTargetScale)
+            if _uiSc and _scaleFn then _uiSc.Scale = _scaleFn() end
         end)
         _existing.Enabled = true
         _G._hubHidden = false
         _log("Hub reactivado.")
     else
-        if type(abrirHub) == "function" then
-            abrirHub()
+        -- FIX v24: abrirHub puede no estar en scope si el script anterior fue gc'd
+        -- Buscar primero en upvalue local, luego en _G como fallback
+        local _fn = (type(abrirHub) == "function" and abrirHub)
+                 or (type(_G._abrirHub) == "function" and _G._abrirHub)
+        if _fn then
+            -- FIX v24: proteger con pcall para que un crash interno no rompa el guard
+            local _ok, _err = pcall(_fn)
+            if not _ok then
+                -- Si falla, resetear flags y dejar que el proximo run cargue limpio
+                _G._hubScriptExecuted = false
+                _G._hubRunning = false
+                warn("[ZQ] abrirHub() fallo en re-ejecucion:", tostring(_err))
+            end
+        else
+            -- abrirHub aun no fue definida, resetear flag y dejar cargar normal
+            _G._hubScriptExecuted = false
+            return
         end
     end
     return
@@ -78,13 +102,6 @@ _G._hubScriptExecuted = true
 -- ================================================================
 -- == FIN GUARD DE RE-EJECUCION
 -- ================================================================
-
--- Mensaje de bienvenida en consola con color azul
--- FIX #1: _DEBUG flag - silencia todos los warn/print identificables en produccion
-local _DEBUG = false
-local function _log(...)
-    if _DEBUG then warn("[ZQ]", ...) end
-end
 
 -- ================================================================
 -- == PERF BOOST v1 ? Optimizaciones aplicadas al ejecutar el hub
@@ -591,15 +608,15 @@ do
         _G._colorCache = {
             white   = Color3.fromRGB(255, 255, 255),
             black   = Color3.fromRGB(0,   0,   0),
-            red     = Color3.fromRGB(255, 50,  50),
-            green   = Color3.fromRGB(50,  255, 100),
-            blue    = Color3.fromRGB(80,  120, 255),
+            red     = Color3.fromRGB(255,190,  50),
+            green   = Color3.fromRGB(255,  190,  50),
+            blue    = Color3.fromRGB(255,  200,  80),
             yellow  = Color3.fromRGB(255, 220, 50),
             orange  = Color3.fromRGB(255, 140, 30),
-            purple  = Color3.fromRGB(170, 80,  255),
+            purple  = Color3.fromRGB(255,200,   80),
             gray    = Color3.fromRGB(120, 120, 120),
-            darkBg  = Color3.fromRGB(20,  20,  26),
-            accent  = Color3.fromRGB(90,  120, 255),
+            darkBg  = Color3.fromRGB(26,  24,  20),
+            accent  = Color3.fromRGB(255,  203,  90),
         }
     end
 
@@ -856,7 +873,7 @@ if false and _G._discordPremiumVerified then
                 for _k, _v in pairs(_G._toggleStates) do
                     if _v == true and _k:find("%(Premium%)") then
                         _G._toggleStates[_k] = false
-                        -- Actualizar visualmente el knob (pone el indicador en rojo)
+                        -- Actualizar visualmente el knob (pone el indicador en OFF)
                         if _G._toggleApplyStates and _G._toggleApplyStates[_k] then
                             pcall(_G._toggleApplyStates[_k], false, false)
                         end
@@ -1224,7 +1241,7 @@ local function _saveConfig()
         toSave["__bgIndex"] = _G._hubBackgrounds.current or 0
     end
     -- No guardar bgPrevTheme para evitar restaurar temas viejos
-    -- Siempre guardar tema rosa
+    -- Siempre guardar el tema del hub (Cinema Dark)
     toSave["__currentTheme"] = "Neon Green"
     local ok, json = pcall(function() return HttpService:JSONEncode(toSave) end)
     if ok and json then
@@ -1266,7 +1283,7 @@ local function _loadConfig()
     if not ok or type(raw) ~= "string" or raw == "" then return end
     local ok2, saved = pcall(function() return HttpService:JSONDecode(raw) end)
     if not ok2 or type(saved) ~= "table" then return end
-    -- Forzar siempre tema rosa antes de procesar el resto
+    -- Forzar siempre el tema del hub antes de procesar el resto
     saved["__currentTheme"] = "Neon Green"
     saved["__bgPrevTheme"]  = "Neon Green"
     local _restoredActiveCount = 0
@@ -1290,10 +1307,10 @@ local function _loadConfig()
             local idx = tonumber(v) or 0
             _G._hubBackgrounds.current = idx
         elseif k == "__bgPrevTheme" then
-            -- Siempre usar tema rosa, ignorar tema previo guardado
+            -- Siempre usar el tema del hub, ignorar tema previo guardado
             _G._hubBgPrevTheme = "Neon Green"
         elseif k == "__currentTheme" then
-            -- Siempre usar tema rosa (Neon Green redefinido como rosa)
+            -- Siempre usar el tema del hub (Neon Green es el Cinema Dark dorado)
             _G._hubSavedTheme = "Neon Green"
         elseif not (_neverRestoreToggles and _neverRestoreToggles[k]) then
             _G._toggleStates[k] = v
@@ -1482,8 +1499,8 @@ if not _G._hubSettings then
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = true,
-        hubOpacity         = 15,
+        allowHubDrag       = false,  -- FIX v39: hub fijo, no movible
+        hubOpacity         = 0,
         hubScale           = 70,   -- valor por defecto: 70% (todos los dispositivos)
         hubLayoutMode      = 1,
         notifDuration      = 3,
@@ -1495,10 +1512,14 @@ if not _G._hubSettings then
         lowRenderQuality   = false,
         disableShadows     = false,
         fullbright         = false,
-        doubleColumn       = false,
+        doubleColumn       = true,
     }
 end
 _loadConfig()
+
+-- Forzar doble columna siempre activada (layout 2 columnas)
+_G._hubSettings = _G._hubSettings or {}
+_G._hubSettings.doubleColumn = true
 
 -- FIX SCALE: forzar hubScale = 70 siempre, ignorar lo que haya en el archivo guardado
 _G._hubSettings = _G._hubSettings or {}
@@ -1964,12 +1985,12 @@ function CreatePremiumToggle(parent, titleText, subtitleText, callback, defaultS
     local savedPT = _G._toggleStates[_ptKey]
     local isToggled = (savedPT ~= nil) and savedPT or (defaultState or false)
 
-    local C_STROKE_OFF  = Color3.fromRGB(30, 60, 180)
-    local C_STROKE_ON   = Color3.fromRGB(  0, 200, 160)
-    local C_TRACK_OFF   = Color3.fromRGB(30, 35, 90)
-    local C_TRACK_ON    = Color3.fromRGB(  0, 180, 140)
-    local C_TRACK_S_OFF = Color3.fromRGB(30, 60, 180)
-    local C_TRACK_S_ON  = Color3.fromRGB(  0, 200, 160)
+    local C_STROKE_OFF  = Color3.fromRGB(160, 125, 60)
+    local C_STROKE_ON   = Color3.fromRGB(190, 145, 65)
+    local C_TRACK_OFF   = Color3.fromRGB(32, 28, 22)
+    local C_TRACK_ON    = Color3.fromRGB(200, 160, 80)
+    local C_TRACK_S_OFF = Color3.fromRGB(160, 125, 60)
+    local C_TRACK_S_ON  = Color3.fromRGB(190, 145, 65)
 
     -- ptStroke eliminado (sin rectangulo)
     local ptStroke = {Color = C_STROKE_OFF}  -- stub para que el resto del codigo no rompa
@@ -2025,7 +2046,7 @@ function CreatePremiumToggle(parent, titleText, subtitleText, callback, defaultS
     local thumb = Instance.new("Frame", track)
     thumb.Size = UDim2.new(0, THUMB_W, 0, THUMB_H)
     thumb.Position = isToggled and POS_ON or POS_OFF
-    thumb.BackgroundColor3 = Color3.fromRGB(200, 220, 255)
+    thumb.BackgroundColor3 = Color3.fromRGB(255, 238, 200)
     thumb.BackgroundTransparency = 0
     thumb.BorderSizePixel = 0
     thumb.ZIndex = 14
@@ -2059,15 +2080,15 @@ function CreatePremiumToggle(parent, titleText, subtitleText, callback, defaultS
             TweenService:Create(numLabel,    ti,  {Position        = isToggled and UDim2.new(0, THUMB_PAD, 0, 0) or UDim2.new(0.5, 0, 0, 0)}):Play()
             -- Animacion estrella: pulso de brillo al activar
             if isToggled then
-                local thumbColor = Color3.fromRGB(180, 255, 230)
+                local thumbColor = Color3.fromRGB(255, 231, 180)
                 TweenService:Create(thumb, TweenInfo.new(0.10, Enum.EasingStyle.Quad), {BackgroundColor3 = thumbColor, BackgroundTransparency = 0}):Play()
                 task.delay(0.12, function()
-                    TweenService:Create(thumb, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {BackgroundColor3 = Color3.fromRGB( 50, 255, 180), BackgroundTransparency = 0}):Play()
+                    TweenService:Create(thumb, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {BackgroundColor3 = Color3.fromRGB(255, 190,  50), BackgroundTransparency = 0}):Play()
                     -- pulso del stroke: brilla y vuelve
                     -- trackStroke hidden (border removed)
                 end)
             else
-                TweenService:Create(thumb, TweenInfo.new(0.20), {BackgroundColor3 = Color3.fromRGB(  3,   8,  18), BackgroundTransparency = 0}):Play()
+                TweenService:Create(thumb, TweenInfo.new(0.20), {BackgroundColor3 = Color3.fromRGB( 22,  18,  12), BackgroundTransparency = 0}):Play()
             end
         else
             thumb.Position = isToggled and POS_ON or POS_OFF
@@ -2689,7 +2710,7 @@ function _hookMurdererDeath(murderer)
                 -- Limpiar highlight rol (murderer rojo -> quitar)
                 if _hl_remove then pcall(_hl_remove, dc) end
                 -- Pintar verde cham (Piece chams)
-                local GREEN_COL = Color3.fromRGB(  0, 255, 160)
+                local GREEN_COL = Color3.fromRGB(255, 174,   0)
                 pcall(function() _aplicarPieceChams(dc, GREEN_COL) end)
                 if chamHighlight then chamHighlight[murderer] = dc end
             end
@@ -2766,7 +2787,7 @@ task.spawn(function()
             local dc = sheriff.Character
             if dc then
                 if _hl_remove then pcall(_hl_remove, dc) end
-                pcall(function() _aplicarPieceChams(dc, Color3.fromRGB(0, 255, 160)) end)
+                pcall(function() _aplicarPieceChams(dc, Color3.fromRGB(0, 255,  70)) end)
                 if chamHighlight then chamHighlight[sheriff] = dc end
             end
             -- Promover Hero a nuevo Sheriff visual
@@ -2837,7 +2858,7 @@ function _hookHeroDeath(hero)
             local dc = hero and hero.Character
             if dc then
                 if _hl_remove then pcall(_hl_remove, dc) end
-                local GREEN_COL = Color3.fromRGB(  0, 255, 160)
+                local GREEN_COL = Color3.fromRGB(255, 174,   0)
                 pcall(function() _aplicarPieceChams(dc, GREEN_COL) end)
                 if chamHighlight then chamHighlight[hero] = dc end
             end
@@ -3681,7 +3702,8 @@ _histLastUpdate  = 0
 if _G._histUpdaterConn then pcall(function() _G._histUpdaterConn:Disconnect() end) end
 _G._histUpdaterConn = RunService.Heartbeat:Connect(function()
     -- Guard: solo correr si algun Silent Aim esta activo
-    if not KnifeSAState.enabled and not (CombatTabState and CombatTabState.silentAimEnabled) then return end
+    -- FIX v7: KnifeSAState puede ser nil si aun no fue inicializado
+    if not (KnifeSAState and KnifeSAState.enabled) and not (CombatTabState and CombatTabState.silentAimEnabled) then return end
     local now = tick()
     if now - _histLastUpdate < HIST_INTERVAL_HZ then return end
     _histLastUpdate = now
@@ -4726,7 +4748,7 @@ function CreateIconHome(parent) -- MAIN
     local door = Instance.new("Frame", body)
     door.Size = UDim2.new(0.35, 0, 0.5, 0)
     door.Position = UDim2.new(0.325, 0, 0.5, 0)
-    door.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
+    door.BackgroundColor3 = Color3.fromRGB( 22,  18,  12)
     door.BorderSizePixel = 0
     door.ZIndex = 4
     local dc = Instance.new("UICorner", door)
@@ -4880,7 +4902,7 @@ function CreateIconSword(parent) -- COMBAT
     local blade = Instance.new("Frame", base)
     blade.Size = UDim2.new(0.2, 0, 0.85, 0)
     blade.Position = UDim2.new(0.4, 0, 0, 0)
-    blade.BackgroundColor3 = Color3.fromRGB(200, 200, 220)
+    blade.BackgroundColor3 = Color3.fromRGB(220, 214, 200)
     blade.BorderSizePixel = 0
     blade.ZIndex = 3
     Instance.new("UICorner", blade).CornerRadius = UDim.new(0.5, 0)
@@ -4913,23 +4935,23 @@ local iconCreators = {
 local Themes = {
         ["Overdrive H Style"] = {
         Primary         = Color3.fromRGB(220, 220, 220), -- blanco gris (borde)
-        Secondary       = Color3.fromRGB(  3,   8,  18),    -- gris medio
+        Secondary       = Color3.fromRGB( 22,  18,  12),    -- gris medio
         Accent          = Color3.fromRGB(160, 160, 160), -- gris claro
-        Background      = Color3.fromRGB(  0,  25,  38),    -- negro puro
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),    -- gris muy oscuro
+        Background      = Color3.fromRGB( 10,   8,   6),    -- negro puro
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),    -- gris muy oscuro
         TextPrimary     = Color3.fromRGB(240, 240, 240), -- blanco
         TextSecondary   = Color3.fromRGB(170, 170, 170), -- gris claro
         Aurora1         = Color3.fromRGB(220, 220, 220), -- blanco gris
-        Aurora2         = Color3.fromRGB(  3,   8,  18),    -- gris medio
+        Aurora2         = Color3.fromRGB( 22,  18,  12),    -- gris medio
         Aurora3         = Color3.fromRGB(140, 140, 140), -- gris plateado
-        Aurora4         = Color3.fromRGB(80, 100, 200),    -- gris muy oscuro
+        Aurora4         = Color3.fromRGB(22, 18, 12),    -- gris muy oscuro
     },
     ["Amoled"] = {
         Primary         = Color3.fromRGB(117, 117, 117),
         Secondary       = Color3.fromRGB(81, 81, 81),
         Accent          = Color3.fromRGB(170, 170, 170),
         Background      = Color3.fromRGB(0, 0, 0),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(255, 255, 255),
         TextSecondary   = Color3.fromRGB(194, 194, 194),
         Aurora1         = Color3.fromRGB(117, 117, 117),
@@ -4941,8 +4963,8 @@ local Themes = {
         Primary         = Color3.fromRGB(200, 0, 40),
         Secondary       = Color3.fromRGB(140, 0, 20),
         Accent          = Color3.fromRGB(255,   0,  40),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(255, 200, 200),
         TextSecondary   = Color3.fromRGB(220, 140, 140),
         Aurora1         = Color3.fromRGB(200, 0, 40),
@@ -4951,15 +4973,15 @@ local Themes = {
         Aurora4         = Color3.fromRGB(100, 0, 15),
     },
     ["Dark"] = {
-        Primary         = Color3.fromRGB(  3,   8,  18),
+        Primary         = Color3.fromRGB( 22,  18,  12),
         Secondary       = Color3.fromRGB(50, 50, 50),
         Accent          = Color3.fromRGB(130, 130, 130),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(220, 220, 220),
         TextSecondary   = Color3.fromRGB(160, 160, 160),
         Aurora1         = Color3.fromRGB(60, 60, 60),
-        Aurora2         = Color3.fromRGB(  3,   8,  18),
+        Aurora2         = Color3.fromRGB( 22,  18,  12),
         Aurora3         = Color3.fromRGB(100, 100, 100),
         Aurora4         = Color3.fromRGB(50, 50, 50),
     },
@@ -4967,8 +4989,8 @@ local Themes = {
         Primary         = Color3.fromRGB(255, 100, 0),
         Secondary       = Color3.fromRGB(64, 64, 64),
         Accent          = Color3.fromRGB(200, 60, 0),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(220, 220, 220),
         TextSecondary   = Color3.fromRGB(64, 64, 64),
         Aurora1         = Color3.fromRGB(255, 100, 0),
@@ -4980,20 +5002,20 @@ local Themes = {
         Primary         = Color3.fromRGB(220, 30, 30),
         Secondary       = Color3.fromRGB(180, 80, 10),
         Accent          = Color3.fromRGB(57, 57, 57),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(255, 240, 200),
         TextSecondary   = Color3.fromRGB(180, 160, 255),
         Aurora1         = Color3.fromRGB(220, 30, 30),
         Aurora2         = Color3.fromRGB(180, 80, 10),
-        Aurora3         = Color3.fromRGB(  3,   8,  18),
+        Aurora3         = Color3.fromRGB( 22,  18,  12),
         Aurora4         = Color3.fromRGB(58, 58, 58),
     },
     ["Beach"] = {
         Primary         = Color3.fromRGB( 50, 255, 180),    -- Celeste Electrico
         Secondary       = Color3.fromRGB(200, 20, 100),    -- Azul Oceano
         Accent          = Color3.fromRGB(255, 200, 120),  -- Arena Dorada
-        Background      = Color3.fromRGB(  0,  25,  38),      -- Azul muy oscuro
+        Background      = Color3.fromRGB( 10,   8,   6),      -- Azul muy oscuro
         BackgroundLight = Color3.fromRGB(180, 40, 100),      -- Azul noche
         TextPrimary     = Color3.fromRGB(220, 245, 255),  -- Blanco celeste
         TextSecondary   = Color3.fromRGB(255, 200, 120),  -- Arena dorada
@@ -5006,8 +5028,8 @@ local Themes = {
         Primary         = Color3.fromRGB(20, 5, 45),
         Secondary       = Color3.fromRGB(64, 64, 64),
         Accent          = Color3.fromRGB(220, 50, 50),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(255, 255, 255),
         TextSecondary   = Color3.fromRGB(69, 69, 69),
         Aurora1         = Color3.fromRGB(20, 5, 45),
@@ -5019,10 +5041,10 @@ local Themes = {
         Primary         = Color3.fromRGB( 50, 255, 180),    -- Cyan brillante
         Secondary       = Color3.fromRGB(0, 140, 180),    -- Cyan medio
         Accent          = Color3.fromRGB(120, 255, 255),  -- Cyan claro
-        Background      = Color3.fromRGB(  0,  25,  38),      -- Negro azulado
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),      -- Gris azulado oscuro
+        Background      = Color3.fromRGB( 10,   8,   6),      -- Negro azulado
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),      -- Gris azulado oscuro
         TextPrimary     = Color3.fromRGB(220, 255, 255),  -- Blanco cyan
-        TextSecondary   = Color3.fromRGB(0, 200, 230),    -- Cyan suave
+        TextSecondary   = Color3.fromRGB(150, 240, 255),    -- Cyan suave (FIX v7: era ThemeColors.Primary — nil en este scope)
         Aurora1         = Color3.fromRGB( 50, 255, 180),    -- Cyan brillante
         Aurora2         = Color3.fromRGB(0, 140, 180),    -- Cyan medio
         Aurora3         = Color3.fromRGB(120, 255, 255),  -- Cyan claro
@@ -5032,20 +5054,20 @@ local Themes = {
         Primary         = Color3.fromRGB(92, 92, 92),
         Secondary       = Color3.fromRGB(53, 53, 53),
         Accent          = Color3.fromRGB(141, 141, 141),
-        Background      = Color3.fromRGB(  0,  25,  38),
+        Background      = Color3.fromRGB( 10,   8,   6),
         BackgroundLight = Color3.fromRGB(20, 20, 20),
         TextPrimary     = Color3.fromRGB(255, 255, 255),
         TextSecondary   = Color3.fromRGB(210, 85, 100),
         Aurora1         = Color3.fromRGB(92, 92, 92),
         Aurora2         = Color3.fromRGB(46, 46, 46),
         Aurora3         = Color3.fromRGB(159, 159, 159),
-        Aurora4         = Color3.fromRGB(80, 100, 200),
+        Aurora4         = Color3.fromRGB(22, 18, 12),
     },
     ["Neon Purple"] = {
         Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon principal
         Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro
         Accent          = Color3.fromRGB(210, 85, 100),  -- Lila claro
-        Background      = Color3.fromRGB(  0,  25,  38),       -- Negro violaceo
+        Background      = Color3.fromRGB( 10,   8,   6),       -- Negro violaceo
         BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado muy oscuro
         TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
         TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5058,8 +5080,8 @@ local Themes = {
         Primary         = Color3.fromRGB(55, 55, 55),
         Secondary       = Color3.fromRGB(200, 120, 0),
         Accent          = Color3.fromRGB(255, 230, 60),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(255, 245, 200),
         TextSecondary   = Color3.fromRGB(200, 170, 100),
         Aurora1         = Color3.fromRGB(55, 55, 55),
@@ -5071,7 +5093,7 @@ local Themes = {
         Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon
         Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro
         Accent          = Color3.fromRGB(210, 85, 100),  -- Lila neon
-        Background      = Color3.fromRGB(  0,  25,  38),         -- Negro azulado
+        Background      = Color3.fromRGB( 10,   8,   6),         -- Negro azulado
         BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado oscuro
         TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
         TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5084,8 +5106,8 @@ local Themes = {
         Primary         = Color3.fromRGB(80, 80, 85),       -- Gris medio
         Secondary       = Color3.fromRGB(55, 55, 60),       -- Gris oscuro
         Accent          = Color3.fromRGB(160, 160, 165),    -- Gris claro
-        Background      = Color3.fromRGB(  0,  25,  38),       -- Negro neutro
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),       -- Panel gris muy oscuro
+        Background      = Color3.fromRGB( 10,   8,   6),       -- Negro neutro
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),       -- Panel gris muy oscuro
         TextPrimary     = Color3.fromRGB(235, 235, 235),    -- Blanco
         TextSecondary   = Color3.fromRGB(170, 170, 170),    -- Gris claro
         Aurora1         = Color3.fromRGB(90, 90, 95),       -- Gris
@@ -5097,8 +5119,8 @@ local Themes = {
         Primary         = Color3.fromRGB(146, 146, 146),
         Secondary       = Color3.fromRGB(93, 93, 93),
         Accent          = Color3.fromRGB(187, 187, 187),
-        Background      = Color3.fromRGB(  0,  25,  38),
-        BackgroundLight = Color3.fromRGB(  3,   8,  18),
+        Background      = Color3.fromRGB( 10,   8,   6),
+        BackgroundLight = Color3.fromRGB( 22,  18,  12),
         TextPrimary     = Color3.fromRGB(255, 238, 195),
         TextSecondary   = Color3.fromRGB(176, 176, 176),
         Aurora1         = Color3.fromRGB(134, 134, 134),
@@ -5110,7 +5132,7 @@ local Themes = {
         Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon
         Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro
         Accent          = Color3.fromRGB(210, 85, 100),  -- Lila neon
-        Background      = Color3.fromRGB(  0,  25,  38),         -- Negro azulado
+        Background      = Color3.fromRGB( 10,   8,   6),         -- Negro azulado
         BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado oscuro
         TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
         TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5122,14 +5144,14 @@ local Themes = {
     -- -- TEMA MM2 TRADE -- Azul hielo + toggles rojo/verde ------------
     ["Mi Tema Oscuro"] = {
     Primary         = Color3.fromRGB(200, 200, 200), -- bordes gris claro (casi blanco)
-    Secondary       = Color3.fromRGB(  3,   8,  18),    -- fondo de sliders gris
+    Secondary       = Color3.fromRGB( 22,  18,  12),    -- fondo de sliders gris
     Accent          = Color3.fromRGB(120, 120, 120), -- acentos grises
     Background      = Color3.fromRGB(0, 0, 0),       -- fondo negro puro
-    BackgroundLight = Color3.fromRGB(  3,   8,  18),    -- paneles ligeramente mas claros
+    BackgroundLight = Color3.fromRGB( 22,  18,  12),    -- paneles ligeramente mas claros
     TextPrimary     = Color3.fromRGB(255, 255, 255), -- texto blanco
     TextSecondary   = Color3.fromRGB(180, 180, 180), -- texto gris
     Aurora1         = Color3.fromRGB(200, 200, 200),
-    Aurora2         = Color3.fromRGB(  3,   8,  18),
+    Aurora2         = Color3.fromRGB( 22,  18,  12),
     Aurora3         = Color3.fromRGB(120, 120, 120),
     Aurora4         = Color3.fromRGB(40, 40, 40),
 },
@@ -5151,7 +5173,7 @@ local Themes = {
     Primary         = Color3.fromRGB(210, 85, 100),   -- Morado neon principal
     Secondary       = Color3.fromRGB(255, 130, 190),   -- Morado oscuro (sliders fondo)
     Accent          = Color3.fromRGB(210, 85, 100),  -- Lila (acentos)
-    Background      = Color3.fromRGB(  0,  25,  38),       -- Negro violaceo (fondo hub)
+    Background      = Color3.fromRGB( 10,   8,   6),       -- Negro violaceo (fondo hub)
     BackgroundLight = Color3.fromRGB(20, 20, 20),      -- Morado oscuro (paneles internos)
     TextPrimary     = Color3.fromRGB(255, 255, 255),  -- blanco puro
     TextSecondary   = Color3.fromRGB(210, 85, 100),  -- Lila suave
@@ -5161,18 +5183,18 @@ local Themes = {
     Aurora4         = Color3.fromRGB(80, 10, 130),    -- Morado profundo
 },
     ["Neon Green"] = {
-    -- == BLUE HUB THEME ==
-    Primary         = Color3.fromRGB(  0, 150, 185),  -- azul borde brillante
-    Secondary       = Color3.fromRGB(  0,  52,  77),  -- azul filas/botones
-    Accent          = Color3.fromRGB(  0, 175, 205),  -- azul fill slider
-    Background      = Color3.fromRGB(  0,  25,  38),  -- azul oscuro profundo
-    BackgroundLight = Color3.fromRGB(  0,  64,  81),  -- azul fondo caja
-    TextPrimary     = Color3.fromRGB(225, 245, 250),  -- blanco azulado (texto)
-    TextSecondary   = Color3.fromRGB(  0, 180, 205),  -- azul claro titulo
-    Aurora1         = Color3.fromRGB(  0, 125, 155),  -- toggle ON azul
-    Aurora2         = Color3.fromRGB(  0, 205, 225),  -- knob ON azul intenso
-    Aurora3         = Color3.fromRGB(  0, 120, 155),  -- badge Deluxe azul claro
-    Aurora4         = Color3.fromRGB(  0,  40,  60),  -- knob OFF grisaceo-azul
+    -- == CINEMA DARK THEME ==
+    Primary         = Color3.fromRGB(200, 160,  80),  -- ambar dorado (bordes, highlights)
+    Secondary       = Color3.fromRGB( 28,  24,  20),  -- carbon oscuro (sliders, botones)
+    Accent          = Color3.fromRGB(220, 185, 100),  -- oro calido (acentos)
+    Background      = Color3.fromRGB( 10,   8,   6),  -- negro profundo (fondo principal)
+    BackgroundLight = Color3.fromRGB( 32,  28,  22),  -- gris carbon (paneles internos)
+    TextPrimary     = Color3.fromRGB(245, 238, 225),  -- blanco calido (texto principal)
+    TextSecondary   = Color3.fromRGB(180, 155, 100),  -- oro suave (subtitulos)
+    Aurora1         = Color3.fromRGB(190, 145,  65),  -- ambar (toggle ON)
+    Aurora2         = Color3.fromRGB(230, 195, 110),  -- oro brillante (knob ON)
+    Aurora3         = Color3.fromRGB(160, 125,  60),  -- bronce (badges)
+    Aurora4         = Color3.fromRGB( 22,  18,  12),  -- carbon ambar (knob OFF)
 },
 }
 
@@ -5180,17 +5202,18 @@ local Themes = {
 currentThemeName = "Neon Green"
 
 local ThemeColors = {
-    Primary         = Color3.fromRGB(  0, 150, 185),  -- teal vibrante principal
-    Secondary       = Color3.fromRGB(  0,  52,  77),  -- fondo secundario oscuro
-    Accent          = Color3.fromRGB(  0, 175, 205),  -- teal brillante acento
-    Background      = Color3.fromRGB(  0,  25,  38),  -- negro azulado profundo
-    BackgroundLight = Color3.fromRGB(  0,  64,  81),  -- azul fondo caja
-    TextPrimary     = Color3.fromRGB(225, 245, 250),  -- blanco verdoso (texto)
-    TextSecondary   = Color3.fromRGB(  0, 180, 205),  -- teal claro titulo
-    Aurora1         = Color3.fromRGB(  0, 125, 155),  -- toggle ON teal
-    Aurora2         = Color3.fromRGB(  0, 205, 225),  -- knob ON teal intenso
-    Aurora3         = Color3.fromRGB(  0, 120, 155),  -- badge purpura electrico
-    Aurora4         = Color3.fromRGB(  0,  40,  60),  -- knob OFF azul noche
+    -- == CINEMA DARK THEME (activo por defecto) ==
+    Primary         = Color3.fromRGB(200, 160,  80),  -- ambar dorado
+    Secondary       = Color3.fromRGB( 28,  24,  20),  -- carbon oscuro
+    Accent          = Color3.fromRGB(220, 185, 100),  -- oro calido
+    Background      = Color3.fromRGB( 10,   8,   6),  -- negro profundo
+    BackgroundLight = Color3.fromRGB( 32,  28,  22),  -- gris carbon
+    TextPrimary     = Color3.fromRGB(245, 238, 225),  -- blanco calido
+    TextSecondary   = Color3.fromRGB(180, 155, 100),  -- oro suave
+    Aurora1         = Color3.fromRGB(190, 145,  65),  -- ambar toggle ON
+    Aurora2         = Color3.fromRGB(230, 195, 110),  -- oro brillante knob ON
+    Aurora3         = Color3.fromRGB(160, 125,  60),  -- bronce badges
+    Aurora4         = Color3.fromRGB( 22,  18,  12),  -- carbon ambar knob OFF
 }
 
 ThemeObjects = {}
@@ -5369,6 +5392,68 @@ function ApplyTheme(themeName)
         if orb2 and orb2.Parent then TweenService:Create(orb2, ti, {BackgroundColor3 = newT.Aurora2}):Play() end
         if orb3 and orb3.Parent then TweenService:Create(orb3, ti, {BackgroundColor3 = newT.Aurora3}):Play() end
     end)
+
+    -- -- Actualizar toggles: pill ON color = Aurora1, knob ON = Aurora2 ----------
+    pcall(function()
+        if not (mainFrame and mainFrame.Parent) then return end
+        for _, obj in ipairs(mainFrame:GetDescendants()) do
+            pcall(function()
+                local n = obj.Name or ""
+                -- Toggle pill encendida
+                if n == "ToggleBackground" and obj:IsA("Frame") then
+                    local knob = obj:FindFirstChild("Knob")
+                    local isOn = knob and knob.Position.X.Scale > 0.4
+                    if isOn then
+                        TweenService:Create(obj, ti, {BackgroundColor3 = newT.Aurora1}):Play()
+                    end
+                end
+                -- Knob encendido
+                if n == "Knob" and obj:IsA("Frame") then
+                    if obj.Position.X.Scale > 0.4 then
+                        TweenService:Create(obj, ti, {BackgroundColor3 = newT.Aurora2}):Play()
+                    end
+                end
+                -- Slider trackFill
+                if n:lower():find("trackfill", 1, true) and obj:IsA("Frame") then
+                    TweenService:Create(obj, ti, {BackgroundColor3 = newT.Aurora1}):Play()
+                end
+                -- Slider thumb
+                if n:lower():find("thumb", 1, true) and obj:IsA("Frame") then
+                    TweenService:Create(obj, ti, {BackgroundColor3 = newT.Aurora2}):Play()
+                end
+            end)
+        end
+    end)
+
+    -- -- Actualizar bordes de tabs/selectores con color del hub ------------------
+    pcall(function()
+        if sideButtons then
+            for _, btnData in ipairs(sideButtons) do
+                if btnData and btnData.btn and btnData.btn.Parent then
+                    local stroke = btnData.btn:FindFirstChildOfClass("UIStroke")
+                    if stroke then TweenService:Create(stroke, ti, {Color = newT.Primary}):Play() end
+                end
+            end
+        end
+    end)
+
+    -- -- Actualizar dropdowns / selectores (UIStroke hijos directos) ------------
+    pcall(function()
+        if not (mainFrame and mainFrame.Parent) then return end
+        for _, obj in ipairs(mainFrame:GetDescendants()) do
+            pcall(function()
+                local n = (obj.Name or ""):lower()
+                if obj:IsA("UIStroke") then
+                    local pn = (obj.Parent and obj.Parent.Name or ""):lower()
+                    if pn:find("drop", 1, true) or pn:find("selector", 1, true)
+                        or pn:find("header", 1, true) or pn:find("trigger", 1, true) then
+                        TweenService:Create(obj, ti, {Color = newT.Primary}):Play()
+                    end
+                end
+            end)
+        end
+    end)
+
     -- Siempre restaurar el fondo de imagen del hub al final del tema
     pcall(function()
         local _bg = _G._hubBgMainImageRef
@@ -5625,9 +5710,9 @@ CombatTabState = {
     saPredPreset     = "Normal",  -- preset activo del selector
     hitboxEnabled      = false,
     hitboxSize         = 10,
-    hitboxColorR       = 0,      -- Celeste (R=0)
-    hitboxColorG       = 191,    -- Celeste (G=191)
-    hitboxColorB       = 255,    -- Celeste (B=255)
+    hitboxColorR       = 200,    -- Oro del hub (R=200)
+    hitboxColorG       = 160,    -- Oro del hub (G=160)
+    hitboxColorB       = 80,     -- Oro del hub (B=80)
     hitboxTransparency = 0.3,    -- Semi transparente para ver el cubo
     hitboxBorderR      = 255,    -- Bordes blancos
     hitboxBorderG      = 255,
@@ -5687,6 +5772,8 @@ _G._TK_ENABLED  = false
 _G._TK_RANGE    = 50
 _G._TK_mainConn = nil
 _G._TK_hbConns  = {}
+-- FIX v24: alias global para que _TK_ENABLED (sin _G) funcione igual en todo el script
+_TK_ENABLED = false
 
 -- Obtener KnifeThrown remote del knife en char o backpack
 function _TK_getEvents()
@@ -5958,7 +6045,7 @@ function _TK_monitor(knifeObj)
 end
 
 function _TK_stopAll()
-    _TK_ENABLED = false
+    _TK_ENABLED = false; _G._TK_ENABLED = false
     if _TK_mainConn then
         pcall(function() _TK_mainConn:Disconnect() end)
         _TK_mainConn = nil
@@ -5975,7 +6062,7 @@ end
 
 function _TK_startGlobal()
     _TK_stopAll()
-    _TK_ENABLED = true
+    _TK_ENABLED = true; _G._TK_ENABLED = true
 
     -- ChildAdded: ThrowingKnife (directo en workspace)
     -- Set anti-duplicado (evita que ChildAdded + DescendantAdded procesen el mismo knife)
@@ -6615,11 +6702,41 @@ function _KnifeSA_setupKnife(knife)
         return hum and hum:FindFirstChildOfClass("Animator")
     end
 
-    -- Obtiene el objeto Animation desde KnifeClient del knife actual
+    -- -- DESCUBRIMIENTO DE ANIMACIONES (logica del hub v2 docknight) ----
+    -- Recopila todos los objetos Animation del knife una sola vez:
+    --   1. carpeta "Animations" (estandar MM2)
+    --   2. hijos directos del Tool
+    --   3. barrido recursivo como ultimo recurso
+    -- Se usa SOLO como fallback: si el nombre esta en KnifeClient se
+    -- devuelve ese, asi la ruta de mobile queda exactamente igual.
+    local _animObjs     = nil   -- cache nombre -> Animation
+    local function _findAllAnims()
+        local found = {}
+        local animFolder = knife:FindFirstChild("Animations")
+        if animFolder then
+            for _, v in ipairs(animFolder:GetChildren()) do
+                if v:IsA("Animation") then found[v.Name] = v end
+            end
+        end
+        for _, v in ipairs(knife:GetChildren()) do
+            if v:IsA("Animation") and not found[v.Name] then found[v.Name] = v end
+        end
+        for _, v in ipairs(knife:GetDescendants()) do
+            if v:IsA("Animation") and not found[v.Name] then found[v.Name] = v end
+        end
+        return found
+    end
+
+    -- Obtiene el objeto Animation: KnifeClient primero, luego fallback docknight
     local function _getAnimObj(name)
         local kc = knife:FindFirstChild("KnifeClient")
-        if not kc then return nil end
-        return kc:FindFirstChild(name)
+        local direct = kc and kc:FindFirstChild(name)
+        if direct and direct:IsA("Animation") then return direct end
+        if _animObjs == nil then
+            local ok, res = pcall(_findAllAnims)
+            _animObjs = ok and res or {}
+        end
+        return _animObjs[name]
     end
 
     -- Carga o reutiliza un AnimationTrack
@@ -6662,14 +6779,38 @@ function _KnifeSA_setupKnife(knife)
     end
 
     local _slashAnimNames = {"SlashKnife", "Slash", "Stab", "Hit", "Animation1"}
-    local _throwAnimNames  = {"ThrowCharge", "ThrowKnife"}
+    -- Nombres de throw segun la estructura real de MM2 (lista de docknight).
+    -- ThrowCharge primero porque es el nombre real; Animation1 es SOLO slash.
+    local _throwAnimNames  = {"ThrowCharge", "ThrowKnife", "Throw", "Animation2"}
 
     -- Exponer sistema al estado global
     KnifeSAState._animTracks = _animTracks
 
+    -- Logica de docknight: probar los nombres de throw en orden y, si el
+    -- knife no tiene ninguno, caer en cualquier animacion que NO sea de slash.
+    -- Antes solo intentaba "ThrowCharge": si el knife la llamaba distinto no
+    -- se reproducia nada y el throw esperaba 0.5s de gusto.
     KnifeSAState._playThrowAnim = function()
-        local track = _playKnifeAnim("ThrowCharge")
-        KnifeSAState._lastThrowTrackName = track and "ThrowCharge" or nil
+        local slashSet = {SlashKnife=true, Slash=true, Stab=true, Hit=true, Animation1=true}
+        for _, name in ipairs(_throwAnimNames) do
+            if _playKnifeAnim(name) then
+                KnifeSAState._lastThrowTrackName = name
+                return
+            end
+        end
+        if _animObjs == nil then
+            local ok, res = pcall(_findAllAnims)
+            _animObjs = ok and res or {}
+        end
+        for name in pairs(_animObjs) do
+            if not slashSet[name] then
+                if _playKnifeAnim(name) then
+                    KnifeSAState._lastThrowTrackName = name
+                    return
+                end
+            end
+        end
+        KnifeSAState._lastThrowTrackName = nil
     end
 
     KnifeSAState._playThrowHoldAnim = function()
@@ -6778,11 +6919,22 @@ function _KnifeSA_setupKnife(knife)
     end
     pcall(_hookAnimatorBlock)
 
-    -- Precargar ThrowCharge y ThrowKnife al equipar
-    task.spawn(function()
-        task.wait(0.3)
+    -- Precarga (docknight): ademas de ThrowCharge/ThrowKnife, precargar
+    -- todo lo que se encuentre en el knife para que el PRIMER throw en PC
+    -- no tenga el hipo de LoadAnimation.
+    local function _preloadTracks()
         _loadTrack("ThrowCharge")
         _loadTrack("ThrowKnife")
+        if _animObjs == nil then
+            local ok, res = pcall(_findAllAnims)
+            _animObjs = ok and res or {}
+        end
+        for name in pairs(_animObjs) do _loadTrack(name) end
+    end
+
+    task.spawn(function()
+        task.wait(0.3)
+        pcall(_preloadTracks)
     end)
 
     -- _playSlashAnim se define abajo y se expone via KnifeSAState
@@ -6796,10 +6948,10 @@ function _KnifeSA_setupKnife(knife)
             local pct = math.max(0.1, (KnifeSAState.fastSlashSpeed or 5) / 10)
             animSpeed = pct
         end
-        -- Buscar animacion de slash en KnifeClient
-        local kc = knife:FindFirstChild("KnifeClient")
+        -- Buscar animacion de slash: KnifeClient y, si no esta, el
+        -- descubrimiento amplio de docknight (_getAnimObj ya hace las dos).
         for _, name in ipairs(_slashAnimNames) do
-            local animObj = kc and kc:FindFirstChild(name)
+            local animObj = _getAnimObj(name)
             if animObj then
                 local track = _loadTrack(name)
                 if track then
@@ -6818,13 +6970,14 @@ function _KnifeSA_setupKnife(knife)
         for _, part in ipairs(knife:GetDescendants()) do
             if part:IsA("BasePart") then pcall(function() part.CanCollide = false end) end
         end
-        -- Al equipar: invalidar cache y recargar ThrowCharge/ThrowKnife
+        -- Al equipar: invalidar cache de tracks Y de objetos Animation
+        -- (el knife puede ser otro modelo tras cambiar skin o respawn)
         _animTracks = {}
+        _animObjs   = nil
         KnifeSAState._animTracks = _animTracks
         task.spawn(function()
             task.wait(0.3)
-            _loadTrack("ThrowCharge")
-            _loadTrack("ThrowKnife")
+            pcall(_preloadTracks)
         end)
         KnifeSAState._lastEquipTime = os.clock()
     end))
@@ -6853,19 +7006,22 @@ function _KnifeSA_setupKnife(knife)
     end)
     addConn(knifeNoCollideConn)
 
-    -- -- THROW (RMB) ? click derecho lanza el knife ----------------------------
-    -- ARREGLADO: El lanzamiento ahora es con RMB (MouseButton2), no LMB
+    -- -- THROW (LMB) -- click izquierdo lanza el knife --------------------------
+    -- v57 SOLO PC: el lanzamiento pasa a LMB (MouseButton1); antes era RMB.
+    -- El slash se fue a RMB (ver el bloque STAB mas abajo). La rama de Touch
+    -- (celu) no cambia en nada: sigue siendo tap = slash y su propio boton
+    -- de throw.
     -- FIX BUG #2 MOBILE SLASH: Touch is intentionally EXCLUDED here.
     -- On mobile a tap fires as Touch; if Touch were included it would trigger
     -- the KnifeSA throw instead of the native slash animation. Mobile throw is
-    -- handled separately via the KnifeThrown remote. Desktop (MouseButton2) is unaffected.
-    local rmbThrowTime = -999
+    -- handled separately via the KnifeThrown remote. Desktop (MouseButton1) is unaffected.
+    local lmbThrowTime = -999
     addConn(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not equipped then return end
-        -- MOBILE FIX: only MouseButton2 triggers SA throw; Touch is handled by stab/slash path
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        -- MOBILE FIX: only MouseButton1 triggers SA throw; Touch is handled by stab/slash path
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
             if not KnifeSAState.enabled then return end  -- FIX: salir si SA fue desactivado
-            rmbThrowTime = os.clock()
+            lmbThrowTime = os.clock()
             
             -- EJECUTAR THROW CON RMB
             local effectiveCooldown = cooldown
@@ -6898,7 +7054,53 @@ function _KnifeSA_setupKnife(knife)
                     end
                 end)
 
-                task.spawn(_playThrowAnim)
+                -- FIX PC: antes se spawneaba la version GLOBAL de la anim de
+                -- throw, que es nil -> task.spawn(nil) tiraba error y mataba este hilo,
+                -- asi que el knife NUNCA se lanzaba. Se llama a la funcion
+                -- real (KnifeSAState._playThrowAnim) y con pcall por si falta.
+                -- v57 SOLO PC: limpiar animaciones viejas ANTES de la carga.
+                -- Si quedo un ThrowCharge / ThrowHold / Slash colgado de un
+                -- click anterior, el track nuevo arranca mezclado y el viejo
+                -- nunca dispara su .Stopped, asi que el hilo se comia el
+                -- maxWait entero antes de lanzar. Solo toca tracks de knife y
+                -- solo en esta rama de MouseButton1: mobile no pasa por aca.
+                pcall(function()
+                    if KnifeSAState._releaseThrowHoldAnim then
+                        KnifeSAState._releaseThrowHoldAnim()
+                    end
+                end)
+                pcall(function()
+                    local _animatorPC = _getAnimator()
+                    if not _animatorPC then return end
+                    for _, t in ipairs(_animatorPC:GetPlayingAnimationTracks()) do
+                        local n = (t.Name or ""):lower()
+                        if n:find("throw") or n:find("charge") or n:find("hold")
+                        or n:find("slash") or n:find("stab") or n:find("knife") then
+                            pcall(function() t.Looped = false end)
+                            pcall(function() t:Stop(0) end)
+                        end
+                    end
+                end)
+                KnifeSAState._lastThrowHoldTrackName = nil
+
+                -- v57 SOLO PC: la carga tiene que ser ThrowCharge, por nombre.
+                -- _playThrowAnim recorre _throwAnimNames y si ThrowCharge no
+                -- carga se queda con ThrowKnife de "carga", que es justo la
+                -- animacion que va DESPUES. Se intenta ThrowCharge primero y
+                -- solo si no existe se cae al barrido de siempre (docknight).
+                task.spawn(function()
+                    local _okCharge = false
+                    pcall(function()
+                        if _playKnifeAnim("ThrowCharge") then
+                            KnifeSAState._lastThrowTrackName = "ThrowCharge"
+                            _okCharge = true
+                        end
+                    end)
+                    if not _okCharge then
+                        local f = KnifeSAState._playThrowAnim
+                        if f then pcall(f) end
+                    end
+                end)
 
                 -- Esperar que la animacion ThrowCharge TERMINE completamente antes de lanzar
                 local animFinished = false
@@ -6908,23 +7110,40 @@ function _KnifeSA_setupKnife(knife)
                     local animator = _getAnimator()
                     if not animator then return end
                     task.wait(0.016)
-                    for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                        local n = t.Name:lower()
-                        -- FIX: buscar especificamente ThrowCharge, no "throw" o "knife" generico
-                        -- para no matchear ThrowKnife o ThrowHold que se carguen en paralelo.
-                        if n == "throwcharge" or n == "throw_charge" or n == "charge" then
-                            local conn_anim
-                            conn_anim = t.Stopped:Connect(function()
-                                animFinished = true
-                                if conn_anim then conn_anim:Disconnect() end
-                            end)
-                            local len = t.Length
-                            if len and len > 0.05 then
-                                maxWait = len + 0.05
-                            end
-                            break
+                    -- Engancharse al track de carga. Pasada 1: nombre exacto
+                    -- (fix Zerqon, evita matchear ThrowKnife / ThrowHold).
+                    -- Pasada 2 (logica docknight): matcheo amplio, para knifes
+                    -- cuya animacion de carga se llama distinto. Solo corre si
+                    -- la pasada exacta no encontro nada, asi no cambia el caso
+                    -- normal. Ruta PC (MouseButton1, v57) unicamente.
+                    local _tracks = animator:GetPlayingAnimationTracks()
+                    local _hook = function(t)
+                        local conn_anim
+                        conn_anim = t.Stopped:Connect(function()
+                            animFinished = true
+                            if conn_anim then conn_anim:Disconnect() end
+                        end)
+                        local len = t.Length
+                        if len and len > 0.05 then
+                            maxWait = len + 0.05
                         end
                     end
+                    local _found = nil
+                    for _, t in ipairs(_tracks) do
+                        local n = (t.Name or ""):lower()
+                        if n == "throwcharge" or n == "throw_charge" or n == "charge" then
+                            _found = t; break
+                        end
+                    end
+                    if not _found then
+                        for _, t in ipairs(_tracks) do
+                            local n = (t.Name or ""):lower()
+                            if n:find("throw") or n:find("charge") or n:find("knife") then
+                                _found = t; break
+                            end
+                        end
+                    end
+                    if _found then _hook(_found) end
                 end)
 
                 local t0 = os.clock()
@@ -6932,12 +7151,24 @@ function _KnifeSA_setupKnife(knife)
                     task.wait()
                 end
 
-                -- ThrowHold: reproducir entre ThrowCharge y ThrowKnife.
-                -- _waitThrowHold ya NO reproduce ThrowCharge de nuevo (fix aplicado).
-                -- Solo reproduce ThrowHold (si existe) y luego ThrowKnife.
-                if KnifeSAState._waitThrowHold then
-                    pcall(KnifeSAState._waitThrowHold)
-                end
+                -- v57 SOLO PC: la secuencia pedida es ThrowCharge -> ThrowKnife
+                -- y nada mas. Antes se llamaba _waitThrowHold, que mete
+                -- ThrowHold en el medio y espera su Length: el knife salia
+                -- tarde y el brazo se quedaba en pose de carga. Mobile SIGUE
+                -- usando _waitThrowHold (su boton lo necesita para sostener el
+                -- brazo mientras el dedo esta apoyado), por eso el cambio vive
+                -- solo en esta rama.
+                pcall(function()
+                    if KnifeSAState._releaseThrowHoldAnim then
+                        KnifeSAState._releaseThrowHoldAnim()
+                    end
+                end)
+                pcall(function()
+                    if KnifeSAState._playThrowKnifeAnim then
+                        KnifeSAState._playThrowKnifeAnim()
+                    end
+                end)
+                task.wait(0.03)
             else
                 -- Instant Throw: matar cualquier animacion de throw en curso ahora mismo
                 pcall(function()
@@ -7070,10 +7301,13 @@ function _KnifeSA_setupKnife(knife)
     -- ================================================================
     -- MOBILE TOUCH THROW v19 - HOOK DENTRO DEL SCOPE DE setupKnife
     --
-    -- Reutiliza EXACTAMENTE el mismo codigo del RMB (que ya funciona):
+    -- Reutiliza EXACTAMENTE el mismo codigo del throw de PC (que ya funciona):
     -- mismas variables locales (lastThrow, cooldown, knifeThrown, etc.)
     -- mismo calculo de targetCFrame/handleCF, mismas animaciones.
-    -- La unica diferencia: se dispara por TouchTapInWorld en vez de RMB.
+    -- Diferencias: se dispara por TouchTapInWorld en vez de por el click, y
+    -- esta rama SI usa _waitThrowHold (ThrowHold entre ThrowCharge y
+    -- ThrowKnife) porque el boton de celu sostiene el brazo mientras el dedo
+    -- esta apoyado. En PC eso se saco en v57.
     --
     -- El bloque v18 (_runThrowSequence + _ttwConn de afuera) se mantiene
     -- pero esta version tiene prioridad porque esta dentro del closure
@@ -7129,8 +7363,15 @@ function _KnifeSA_setupKnife(knife)
                     end
                 end)
 
-                -- ThrowCharge: misma logica que RMB
-                task.spawn(_playThrowAnim)
+                -- ThrowCharge: misma logica que RMB.
+                -- FIX CELU: aca se spawneaba la version GLOBAL de la anim de
+                -- throw, que es nil -> se tiraba error y moria este hilo antes
+                -- del FireServer, o sea el knife no se lanzaba nunca. Ahora se
+                -- llama a la funcion real de KnifeSAState, con pcall por si falta.
+                task.spawn(function()
+                    local fThrow = KnifeSAState._playThrowAnim
+                    if fThrow then pcall(fThrow) end
+                end)
 
                 local animFinished = false
                 local maxWait      = 0.5
@@ -7258,18 +7499,21 @@ function _KnifeSA_setupKnife(knife)
         end) -- end task.spawn touch throw
     end))
 
-    -- -- STAB (LMB) ? click izquierdo = golpe cuerpo a cuerpo -------
-    -- ARREGLADO: Ahora es LMB (MouseButton1) para pegar, Touch en mobile
-    local lmbStabTime = -999
+    -- -- STAB (RMB) -- click derecho = golpe cuerpo a cuerpo -------
+    -- v57 SOLO PC: pegar pasa a RMB (MouseButton2); antes era LMB, que ahora
+    -- lanza. Touch queda EXACTAMENTE igual que antes (tap = slash en celu):
+    -- lo unico que cambio de su lado es el nombre de la variable, porque el
+    -- temporizador lo comparten las dos ramas.
+    local stabPressTime = -999
     addConn(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not equipped then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1
+        if input.UserInputType == Enum.UserInputType.MouseButton2
         or input.UserInputType == Enum.UserInputType.Touch then
-            lmbStabTime = os.clock()
+            stabPressTime = os.clock()
         end
     end))
 
-    -- Helper compartido para ejecutar el slash (desktop LMB y mobile Touch)
+    -- Helper compartido para ejecutar el slash (desktop RMB y mobile Touch)
     local function _doSlash()
         if not equipped or stabbing then return end
         local stabCooldown = 0.85
@@ -7278,7 +7522,7 @@ function _KnifeSA_setupKnife(knife)
         end
         if os.clock() - lastStab  < stabCooldown then return end
         if os.clock() - lastThrow < 0.3          then return end
-        -- FIX MOBILE: lastThrow solo se actualiza por RMB (desktop).
+        -- FIX MOBILE: lastThrow solo se actualiza por LMB (desktop, v57).
         -- En mobile el throw pasa por _ksaFireKnife que no toca lastThrow.
         -- Usar KnifeSAState._lastMobileThrowTime para bloquear slash post-throw mobile.
         if KnifeSAState._lastMobileThrowTime and (os.clock() - KnifeSAState._lastMobileThrowTime) < 1.0 then return end
@@ -7293,16 +7537,16 @@ function _KnifeSA_setupKnife(knife)
 
     addConn(UserInputService.InputEnded:Connect(function(input)
         if not equipped or stabbing then return end
-        -- Desktop: MouseButton1
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            if os.clock() - lmbStabTime > 0.5 then return end
+        -- Desktop: MouseButton2 (v57)
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then
+            if os.clock() - stabPressTime > 0.5 then return end
             task.spawn(_doSlash)
             return
         end
         -- Mobile: Touch (tap rapido = slash, sin drag)
         if input.UserInputType == Enum.UserInputType.Touch then
             -- Solo si el toque fue corto (menos de 0.4s = tap, no drag)
-            if os.clock() - lmbStabTime > 0.4 then return end
+            if os.clock() - stabPressTime > 0.4 then return end
             -- No reproducir slash si KnifeSA esta lanzando (evita conflicto con throw)
             if KnifeSAState.enabled then return end
             -- FIX MOBILE v6: bloquear slash si el boton Throw esta en secuencia
@@ -7498,19 +7742,19 @@ end)
 -- == KNIFE SA FOV OVERLAY (brujula / compass visual) v1
 -- Muestra un circulo tipo brujula centrado en el personaje del
 -- jugador mientras Knife Silent Aim esta activo.
--- COLOR: VERDE  = target dentro del cono (buen angulo, tirar!)
+-- COLOR: ORO CLARO = target dentro del cono (buen angulo, tirar!)
 --        AMARILLO = target en rango pero angulo medio
---        ROJO   = target fuera del cono o muy lejos
+--        BRONCE    = target fuera del cono o muy lejos
 -- ================================================================
 do
     local _ksaGui  = nil   -- ScreenGui del overlay
     local _ksaRefs = {}   -- referencias a frames/labels del overlay (no se pueden poner en ScreenGui)
 
     -- Colores
-    local COL_READY  = Color3.fromRGB(0,  230, 80)    -- verde  (tira!)
+    local COL_READY  = Color3.fromRGB(230,  157,  0)    -- claro  (tira!)
     local COL_WARN   = Color3.fromRGB(255, 210, 0)    -- amarillo (casi)
-    local COL_BAD    = Color3.fromRGB(220, 50,  50)   -- rojo (no conviene)
-    local COL_RING   = Color3.fromRGB(0,  200, 255)   -- azul neon (anillo)
+    local COL_BAD    = Color3.fromRGB(220,166,  50)   -- bronce (no conviene)
+    local COL_RING   = Color3.fromRGB(255,  174,   0)   -- ambar hub (anillo)
 
     -- Angulos del cono (igual que la imagen: +-25 grados = 50 deg total)
     local CONE_HALF_DEG = 25   -- grados a cada lado del centro
@@ -7805,7 +8049,7 @@ do
             local color, statusText, ringCol
 
             if absAngle <= CONE_HALF_DEG then
-                -- Dentro del cono = VERDE = buena punteria!
+                -- Dentro del cono = ORO CLARO = buena punteria!
                 color      = COL_READY
                 statusText = string.format("? TIRAR! %.1f? / %.0f studs", absAngle, dist)
                 ringCol    = COL_READY
@@ -7815,7 +8059,7 @@ do
                 statusText = string.format("? Casi... %.1f? / %.0f studs", absAngle, dist)
                 ringCol    = COL_WARN
             else
-                -- Muy desviado = ROJO = no conviene
+                -- Muy desviado = BRONCE = no conviene
                 color      = COL_BAD
                 statusText = string.format("? No tirar %.1f? / %.0f studs", absAngle, dist)
                 ringCol    = COL_RING
@@ -7906,9 +8150,9 @@ do
         { "RightLowerLeg","RightFoot"    },
     }
 
-    local COL_BL_BODY  = Color3.fromRGB(0, 200, 255)   -- azul neon (igual que el anillo)
-    local COL_BL_READY = Color3.fromRGB(0, 230, 80)    -- verde cuando target en cono
-    local COL_BL_BAD   = Color3.fromRGB(220, 50, 50)   -- rojo sin target
+    local COL_BL_BODY  = Color3.fromRGB(255, 174,   0)   -- ambar hub (igual que el anillo)
+    local COL_BL_READY = Color3.fromRGB(230, 157,  0)    -- claro cuando target en cono
+    local COL_BL_BAD   = Color3.fromRGB(220,166, 50)   -- bronce sin target
 
     local function _blCreateLines()
         _blLines = {}
@@ -7954,7 +8198,7 @@ do
             local target = _KnifeSA_getBestTarget and _KnifeSA_getBestTarget()
             local lineColor = target and COL_BL_BODY or COL_BL_BAD
 
-            -- Si hay target, calcular si esta en el cono para color verde
+            -- Si hay target, calcular si esta en el cono para el color de listo
             if target and target.Character then
                 local myHRP = myChar:FindFirstChild("HumanoidRootPart")
                 local tHRP  = target.Character:FindFirstChild("HumanoidRootPart")
@@ -9092,7 +9336,7 @@ function GetRoleColor(role)
     if role == "Assassin"  then return Color3.fromRGB(255, 210,   0)  end  -- Dorado-naranja
     if role == "Zombie"    then return Color3.fromRGB( 40, 255,  40)  end  -- Verde zombie
     if role == "Survivor"  then return Color3.fromRGB(255, 255, 255) end  -- Blanco
-    if role == "Innocent"  then return Color3.fromRGB(  0, 255, 160) end  -- Morado
+    if role == "Innocent"  then return Color3.fromRGB(  0, 255,  70) end  -- Morado
     return Color3.fromRGB(200, 200, 200)
 end
 
@@ -9473,7 +9717,7 @@ end
 
 function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
     -- ======================================================
-    -- NUEVO DISENO: boton cuadrado redondeado, borde rojo
+    -- NUEVO DISENO: boton cuadrado redondeado, borde ambar
     -- animado, colores Soft Gray del hub, feedback visual
     -- ======================================================
     local BTN_W = 76  -- se sobreescribe abajo, se mantiene para calculos de posicion
@@ -9591,8 +9835,8 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
 
     local borderStroke = Instance.new("UIStroke", borderFrame)
     borderStroke.Color           = ThemeColors.Aurora1
-    borderStroke.Thickness       = 0
-    borderStroke.Transparency    = 1
+    borderStroke.Thickness       = 3.5   -- FIX v32: visible para que la animacion de colores funcione
+    borderStroke.Transparency    = 0     -- FIX v32: opaco para ver el ciclo de colores
     borderStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
     -- Dummy para compatibilidad (no usado en hover/click ahora)
@@ -9656,29 +9900,31 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
         end
     end
 
-    -- -- GLOW de fondo mejorado (dos capas con pulso + rotacion de color) --
+    -- -- GLOW de fondo (solo visible en hover/pulse, sin cuadrado oscuro de fondo) --
     local glowImg = Instance.new("ImageLabel", bg)
     glowImg.Name                   = "GlowPulse"
     glowImg.AnchorPoint            = Vector2.new(0.5, 0.5)
     glowImg.Position               = UDim2.fromScale(0.5, 0.5)
     glowImg.Size                   = UDim2.fromOffset(BTN_W, BTN_H)
     glowImg.BackgroundTransparency = 1
-    glowImg.Image                  = "rbxassetid://118930676204472"
+    glowImg.Image                  = "rbxassetid://5060523656"  -- FIX v33: glow suave (no cuadrado oscuro)
     glowImg.ImageColor3            = ThemeColors.Aurora1
-    glowImg.ImageTransparency      = 0.10
+    glowImg.ImageTransparency      = 1   -- FIX v33: empieza invisible (el pulso lo anima)
     glowImg.ScaleType              = Enum.ScaleType.Fit
     glowImg.ZIndex                 = 198
+    -- FIX v32: glowOuter eliminado (era el elemento grande que aparecia debajo del icono)
     local glowOuter = Instance.new("ImageLabel", bg)
     glowOuter.Name                   = "GlowOuter"
     glowOuter.AnchorPoint            = Vector2.new(0.5, 0.5)
     glowOuter.Position               = UDim2.fromScale(0.5, 0.5)
-    glowOuter.Size                   = UDim2.fromOffset(BTN_W * 1.3, BTN_H * 1.3)
+    glowOuter.Size                   = UDim2.fromOffset(0, 0)
     glowOuter.BackgroundTransparency = 1
     glowOuter.Image                  = "rbxassetid://118930676204472"
     glowOuter.ImageColor3            = ThemeColors.Primary
-    glowOuter.ImageTransparency      = 0.72
+    glowOuter.ImageTransparency      = 1   -- completamente invisible
     glowOuter.ScaleType              = Enum.ScaleType.Fit
     glowOuter.ZIndex                 = 197
+    glowOuter.Visible                = false  -- eliminado visualmente
 
     -- -- ANIMACION DE ENTRADA ------------------------------
     task.spawn(function()
@@ -9740,19 +9986,12 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
             borderStroke.Color  = _col
             glowImg.ImageColor3 = _col
         end)
-        -- Pulso de escala y transparencia del glow
+        -- Pulso de escala y transparencia del glow (FIX v33: rango 0.55-0.75 para glow suave sin cuadrado)
         pcall(function()
             local _p   = math.sin(_animTick * _GLOW_SPEED * math.pi * 2) * 0.5 + 0.5
-            glowImg.Size              = UDim2.fromOffset(BTN_W*(0.95+_p*0.10), BTN_H*(0.95+_p*0.10))
-            glowImg.ImageTransparency = 0.05 + _p * 0.15
-            local _po  = math.sin(_animTick * _GLOW_SPEED * 0.5 * math.pi * 2 + math.pi) * 0.5 + 0.5
-            glowOuter.Size              = UDim2.fromOffset(BTN_W*(1.25+_po*0.15), BTN_H*(1.25+_po*0.15))
-            local _co  = ((_animTick + _BORDER_SPEED*0.5) % _BORDER_SPEED) / _BORDER_SPEED
-            local _foi = _co * _nHC
-            local _oA  = math.floor(_foi) % _nHC + 1
-            local _oB  = _oA % _nHC + 1
-            glowOuter.ImageColor3       = _lerpC(_HUB_COLS[_oA], _HUB_COLS[_oB], _foi - math.floor(_foi))
-            glowOuter.ImageTransparency = 0.80 + _po * 0.15
+            glowImg.Size              = UDim2.fromOffset(BTN_W*(1.0+_p*0.15), BTN_H*(1.0+_p*0.15))
+            glowImg.ImageTransparency = 0.55 + _p * 0.20  -- FIX v33: glow suave (no oscuro)
+            -- FIX v32: glowOuter eliminado, no se anima
         end)
     end)
 
@@ -9822,16 +10061,15 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
     local _C_TEXT_IDLE  = Color3.fromRGB(255, 255, 255)
     local _C_TEXT_WHITE = Color3.fromRGB(255, 255, 255)
 
-    -- Hover: fondo sutilmente visible + glow mas intenso
+    -- FIX v33: Hover - glow suave sin cuadrado oscuro
     fill.MouseEnter:Connect(function()
-        TweenService:Create(glowImg,   TweenInfo.new(0.12), {ImageTransparency=0.00, Size=UDim2.fromOffset(BTN_W*1.1, BTN_H*1.1)}):Play()
-        TweenService:Create(glowOuter, TweenInfo.new(0.12), {ImageTransparency=0.50}):Play()
+        TweenService:Create(glowImg, TweenInfo.new(0.12), {ImageTransparency=0.35, Size=UDim2.fromOffset(BTN_W*1.2, BTN_H*1.2)}):Play()
     end)
     fill.MouseLeave:Connect(function()
-        -- glow vuelve a ser controlado por Heartbeat (no forzar valor, simplemente dejarlo)
+        -- glow vuelve a ser controlado por Heartbeat
     end)
 
-    -- -- CLICK (press = fondo aparece + scale down, release = vuelve) --
+    -- -- CLICK (press = scale down, release = vuelve) --
     local _capyIsActive = false
     local _lastActivatedTick = 0
     local function _doActivate()
@@ -9844,7 +10082,7 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
     fill.MouseButton1Down:Connect(function()
         if _moved then return end
         TweenService:Create(_bindUiScale, TweenInfo.new(0.07), {Scale=0.88}):Play()
-        TweenService:Create(glowImg,      TweenInfo.new(0.07), {ImageTransparency=0.00}):Play()
+        TweenService:Create(glowImg,      TweenInfo.new(0.07), {ImageTransparency=0.30}):Play()
     end)
     fill.MouseButton1Up:Connect(function()
         if _moved then return end
@@ -9855,14 +10093,13 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
         _doActivate()
     end)
 
-    -- -- SetActiveState (toggle ON = fondo visible, OFF = transparente) --
+    -- -- SetActiveState (toggle ON = glow mas brillante, OFF = suave) --
     local function _setActive(on)
         _capyIsActive = on
-        -- sin cuadrado: el estado activo se refleja en el brillo del glow
         if on then
-            TweenService:Create(glowImg, TweenInfo.new(0.18), {ImageTransparency=0.00}):Play()
+            TweenService:Create(glowImg, TweenInfo.new(0.18), {ImageTransparency=0.40}):Play()
         else
-            TweenService:Create(glowImg, TweenInfo.new(0.18), {ImageTransparency=0.10}):Play()
+            TweenService:Create(glowImg, TweenInfo.new(0.18), {ImageTransparency=0.65}):Play()
         end
     end
     fill.SetActiveState  = function(self, on) _setActive(on) end
@@ -9977,7 +10214,7 @@ end
 function AddBindableShapeSelector(parent, getBindFrame)
     -- FIX: usar _currentMainSectionFrame para quedar DENTRO de la seccion activa
     local _realParent = _currentMainSectionFrame or parent
-    CreateNebulaSelector(_realParent, "Forma del bindable", _BIND_SHAPES, _BIND_SHAPES[1], function(selected)
+    CreateZerqonSelector(_realParent, "Forma del bindable", _BIND_SHAPES, _BIND_SHAPES[1], function(selected)
         for i, s in ipairs(_BIND_SHAPES) do
             if s == selected then
                 local shapeKey = _BIND_SHAPE_KEYS[i]
@@ -10810,7 +11047,7 @@ function updateBindables()
 
 end
 
-function CreateNebulaSelector(parent, titulo, opciones, default, callback)
+function CreateZerqonSelector(parent, titulo, opciones, default, callback)
     -- ==============================================================
     --  SELECTOR v8 -- colores del hub (ThemeColors) + dropdown
     --  animado con apertura/cierre LENTO (Quint 0.55s)
@@ -10831,10 +11068,10 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     -- SELECTOR REDISE?ADO: glassmorphism ultra-transparente, estilo USE
     -- Cabecera: una sola fila horizontal con titulo + bot?n selector a la derecha
     local masterFrame = Instance.new("Frame", parent)
-    masterFrame.Name             = "NebulaSelector_" .. titulo
+    masterFrame.Name             = "ZerqonSelector_" .. titulo
     masterFrame.Size             = UDim2.new(1, 0, 0, HEADER_H)
     masterFrame.AutomaticSize    = Enum.AutomaticSize.None
-    masterFrame.BackgroundColor3 = Color3.fromRGB(3, 10, 22)
+    masterFrame.BackgroundColor3 = Color3.fromRGB(22, 16,  3)
     masterFrame.BackgroundTransparency = 0.45   -- muy transparente de base
     masterFrame.BorderSizePixel  = 0
     masterFrame.ClipsDescendants = false
@@ -10842,25 +11079,25 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     -- Esquinas poco redondeadas, aspecto rectangular (estilo USE)
     local mCorner = Instance.new("UICorner", masterFrame)
     mCorner.CornerRadius = UDim.new(0, 6)
-    -- Borde cian fino brillante
+    -- Borde del hub: usa ThemeColors.Primary con gradiente Accent->Primary
     local mStroke = Instance.new("UIStroke", masterFrame)
-    mStroke.Color           = Color3.fromRGB(0, 210, 240)
+    mStroke.Color           = ThemeColors.Primary
     mStroke.Thickness       = 1.6
     mStroke.Transparency    = 0.20
     mStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local _mStrokeGrad = Instance.new("UIGradient", mStroke)
     _mStrokeGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 220, 255)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 160, 200)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 220, 255)),
+        ColorSequenceKeypoint.new(0,   ThemeColors.Accent),
+        ColorSequenceKeypoint.new(0.5, ThemeColors.Primary),
+        ColorSequenceKeypoint.new(1,   ThemeColors.Accent),
     })
     _mStrokeGrad.Rotation = 90
-    -- Gradiente de fondo sutil
+    -- Gradiente de fondo sutil usando Background del hub
     local _mBgGrad = Instance.new("UIGradient", masterFrame)
     _mBgGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(6, 18, 40)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(3,  10, 24)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(6, 18, 40)),
+        ColorSequenceKeypoint.new(0,   ThemeColors.BackgroundLight),
+        ColorSequenceKeypoint.new(0.5, ThemeColors.Background),
+        ColorSequenceKeypoint.new(1,   ThemeColors.BackgroundLight),
     })
     _mBgGrad.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0,   0.55),
@@ -10869,13 +11106,13 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     })
     _mBgGrad.Rotation = 90
 
-    -- Titulo (izquierda)
+    -- Titulo (izquierda) — color TextPrimary del hub
     local titleLabel = Instance.new("TextLabel", masterFrame)
     titleLabel.Size                   = UDim2.new(0.52, -12, 0, HEADER_H)
     titleLabel.Position               = UDim2.new(0, 12, 0, 0)
     titleLabel.BackgroundTransparency = 1
     titleLabel.Text                   = titulo
-    titleLabel.TextColor3             = Color3.fromRGB(180, 230, 255)
+    titleLabel.TextColor3             = ThemeColors.TextPrimary
     titleLabel.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
     titleLabel.TextSize               = 11
     titleLabel.TextXAlignment         = Enum.TextXAlignment.Left
@@ -10883,23 +11120,22 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     titleLabel.TextTruncate           = Enum.TextTruncate.AtEnd
     titleLabel.ZIndex                 = 6
 
-    -- Boton selector derecha: rectangular, esquinas 4px, glassmorphism + borde cian
+    -- Boton selector derecha: rectangular, borde con Primary del hub
     local triggerBtn = Instance.new("TextButton", masterFrame)
     triggerBtn.Name                   = "TriggerBadge"
     triggerBtn.Size                   = UDim2.new(0.46, 0, 0, 26)
     triggerBtn.AnchorPoint            = Vector2.new(1, 0)
     triggerBtn.Position               = UDim2.new(1, -8, 0, (HEADER_H - 26) / 2)
-    triggerBtn.BackgroundColor3       = Color3.fromRGB(4, 16, 32)
+    triggerBtn.BackgroundColor3       = ThemeColors.Background
     triggerBtn.BackgroundTransparency = 0.30
     triggerBtn.Text                   = ""
     triggerBtn.BorderSizePixel        = 0
     triggerBtn.AutoButtonColor        = false
     triggerBtn.ZIndex                 = 7
-    -- Esquinas cuadradas (rectangulo estilo USE)
     local tCorner = Instance.new("UICorner", triggerBtn)
     tCorner.CornerRadius = UDim.new(0, 4)
     local tStroke = Instance.new("UIStroke", triggerBtn)
-    tStroke.Color           = Color3.fromRGB(0, 200, 230)
+    tStroke.Color           = ThemeColors.Primary
     tStroke.Thickness       = 1.4
     tStroke.Transparency    = 0.15
     tStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -10908,7 +11144,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     selectedText.Size                   = UDim2.new(1, -22, 1, 0)
     selectedText.Position               = UDim2.new(0, 8, 0, 0)
     selectedText.Text                   = default
-    selectedText.TextColor3             = Color3.fromRGB(160, 240, 255)
+    selectedText.TextColor3             = ThemeColors.TextPrimary
     selectedText.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
     selectedText.TextSize               = 10
     selectedText.BackgroundTransparency = 1
@@ -10922,7 +11158,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     arrow.AnchorPoint            = Vector2.new(1, 0.5)
     arrow.Position               = UDim2.new(1, -4, 0.5, 0)
     arrow.Text                   = "v"
-    arrow.TextColor3             = Color3.fromRGB(0, 220, 255)
+    arrow.TextColor3             = ThemeColors.Accent
     arrow.BackgroundTransparency = 1
     arrow.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
     arrow.TextSize               = 11
@@ -10935,22 +11171,20 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
     listFrame.Name                   = "ListContainer"
     listFrame.Size                   = UDim2.new(1, 0, 0, 0)
     listFrame.Position               = UDim2.new(0, 0, 0, HEADER_H + GAP)
-    listFrame.BackgroundColor3       = Color3.fromRGB(4, 12, 26)
+    listFrame.BackgroundColor3       = ThemeColors.Background
     listFrame.BackgroundTransparency = 1.0     -- FULL TRANSPARENTE al abrir
     listFrame.BorderSizePixel        = 0
     listFrame.ClipsDescendants       = true
     listFrame.Visible                = false
     listFrame.ScrollBarThickness     = 2
-    listFrame.ScrollBarImageColor3   = Color3.fromRGB(0, 200, 240)
+    listFrame.ScrollBarImageColor3   = ThemeColors.Primary
     listFrame.CanvasSize             = UDim2.new(0, 0, 0, #opciones * (ROW_H + 3) + 10)
     listFrame.ScrollingDirection     = Enum.ScrollingDirection.Y
     listFrame.ElasticBehavior        = Enum.ElasticBehavior.Never
     listFrame.ZIndex                 = 50
-    -- Esquinas poco redondeadas (estilo USE)
     Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0, 5)
-    -- Solo borde, sin fondo (efecto full transparente)
     local listStroke = Instance.new("UIStroke", listFrame)
-    listStroke.Color           = Color3.fromRGB(0, 210, 240)
+    listStroke.Color           = ThemeColors.Primary
     listStroke.Thickness       = 1.4
     listStroke.Transparency    = 0.18
     listStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -10984,21 +11218,21 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
             local stroke  = row:FindFirstChildWhichIsA("UIStroke")
             local rowLbl  = row:FindFirstChild("OptionLabel")
             local active  = (wrapper.Name == selectedValue)
-            -- Activo: semi-transparente cian; inactivo: full transparente
+            -- Activo: color Primary del hub; inactivo: Background del hub
             TweenService:Create(row, TweenInfo.new(0.18), {
-                BackgroundColor3       = active and Color3.fromRGB(0, 100, 130) or Color3.fromRGB(4, 12, 26),
-                BackgroundTransparency = active and 0.55 or 1.0,
+                BackgroundColor3       = active and ThemeColors.Aurora1 or ThemeColors.Background,
+                BackgroundTransparency = active and 0.45 or 1.0,
             }):Play()
             if stroke then
                 TweenService:Create(stroke, TweenInfo.new(0.18), {
-                    Color        = active and Color3.fromRGB(0, 220, 255) or Color3.fromRGB(0, 180, 210),
+                    Color        = active and ThemeColors.Primary or ThemeColors.Aurora3,
                     Transparency = active and 0 or 0.55,
                     Thickness    = active and 1.6 or 0.8,
                 }):Play()
             end
             if rowLbl then
                 TweenService:Create(rowLbl, TweenInfo.new(0.18), {
-                    TextColor3 = active and Color3.fromRGB(0, 230, 255) or Color3.fromRGB(160, 220, 240),
+                    TextColor3 = active and ThemeColors.TextPrimary or ThemeColors.TextSecondary,
                 }):Play()
             end
         end
@@ -11021,7 +11255,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
         TweenService:Create(listFrame, TWEEN_OPEN, {
             Size = UDim2.new(1, 0, 0, targetH)
         }):Play()
-        TweenService:Create(tStroke, TWEEN_OPEN, {Transparency = 0.0, Thickness = 2.0}):Play()
+        TweenService:Create(tStroke, TWEEN_OPEN, {Transparency = 0.0, Thickness = 2.0, Color = ThemeColors.Accent}):Play()
         TweenService:Create(triggerBtn, TWEEN_OPEN, {BackgroundTransparency = 0.10}):Play()
         task.delay(0.55, function() _animating = false end)
     end
@@ -11038,7 +11272,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
         TweenService:Create(listFrame, TWEEN_CLOSE, {
             Size = UDim2.new(1, 0, 0, 0)
         }):Play()
-        TweenService:Create(tStroke, TWEEN_CLOSE, {Transparency = 0.20, Thickness = 1.4}):Play()
+        TweenService:Create(tStroke, TWEEN_CLOSE, {Transparency = 0.20, Thickness = 1.4, Color = ThemeColors.Primary}):Play()
         TweenService:Create(triggerBtn, TWEEN_CLOSE, {BackgroundTransparency = 0.30}):Play()
         task.delay(0.42, function()
             listFrame.Visible = false
@@ -11048,14 +11282,14 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
 
     -- Hover del boton selector (estilo USE)
     triggerBtn.MouseEnter:Connect(function()
-        TweenService:Create(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.05, BackgroundColor3 = Color3.fromRGB(6, 24, 46)}):Play()
-        TweenService:Create(tStroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(0, 240, 255), Thickness = 2.0, Transparency = 0.0}):Play()
+        TweenService:Create(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.05, BackgroundColor3 = Color3.fromRGB(46, 33,  6)}):Play()
+        TweenService:Create(tStroke, TweenInfo.new(0.15), {Color = ThemeColors.Accent, Thickness = 2.0, Transparency = 0.0}):Play()
         TweenService:Create(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
     end)
     triggerBtn.MouseLeave:Connect(function()
-        TweenService:Create(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.30, BackgroundColor3 = Color3.fromRGB(4, 16, 32)}):Play()
-        TweenService:Create(tStroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(0, 200, 230), Thickness = 1.4, Transparency = 0.15}):Play()
-        TweenService:Create(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(160, 240, 255)}):Play()
+        TweenService:Create(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.30, BackgroundColor3 = Color3.fromRGB(32, 23,  4)}):Play()
+        TweenService:Create(tStroke, TweenInfo.new(0.15), {Color = ThemeColors.Primary, Thickness = 1.4, Transparency = 0.15}):Play()
+        TweenService:Create(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 225, 160)}):Play()
     end)
 
     -- FIX MOBILE: usar Activated en vez de MouseButton1Click para que funcione en touch
@@ -11084,7 +11318,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
             -- Filas del dropdown: full transparentes, solo borde visible
             local row = Instance.new("TextButton", wrapper)
             row.Size                   = UDim2.new(1, 0, 1, 0)
-            row.BackgroundColor3       = isActive and Color3.fromRGB(0, 100, 130) or Color3.fromRGB(4, 12, 26)
+            row.BackgroundColor3       = isActive and Color3.fromRGB(40, 32, 20) or Color3.fromRGB(22, 18, 12)
             row.BackgroundTransparency = isActive and 0.55 or 1.0   -- activo: semi-visible; inactivo: full transparente
             row.Text                   = ""
             row.BorderSizePixel        = 0
@@ -11094,7 +11328,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
             Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
 
             local cardStroke = Instance.new("UIStroke", row)
-            cardStroke.Color           = isActive and Color3.fromRGB(0, 220, 255) or Color3.fromRGB(0, 180, 210)
+            cardStroke.Color           = isActive and ThemeColors.Accent or ThemeColors.Primary
             cardStroke.Thickness       = isActive and 1.6 or 0.8
             cardStroke.Transparency    = isActive and 0 or 0.55
             cardStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -11104,7 +11338,7 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
             lbl.Size                   = UDim2.new(1, -10, 1, 0)
             lbl.Position               = UDim2.new(0, 8, 0, 0)
             lbl.Text                   = convertirFuenteCursor(name)
-            lbl.TextColor3             = isActive and Color3.fromRGB(0, 230, 255) or Color3.fromRGB(160, 220, 240)
+            lbl.TextColor3             = isActive and ThemeColors.TextPrimary or ThemeColors.TextSecondary
             lbl.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
             lbl.TextSize               = 10
             lbl.TextXAlignment         = Enum.TextXAlignment.Left
@@ -11115,21 +11349,21 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
             row.MouseEnter:Connect(function()
                 if name ~= selectedValue then
                     TweenService:Create(row, TweenInfo.new(0.12), {
-                        BackgroundColor3       = Color3.fromRGB(0, 80, 110),
+                        BackgroundColor3       = Color3.fromRGB(32, 28, 22),
                         BackgroundTransparency = 0.60,
                     }):Play()
                     TweenService:Create(cardStroke, TweenInfo.new(0.12), {Transparency = 0.20, Thickness = 1.4}):Play()
-                    TweenService:Create(lbl, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(220, 245, 255)}):Play()
+                    TweenService:Create(lbl, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 244, 220)}):Play()
                 end
             end)
             row.MouseLeave:Connect(function()
                 if name ~= selectedValue then
                     TweenService:Create(row, TweenInfo.new(0.12), {
-                        BackgroundColor3       = Color3.fromRGB(4, 12, 26),
+                        BackgroundColor3       = Color3.fromRGB(22, 18, 12),
                         BackgroundTransparency = 1.0,
                     }):Play()
                     TweenService:Create(cardStroke, TweenInfo.new(0.12), {Transparency = 0.55, Thickness = 0.8}):Play()
-                    TweenService:Create(lbl, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(160, 220, 240)}):Play()
+                    TweenService:Create(lbl, TweenInfo.new(0.12), {TextColor3 = ThemeColors.TextSecondary}):Play()
                 end
             end)
 
@@ -11169,17 +11403,17 @@ function CreateNebulaSelector(parent, titulo, opciones, default, callback)
 end
 
 -- ==========================================================================
--- CreatePredSelector -- glassmorphism azul indigo (mismo estilo que NebulaSelector)
+-- CreatePredSelector -- glassmorphism oscuro del hub (mismo estilo que ZerqonSelector)
 -- ==========================================================================
 function CreatePredSelector(parent, titulo, opciones, default, callback)
     -- Colores glassmorphism -- paleta nocturna
     local COL_BG_HEADER  = ThemeColors.Background    -- ?ndigo visible
-    local COL_BG_LIST    = ThemeColors.Secondary     -- azul noche
-    local COL_BG_BADGE   = ThemeColors.Primary  -- azul estrella
+    local COL_BG_LIST    = ThemeColors.Secondary     -- carbon oscuro
+    local COL_BG_BADGE   = ThemeColors.Primary  -- oro del hub
     local COL_STROKE     = ThemeColors.TextPrimary  -- blanco estrella
-    local COL_STROKE_ROW = ThemeColors.Primary  -- azul estrella
-    local COL_TEXT       = ThemeColors.TextPrimary  -- blanco azulado
-    local COL_ROW_ACTIVE = ThemeColors.Primary  -- azul estrella
+    local COL_STROKE_ROW = ThemeColors.Primary  -- oro del hub
+    local COL_TEXT       = ThemeColors.TextPrimary  -- blanco calido
+    local COL_ROW_ACTIVE = ThemeColors.Primary  -- oro del hub
     local COL_ROW_IDLE   = ThemeColors.Background    -- ?ndigo visible
 
     local BTN_H      = 34
@@ -11407,7 +11641,7 @@ function CreatePredSelector(parent, titulo, opciones, default, callback)
 
         table.insert(optBtns, {name = name, btn = optBtn, lbl = optLbl, stroke = optStroke})
 
-        -- Glitch ultra rapido: parpadeo de borde teal aleatorio
+        -- Glitch ultra rapido: parpadeo de borde dorado aleatorio
         task.spawn(function()
             while optBtn and optBtn.Parent do
                 task.wait(math.random(1, 3) + math.random() * 0.5)
@@ -11905,7 +12139,7 @@ function CreateChams(player)
         if     role == "Murderer"  then color = Color3.fromRGB(255,   0,  40)
         elseif role == "Sheriff"   then color = Color3.fromRGB(  0, 140, 255)
         elseif role == "Hero"      then color = Color3.fromRGB(255, 210,   0)
-        else                            color = Color3.fromRGB(  0, 255, 160)  -- Innocent
+        else                            color = Color3.fromRGB(  0, 255,  70)  -- Innocent
         end
 
         -- FIX CHAM FANTASMA: CreateChams usaba Settings.cham.enabled (sistema viejo)
@@ -12372,7 +12606,7 @@ function CreateCustomNotification(titleRaw, message, duration)
         mainFrame.Size = UDim2.new(0, _notifW, 0, _notifH)
         mainFrame.Position = UDim2.new(1, -8, 1, -50)
         mainFrame.AnchorPoint = Vector2.new(1, 1)
-        mainFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 18)
+        mainFrame.BackgroundColor3 = Color3.fromRGB(18,15,  8)
         mainFrame.BackgroundTransparency = 0.18
         mainFrame.BorderSizePixel = 0
         mainFrame.Parent = notifSG
@@ -12406,7 +12640,7 @@ function CreateCustomNotification(titleRaw, message, duration)
         stroke.Transparency = 0.3
         stroke.Parent = mainFrame
 
-        -- Icono checkmark verde (oculto en Minimal/Banner)
+        -- Icono checkmark dorado (oculto en Minimal/Banner)
         local _iconSize = 0  -- sin icono en modo compacto
         local _iconOffX  = 10
         local icon = Instance.new("ImageLabel")
@@ -12452,29 +12686,29 @@ function CreateCustomNotification(titleRaw, message, duration)
         descLbl.TextYAlignment = Enum.TextYAlignment.Top
         descLbl.Parent = mainFrame
 
-        -- Barra de progreso verde
+        -- Barra de progreso dorada
         local progressBarBg = Instance.new("Frame")
         progressBarBg.Size = UDim2.new(1, -16, 0, 2)
         progressBarBg.Position = UDim2.new(0, 8, 1, -6)
-        progressBarBg.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+        progressBarBg.BackgroundColor3 = Color3.fromRGB(50, 44, 30)
         progressBarBg.BackgroundTransparency = 0.3
         progressBarBg.BorderSizePixel = 0
         progressBarBg.Parent = mainFrame
 
         local progressBar = Instance.new("Frame")
         progressBar.Size = UDim2.new(1, 0, 1, 0)
-        progressBar.BackgroundColor3 = Color3.fromRGB(210, 85, 100)  -- celeste neon transparente
+        progressBar.BackgroundColor3 = Color3.fromRGB(210,170,  85)  -- oro neon transparente
         progressBar.BackgroundTransparency = 0.15
         progressBar.BorderSizePixel = 0
         progressBar.Parent = progressBarBg
 
-        -- Gradiente celeste transparente: tono hub celeste/cyan
+        -- Gradiente dorado transparente: tono del hub
         local progressGrad = Instance.new("UIGradient")
         progressGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB( 80, 230, 255)),  -- celeste claro neon
-            ColorSequenceKeypoint.new(0.35, Color3.fromRGB(  0, 200, 255)),  -- celeste hub puro
-            ColorSequenceKeypoint.new(0.7, Color3.fromRGB(  0, 180, 240)),  -- celeste medio
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB( 60, 220, 255)),  -- celeste electrico
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(255, 200,  80)),  -- oro claro neon
+            ColorSequenceKeypoint.new(0.35, Color3.fromRGB(255, 174,   0)),  -- ambar hub puro
+            ColorSequenceKeypoint.new(0.7, Color3.fromRGB(240, 164,   0)),  -- oro medio
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(255, 193,  60)),  -- oro electrico
         })
         progressGrad.Rotation = 0
         progressGrad.Parent = progressBar
@@ -12915,7 +13149,7 @@ function CreateGlowTeleportButton(parent, icon, name, glowColor, callback)
 
     local btn = Instance.new("TextButton", container)
     btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(4, 14, 28)
+    btn.BackgroundColor3 = Color3.fromRGB(28, 20,  4)
     btn.BackgroundTransparency = 0.18
     btn.Text = ""
     btn.AutoButtonColor = false
@@ -12925,7 +13159,7 @@ function CreateGlowTeleportButton(parent, icon, name, glowColor, callback)
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
     local stroke = Instance.new("UIStroke", btn)
-    stroke.Color = Color3.fromRGB(0, 210, 240)
+    stroke.Color = Color3.fromRGB(200, 160, 80)
     stroke.Thickness = 1.8
     stroke.Transparency = 0.10
 
@@ -12936,7 +13170,7 @@ function CreateGlowTeleportButton(parent, icon, name, glowColor, callback)
     nameLabel.Text = convertirFuenteCursor(name)
     nameLabel.FontFace = Font.fromEnum(Enum.Font.Arimo)
     nameLabel.TextSize = 13
-    nameLabel.TextColor3 = Color3.fromRGB(160, 230, 255)
+    nameLabel.TextColor3 = Color3.fromRGB(255, 225, 160)
     nameLabel.TextXAlignment = Enum.TextXAlignment.Left
     nameLabel.ZIndex = 3
 
@@ -13043,7 +13277,7 @@ function _makeTwoColumns()
     wrapper.Name = "TwoColumnWrapper"
     wrapper.Size = UDim2.new(1, 0, 1, 0)
     wrapper.Position = UDim2.new(0, 0, 0, 0)
-    wrapper.BackgroundColor3 = Color3.fromRGB(220, 80, 140)
+    wrapper.BackgroundColor3 = Color3.fromRGB(220,176,  80)
     wrapper.BackgroundTransparency = 1
     wrapper.BorderSizePixel = 0
     wrapper.ZIndex = 1   -- ZIndex standard
@@ -13054,16 +13288,16 @@ function _makeTwoColumns()
     searchBar.Name = "SearchBar"
     searchBar.Size = UDim2.new(1, -12, 0, SEARCH_H)
     searchBar.Position = UDim2.new(0, 6, 0, 10)
-    -- Color igual al fondo del hub teal
+    -- Color igual al fondo oscuro del hub
     searchBar.BackgroundColor3 = ThemeColors.Background
     searchBar.BackgroundTransparency = 0.15
     searchBar.BorderSizePixel = 0
     searchBar.ZIndex = 20
     Instance.new("UICorner", searchBar).CornerRadius = UDim.new(0, 6)
 
-    -- Borde principal teal
+    -- Borde principal dorado
     local _sbStroke2 = Instance.new("UIStroke", searchBar)
-    _sbStroke2.Color = ThemeColors.Primary   -- teal 0,210,180
+    _sbStroke2.Color = ThemeColors.Primary   -- oro 200,160,80
     _sbStroke2.Thickness = 2
     _sbStroke2.Transparency = 0
 
@@ -13092,7 +13326,7 @@ function _makeTwoColumns()
     glitchAccR.Name = "GlitchAccR"
     glitchAccR.Size = UDim2.new(0, 2, 0, 6)
     glitchAccR.Position = UDim2.new(1, -2, 0.5, -3)
-    glitchAccR.BackgroundColor3 = ThemeColors.Accent  -- magenta
+    glitchAccR.BackgroundColor3 = ThemeColors.Accent  -- acento dorado
     glitchAccR.BackgroundTransparency = 0.2
     glitchAccR.BorderSizePixel = 0
     glitchAccR.ZIndex = 22
@@ -13114,7 +13348,7 @@ function _makeTwoColumns()
     searchInput2.BackgroundTransparency = 1
     searchInput2.Text = ""
     searchInput2.PlaceholderText = ""
-    searchInput2.PlaceholderColor3 = Color3.fromRGB(200, 20, 100)
+    searchInput2.PlaceholderColor3 = Color3.fromRGB(200,143,  20)
     searchInput2.TextColor3 = ThemeColors.Primary
     searchInput2.TextSize = 17
     searchInput2.FontFace = Font.fromEnum(Enum.Font.GothamBold)
@@ -13215,12 +13449,16 @@ function _makeTwoColumns()
     -- Leer preferencia de doble columna
     local _useDoubleCol = _G._hubSettings and _G._hubSettings.doubleColumn or false
 
+    -- COLUMNAS FULL: ancho total del contentContainer (adheridas al fondo del hub)
+    local COL_PAD = 8   -- padding lateral para que no toquen los bordes
+    local COL_GAP = 6   -- separacion entre columna izquierda y derecha
+
     local lCol = Instance.new("ScrollingFrame", wrapper)
     lCol.Name = "LeftColumn"
     lCol.BackgroundTransparency = 1
     lCol.BorderSizePixel = 0
-    lCol.ScrollBarThickness = 3
-    lCol.ScrollBarImageColor3 = Color3.fromRGB(83, 126, 218)
+    lCol.ScrollBarThickness = 4
+    lCol.ScrollBarImageColor3 = Color3.fromRGB(220, 185, 100)
     lCol.CanvasSize = UDim2.new(0,0,0,0)
     lCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
     lCol.ElasticBehavior = Enum.ElasticBehavior.Never
@@ -13229,18 +13467,18 @@ function _makeTwoColumns()
 
     local rCol
     if _useDoubleCol then
-        -- == DOBLE COLUMNA REAL ==
-        lCol.Size = UDim2.new(0.5, -GAP, 1, -COL_TOP)
-        lCol.Position = UDim2.new(0, 0, 0, COL_TOP)
+        -- DOBLE COLUMNA: cada columna ocupa ~50% del ancho total
+        lCol.Size = UDim2.new(0.5, -(COL_PAD + COL_GAP/2), 1, -COL_TOP)
+        lCol.Position = UDim2.new(0, COL_PAD, 0, COL_TOP)
 
         rCol = Instance.new("ScrollingFrame", wrapper)
         rCol.Name = "RightColumn"
-        rCol.Size = UDim2.new(0.5, -GAP, 1, -COL_TOP)
-        rCol.Position = UDim2.new(0.5, GAP, 0, COL_TOP)
+        rCol.Size = UDim2.new(0.5, -(COL_PAD + COL_GAP/2), 1, -COL_TOP)
+        rCol.Position = UDim2.new(0.5, COL_GAP/2, 0, COL_TOP)
         rCol.BackgroundTransparency = 1
         rCol.BorderSizePixel = 0
-        rCol.ScrollBarThickness = 3
-        rCol.ScrollBarImageColor3 = Color3.fromRGB(83, 126, 218)
+        rCol.ScrollBarThickness = 4
+        rCol.ScrollBarImageColor3 = Color3.fromRGB(220, 185, 100)
         rCol.CanvasSize = UDim2.new(0,0,0,0)
         rCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
         local rlayout = Instance.new("UIListLayout", rCol)
@@ -13249,14 +13487,14 @@ function _makeTwoColumns()
         rlayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
         rlayout.SortOrder = Enum.SortOrder.LayoutOrder
         local rpad = Instance.new("UIPadding", rCol)
-        rpad.PaddingRight = UDim.new(0, 4)
-        rpad.PaddingLeft  = UDim.new(0, 4)
-        rpad.PaddingTop   = UDim.new(0, 0)
-        rpad.PaddingBottom = UDim.new(0, 0)
+        rpad.PaddingRight = UDim.new(0, 6)
+        rpad.PaddingLeft  = UDim.new(0, 6)
+        rpad.PaddingTop   = UDim.new(0, 4)
+        rpad.PaddingBottom = UDim.new(0, 8)
     else
-        -- == COLUMNA UNICA (comportamiento original) ==
-        lCol.Size = UDim2.new(1, 0, 1, -COL_TOP)
-        lCol.Position = UDim2.new(0, 0, 0, COL_TOP)
+        -- COLUMNA UNICA: ancho total
+        lCol.Size = UDim2.new(1, -COL_PAD*2, 1, -COL_TOP)
+        lCol.Position = UDim2.new(0, COL_PAD, 0, COL_TOP)
         rCol = lCol
     end
 
@@ -13266,10 +13504,10 @@ function _makeTwoColumns()
     llayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     llayout.SortOrder = Enum.SortOrder.LayoutOrder
     local lpad = Instance.new("UIPadding", lCol)
-    lpad.PaddingRight = UDim.new(0, 4)
-    lpad.PaddingLeft  = UDim.new(0, 4)
-    lpad.PaddingTop   = UDim.new(0, 0)
-    lpad.PaddingBottom = UDim.new(0, 0)
+    lpad.PaddingRight = UDim.new(0, 6)
+    lpad.PaddingLeft  = UDim.new(0, 6)
+    lpad.PaddingTop   = UDim.new(0, 4)
+    lpad.PaddingBottom = UDim.new(0, 8)
 
     -- "Not found" label para busqueda
     local notFoundL = Instance.new("TextLabel", lCol)
@@ -13277,7 +13515,7 @@ function _makeTwoColumns()
     notFoundL.Size = UDim2.new(1, 0, 0, 40)
     notFoundL.BackgroundTransparency = 1
     notFoundL.Text = "??  No results found"
-    notFoundL.TextColor3 = Color3.fromRGB(180, 130, 130)
+    notFoundL.TextColor3 = Color3.fromRGB(180, 164, 130)
     notFoundL.TextSize = 13
     notFoundL.FontFace = Font.fromEnum(Enum.Font.Arimo)
     notFoundL.Visible = false
@@ -13384,39 +13622,40 @@ function _makeTwoColumns()
     end)
     searchInput2.FocusLost:Connect(function()
         TweenService:Create(_sbStroke2, TweenInfo.new(0.2), {Transparency = 0.3, Color = ThemeColors.Primary, Thickness = 1.2}):Play()
-        TweenService:Create(searchBar, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(  3,   8,  18)}):Play()
+        TweenService:Create(searchBar, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB( 22,  18,  12)}):Play()
         TweenService:Create(glitchLine, TweenInfo.new(0.2), {BackgroundColor3 = ThemeColors.Primary}):Play()
     end)
 
-    -- Animacion de entrada
-    -- FIX: posicion final aplicada PRIMERO para que el tab sea correcto en el cache.
-    -- Antes: lCol se posicionaba en COL_TOP+14 y quedaba ahi si el tween
-    -- no se ejecutaba (tab cacheado/invisible), cortando todo el contenido debajo.
-    lCol.Position = UDim2.new(lCol.Position.X.Scale, lCol.Position.X.Offset, 0, COL_TOP)
-    if _useDoubleCol and rCol ~= lCol then
+    -- ANIMACION DESACTIVADA: las columnas se muestran directamente.
+    -- Esto evita que tweens pendientes interfieran al cambiar/reabrir pestañas.
+    if lCol and lCol.Parent then
+        lCol.Position = UDim2.new(lCol.Position.X.Scale, lCol.Position.X.Offset, 0, COL_TOP)
+    end
+    if _useDoubleCol and rCol ~= lCol and rCol and rCol.Parent then
         rCol.Position = UDim2.new(rCol.Position.X.Scale, rCol.Position.X.Offset, 0, COL_TOP)
     end
-    task.spawn(function()
-        task.wait(0.03)
-        local ti = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        if lCol and lCol.Parent then
-            lCol.Position = UDim2.new(lCol.Position.X.Scale, lCol.Position.X.Offset, 0, COL_TOP + 14)
-            TweenService:Create(lCol, ti, {Position = UDim2.new(lCol.Position.X.Scale, lCol.Position.X.Offset, 0, COL_TOP)}):Play()
-        end
-        if _useDoubleCol and rCol ~= lCol and rCol and rCol.Parent then
-            rCol.Position = UDim2.new(rCol.Position.X.Scale, rCol.Position.X.Offset, 0, COL_TOP + 14)
-            TweenService:Create(rCol, ti, {Position = UDim2.new(rCol.Position.X.Scale, rCol.Position.X.Offset, 0, COL_TOP)}):Play()
-        end
-    end)
 
     leftColumn  = lCol
     rightColumn = rCol
     _colAutoFlip = true
     _colHeights  = {left = 0, right = 0}
+
+    -- Animacion de entrada desactivada intencionalmente.
 end
 
+-- ================================================================
+-- AnimateColumnsEntry v5 - SAFE REWRITE
+-- REGLA DE ORO: NUNCA tocamos propiedades de los descendientes
+-- de toggles/sliders. Solo animamos Position del item raiz.
+-- Usamos un token de animacion por tab para cancelar tweens
+-- huerfanos cuando el usuario cambia de pestana rapidamente.
+-- ================================================================
+_G._tabAnimTokens = _G._tabAnimTokens or {}
+
 function AnimateColumnsEntry()
-    -- Animaci?n de entrada eliminada (instant?neo)
+    -- Animaciones de entrada de pestañas desactivadas.
+    -- Las opciones permanecen siempre en su posicion/visibilidad real.
+    return
 end
 
 -- Auto-balanceo de columnas por altura estimada
@@ -13443,22 +13682,93 @@ function _trackSectionHeight(col, itemCount)
     end
 end
 
+-- ==================================================================
+-- == ZQ RGB BORDERS v47
+-- Un solo ciclo de color para TODOS los UIStroke registrados del hub
+-- (filas de toggle + secciones). Usa unicamente la paleta del hub
+-- (oro / ambar / bronce), nunca colores frios. Solo toca strokes que
+-- crea el hub: la UI nativa del juego NO se modifica.
+-- ==================================================================
+do
+    if not _G._ZQRGB then
+        _G._ZQRGB = {
+            enabled = true,
+            list    = {},
+            idx     = 0,
+            step    = 1.8,
+            palette = {
+                Color3.fromRGB(200, 160,  80),   -- Primary  (oro)
+                Color3.fromRGB(220, 185, 100),   -- Accent   (ambar)
+                Color3.fromRGB(230, 195, 110),   -- Aurora2  (oro brillante)
+                Color3.fromRGB(190, 145,  65),   -- Aurora1  (ambar toggle ON)
+                Color3.fromRGB(160, 125,  60),   -- Aurora3  (bronce)
+            },
+        }
+    end
+
+    -- Registrar un UIStroke en el ciclo. kind: "row" | "section" | "card"
+    function _G._ZQRGB_add(stroke, kind)
+        if not stroke then return end
+        local R = _G._ZQRGB
+        if not R then return end
+        for _, e in ipairs(R.list) do
+            if e.s == stroke then return end
+        end
+        R.list[#R.list + 1] = { s = stroke, kind = kind or "row" }
+    end
+
+    -- Un unico loop para todos los strokes: barato y sincronizado.
+    if not _G._ZQRGB_running then
+        _G._ZQRGB_running = true
+        task.spawn(function()
+            local _TSrgb = game:GetService("TweenService")
+            local _inf   = TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+            while true do
+                local R = _G._ZQRGB
+                if R then
+                    R.idx = (R.idx % #R.palette) + 1
+                    local col = R.palette[R.idx]
+                    local alive = {}
+                    for _, e in ipairs(R.list) do
+                        local s = e.s
+                        local ok = false
+                        pcall(function() ok = (s.Parent ~= nil) end)
+                        if ok then
+                            alive[#alive + 1] = e
+                            if R.enabled then
+                                pcall(function() _TSrgb:Create(s, _inf, {Color = col}):Play() end)
+                            end
+                        end
+                    end
+                    R.list = alive
+                    task.wait(R.step or 1.8)
+                else
+                    task.wait(1.8)
+                end
+            end
+        end)
+    end
+end
+
 function CreateBorderedSectionGlobal(parent, title)
     local targetCol = _autoCol(parent)
     _trackSectionHeight(targetCol, 0)
     local section = Instance.new("Frame", targetCol)
     section.Size = UDim2.new(1, 0, 0, 0)
-    section.BackgroundColor3 = Color3.fromRGB(15, 40, 130)
+    section.BackgroundColor3 = Color3.fromRGB(130, 94,  15)
     section.BackgroundTransparency = 1  -- TRANSPARENCIA TOTAL: fondo del juego visible
     section.BorderSizePixel = 0
     section.AutomaticSize = Enum.AutomaticSize.Y
     section.ZIndex = 9  -- FIX: menor que el label del toggle (11)
     Instance.new("UICorner", section).CornerRadius = UDim.new(0, 6)
     local _bsgStroke = Instance.new("UIStroke", section)
-    _bsgStroke.Color = Color3.fromRGB( 50, 255, 180)
-    _bsgStroke.Thickness = 1
-    _bsgStroke.Transparency = 0.3
+    _bsgStroke.Color = ThemeColors.Primary
+    _bsgStroke.Thickness = 1.1          -- v47: borde sutil animado en RGB del hub
+    _bsgStroke.Transparency = 0.62
     _bsgStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    _G._allSectionStrokes = _G._allSectionStrokes or {}
+    table.insert(_G._allSectionStrokes, _bsgStroke)
+    if _G._ZQRGB_add then _G._ZQRGB_add(_bsgStroke, "section") end
     local padding = Instance.new("UIPadding", section)
     padding.PaddingTop = UDim.new(0, 0)
     padding.PaddingBottom = UDim.new(0, 0)
@@ -13479,17 +13789,20 @@ function CreateSection(parent, icono, titulo, color)
     _trackSectionHeight(targetCol, 0)
     local section = Instance.new("Frame", targetCol)
     section.Size = UDim2.new(1, 0, 0, 0)
-    section.BackgroundColor3 = Color3.fromRGB(15, 40, 130)
+    section.BackgroundColor3 = Color3.fromRGB(130, 94,  15)
     section.BackgroundTransparency = 1  -- TRANSPARENCIA TOTAL: fondo del juego visible
     section.BorderSizePixel = 0
     section.AutomaticSize = Enum.AutomaticSize.Y
     section.ZIndex = 9  -- FIX: menor que el label del toggle (11) para no taparlo
     Instance.new("UICorner", section).CornerRadius = UDim.new(0, 6)
     local _csStroke = Instance.new("UIStroke", section)
-    _csStroke.Color = Color3.fromRGB(83, 126, 218)
-    _csStroke.Thickness = 1.3
-    _csStroke.Transparency = 0.35
+    _csStroke.Color = ThemeColors.Primary
+    _csStroke.Thickness = 1.1           -- v47: borde sutil animado en RGB del hub
+    _csStroke.Transparency = 0.62
     _csStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    _G._allSectionStrokes = _G._allSectionStrokes or {}
+    table.insert(_G._allSectionStrokes, _csStroke)
+    if _G._ZQRGB_add then _G._ZQRGB_add(_csStroke, "section") end
     local padding = Instance.new("UIPadding", section)
     padding.PaddingTop = UDim.new(0, 0)
     padding.PaddingBottom = UDim.new(0, 0)
@@ -13504,7 +13817,7 @@ function CreateSection(parent, icono, titulo, color)
 end
 
 -- ======================================================================
--- CreateNeonSection -- seccion con marco de luz animado cian/morado
+-- CreateNeonSection -- seccion con marco de luz animado oro/bronce
 -- y titulo grande brillante (estilo del codigo NeonInfiniteLoop)
 -- ======================================================================
 function CreateNeonSection(parent, titulo)
@@ -13532,7 +13845,7 @@ function CreateNeonSection(parent, titulo)
     -- Gradiente dinamico en el stroke
     local grad = Instance.new("UIGradient", stroke)
     local C_CYAN   = ThemeColors.Accent   -- amarillo sol
-    local C_PURPLE = ThemeColors.Secondary   -- morado neon
+    local C_PURPLE = ThemeColors.Secondary   -- carbon del hub (el nombre C_PURPLE es historico)
     local C_DARK   = ThemeColors.Primary     -- naranja quemado (era gris)
     grad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0,   C_DARK),
@@ -13691,45 +14004,47 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
     local _initVal = (_G._sliderVals and _G._sliderVals[_sliderKey] ~= nil)
                      and _G._sliderVals[_sliderKey] or defaultVal
 
-    -- Paleta identica a pestanas del dock
-    local C_BG        = Color3.fromRGB(42, 77, 160)
-    local C_STROKE    = Color3.fromRGB(83, 126, 218)
-    local C_TEXT      = Color3.fromRGB(244, 247, 255)
-    local C_DARK      = Color3.fromRGB(24, 54, 122)
-    local C_TRACK_BG  = Color3.fromRGB(15, 30, 80)
-    local C_TRACK_FG  = Color3.fromRGB(83, 126, 218)
-    local C_THUMB     = Color3.fromRGB(244, 247, 255)
-    local C_VAL_STROKE= Color3.fromRGB(83, 126, 218)
-    local CONTAINER_H = 70
+    -- ================================================================
+    -- SLIDER REDESIGN: sin fondo, solo linea del color del hub + knob limpio
+    -- ================================================================
+    -- Color primario del hub (oro Zerqon)
+    local C_PRIMARY   = (ThemeColors and ThemeColors.Primary) or Color3.fromRGB(220, 185, 100)
+    local C_TEXT      = Color3.fromRGB(255, 250, 238)
+    local C_SUBTEXT   = Color3.fromRGB(211, 198, 170)
+    -- Track vacio: linea semitransparente del mismo tono
+    local C_TRACK_BG  = Color3.fromRGB(200, 160, 80)
+    -- Fill: color primario solido del hub
+    local C_TRACK_FG  = C_PRIMARY
+    local C_THUMB     = Color3.fromRGB(255, 255, 255)
+    local CONTAINER_H = 58  -- mas compacto sin fondo
 
-    -- Contenedor: mismo estilo que tabs y toggles
+    -- Contenedor: completamente transparente (sin fondo, sin borde)
     local container = Instance.new("Frame", actualParent)
     container.Name                   = "SliderWrapper_" .. nombre
     container.Size                   = UDim2.new(1, 0, 0, CONTAINER_H)
-    container.BackgroundColor3       = C_BG
-    container.BackgroundTransparency = 0.72
+    container.BackgroundTransparency = 1
     container.BorderSizePixel        = 0
     container.ClipsDescendants       = false
     container.ZIndex                 = 10
-    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 9)
+    -- Solo una linea separadora inferior muy sutil (sin borde de caja)
     local _contStroke = Instance.new("UIStroke", container)
-    _contStroke.Color       = C_STROKE
-    _contStroke.Thickness   = 1.3
-    _contStroke.Transparency = 0.30
+    _contStroke.Color       = C_PRIMARY
+    _contStroke.Thickness   = 0  -- invisible por default, solo aparece al hover
+    _contStroke.Transparency = 1
     _contStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
     -- Titulo (izquierda, parte superior)
     local titleLabel = Instance.new("TextLabel", container)
     titleLabel.Name                   = "TitleLabel"
-    titleLabel.Size                   = UDim2.new(1, -90, 0, 32)
-    titleLabel.Position               = UDim2.new(0, 12, 0, 6)
+    titleLabel.Size                   = UDim2.new(1, -90, 0, 28)
+    titleLabel.Position               = UDim2.new(0, 4, 0, 4)
     titleLabel.BackgroundTransparency = 1
     titleLabel.Text                   = nombre
     titleLabel.TextXAlignment         = Enum.TextXAlignment.Left
     titleLabel.TextYAlignment         = Enum.TextYAlignment.Center
-    titleLabel.TextColor3             = C_TEXT
+    titleLabel.TextColor3             = C_SUBTEXT
     titleLabel.FontFace               = Font.fromEnum(Enum.Font.GothamSemibold)
-    titleLabel.TextSize               = 13
+    titleLabel.TextSize               = 12
     titleLabel.TextTruncate           = Enum.TextTruncate.AtEnd
     titleLabel.ZIndex                 = 12
     if _LangObjects then
@@ -13740,41 +14055,41 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
         end
     end
 
-    -- Value box (derecha, mismo nivel que titulo) - estilo imagen 2
+    -- Value box (derecha): pequeño, sin fondo, solo texto
     local valueFrame = Instance.new("Frame", container)
     valueFrame.Name                   = "ValueFrame"
-    valueFrame.Size                   = UDim2.new(0, 72, 0, 26)
-    valueFrame.Position               = UDim2.new(1, -82, 0, 9)
-    valueFrame.BackgroundColor3       = C_DARK
-    valueFrame.BackgroundTransparency = 0.10
+    valueFrame.Size                   = UDim2.new(0, 58, 0, 22)
+    valueFrame.Position               = UDim2.new(1, -62, 0, 5)
+    valueFrame.BackgroundTransparency = 1
     valueFrame.BorderSizePixel        = 0
     valueFrame.ZIndex                 = 12
-    Instance.new("UICorner", valueFrame).CornerRadius = UDim.new(0, 6)
+    -- Sin UICorner ni UIStroke: valor limpio sin caja
     local vs = Instance.new("UIStroke", valueFrame)
-    vs.Color = C_VAL_STROKE; vs.Thickness = 1.5; vs.Transparency = 0.20
+    vs.Color = C_PRIMARY; vs.Thickness = 0; vs.Transparency = 1
 
     local valueLabel = Instance.new("TextBox", valueFrame)
     valueLabel.Name                   = "ValueLabel"
     valueLabel.Size                   = UDim2.new(1, 0, 1, 0)
     valueLabel.BackgroundTransparency = 1
     valueLabel.Text                   = string.format("%.2f", _initVal)
-    valueLabel.TextXAlignment         = Enum.TextXAlignment.Center
+    valueLabel.TextXAlignment         = Enum.TextXAlignment.Right
     valueLabel.TextYAlignment         = Enum.TextYAlignment.Center
-    valueLabel.TextColor3             = C_TEXT
+    valueLabel.TextColor3             = C_PRIMARY
     valueLabel.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
-    valueLabel.TextSize               = 13
+    valueLabel.TextSize               = 12
     valueLabel.ZIndex                 = 13
     valueLabel.ClearTextOnFocus       = true
     valueLabel.PlaceholderText        = string.format("%.2f", _initVal)
-    valueLabel.PlaceholderColor3      = Color3.fromRGB(180, 200, 240)
+    valueLabel.PlaceholderColor3      = C_SUBTEXT
 
-    -- Track (franja inferior del contenedor) - estilo imagen 2
+    -- Track: linea fina centrada verticalmente en el contenedor
+    -- Solo la linea, sin fondo de caja
     local sliderTrack = Instance.new("Frame", container)
     sliderTrack.Name                   = "SliderTrack"
-    sliderTrack.Size                   = UDim2.new(1, -20, 0, 6)
-    sliderTrack.Position               = UDim2.new(0, 10, 1, -14)
+    sliderTrack.Size                   = UDim2.new(1, -8, 0, 3)
+    sliderTrack.Position               = UDim2.new(0, 4, 1, -10)
     sliderTrack.BackgroundColor3       = C_TRACK_BG
-    sliderTrack.BackgroundTransparency = 0.20
+    sliderTrack.BackgroundTransparency = 0.68
     sliderTrack.BorderSizePixel        = 0
     sliderTrack.ClipsDescendants       = false
     sliderTrack.ZIndex                 = 12
@@ -13791,40 +14106,57 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
     sliderFill.ZIndex                 = 13
     Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
 
-    -- Thumb circular (blanco, mismo estilo que el fill azul brillante)
-    local _thumbSize      = UserInputService.TouchEnabled and 22 or 16
-    local _thumbSizeHover = UserInputService.TouchEnabled and 26 or 20
+    -- Thumb: circulo pequeno y limpio del color del hub
+    local _thumbSize      = UserInputService.TouchEnabled and 18 or 12
+    local _thumbSizeHover = UserInputService.TouchEnabled and 22 or 16
+    -- FIX SLIDER KNOB: el thumb tiene AnchorPoint(0.5,0.5), entonces con ratio=0
+    -- su centro queda en X=0 (borde) y queda cortado a la mitad.
+    -- Usamos una funcion helper que convierte ratio a UDim2 con offset en px
+    -- para que el knob nunca se salga del track.
+    local function _ratioToThumbPos(ratio)
+        -- halfThumb en escala relativa para no salirse del track
+        local halfPx = _thumbSize / 2
+        -- UDim2: fraction=ratio, offset=0 pero con clamp via AnchorPoint y ZIndex
+        -- La solucion correcta: Position en UDim2.new(ratio, 0, 0.5, 0) con
+        -- AnchorPoint=(0.5,0.5) naturalmente centra el knob.
+        -- El problema es que cuando ratio=0, el centro esta en el borde izquierdo.
+        -- Solucion: clampear el offset en pixeles segun el tamano del thumb.
+        -- Como sliderTrack usa UDim2 relativo, calculamos:
+        --   posX_scale = ratio, posX_offset = 0
+        -- pero necesitamos que el CENTRO del thumb este entre [halfPx, trackWidth-halfPx].
+        -- Usamos offsets negativos/positivos en UDim2:
+        --   En valor 0: queremos center en halfPx px desde el borde izquierdo
+        --   En valor 1: queremos center en trackWidth - halfPx px del borde izquierdo
+        -- UDim2.new(ratio, lerp(halfPx, -halfPx, ratio), 0.5, 0)
+        local offsetPx = halfPx + ratio * (-_thumbSize)  -- va de +halfPx a -halfPx
+        return UDim2.new(ratio, offsetPx, 0.5, 0)
+    end
 
     local sliderThumb = Instance.new("ImageButton", sliderTrack)
     sliderThumb.Name                   = "SliderThumb"
     sliderThumb.Size                   = UDim2.new(0, _thumbSize, 0, _thumbSize)
     sliderThumb.AnchorPoint            = Vector2.new(0.5, 0.5)
-    sliderThumb.Position               = UDim2.new(fillRatio, 0, 0.5, 0)
-    sliderThumb.BackgroundColor3       = C_THUMB
+    sliderThumb.Position               = _ratioToThumbPos(fillRatio)  -- FIX: usa helper para no cortarse en valor 0
+    sliderThumb.BackgroundColor3       = C_PRIMARY
     sliderThumb.BackgroundTransparency = 0
     sliderThumb.BorderSizePixel        = 0
     sliderThumb.ZIndex                 = 15
     Instance.new("UICorner", sliderThumb).CornerRadius = UDim.new(1, 0)
     local _thumbRing = Instance.new("UIStroke", sliderThumb)
-    _thumbRing.Color           = C_STROKE
-    _thumbRing.Thickness       = 2.5
-    _thumbRing.Transparency    = 0
+    _thumbRing.Color           = Color3.fromRGB(255, 255, 255)
+    _thumbRing.Thickness       = 1.5
+    _thumbRing.Transparency    = 0.30
     _thumbRing.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-    local _hoverTi = TweenInfo.new(0.12)
+    local _hoverTi = TweenInfo.new(0.15)
+    -- Hover: el titulo se vuelve mas brillante y la linea se engrosa levemente
     container.MouseEnter:Connect(function()
-        TweenService:Create(container, _hoverTi, {
-            BackgroundColor3    = Color3.fromRGB(83, 126, 218),
-            BackgroundTransparency = 0.04,
-        }):Play()
-        TweenService:Create(_contStroke, _hoverTi, {Thickness = 1.8, Transparency = 0.05}):Play()
+        TweenService:Create(titleLabel, _hoverTi, {TextColor3 = C_TEXT}):Play()
+        TweenService:Create(sliderTrack, _hoverTi, {BackgroundTransparency = 0.50}):Play()
     end)
     container.MouseLeave:Connect(function()
-        TweenService:Create(container, _hoverTi, {
-            BackgroundColor3    = C_BG,
-            BackgroundTransparency = 0.72,
-        }):Play()
-        TweenService:Create(_contStroke, _hoverTi, {Thickness = 1.3, Transparency = 0.30}):Play()
+        TweenService:Create(titleLabel, _hoverTi, {TextColor3 = C_SUBTEXT}):Play()
+        TweenService:Create(sliderTrack, _hoverTi, {BackgroundTransparency = 0.68}):Play()
     end)
 
     local currentValue = _initVal
@@ -13839,7 +14171,8 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
         currentValue = v
         if _G._sliderVals then _G._sliderVals[_sliderKey] = v end
         local ratio = math.clamp((v - minVal) / math.max(maxVal - minVal, 0.001), 0, 1)
-        sliderThumb.Position = UDim2.new(ratio, 0, 0.5, 0)
+        -- FIX SLIDER: usar helper para que el knob no quede cortado cuando ratio=0
+        sliderThumb.Position = _ratioToThumbPos(ratio)
         sliderFill.Size      = UDim2.new(ratio, 0, 1, 0)
         valueLabel.Text      = string.format("%.2f", v)
         if callback then callback(v) end
@@ -13910,7 +14243,7 @@ function CreateSlider(parent, nombre, minVal, maxVal, defaultVal, callback, step
 
     local function _setSliderEnabled(enabled)
         TweenService:Create(sliderThumb, TweenInfo.new(0.18), {
-            BackgroundColor3 = enabled and C_THUMB or Color3.fromRGB(140, 140, 150),
+            BackgroundColor3 = enabled and C_THUMB or Color3.fromRGB(150, 147, 140),
         }):Play()
     end
 
@@ -13931,7 +14264,7 @@ function CreateGlowButton(parent, nombre, callback)
 
     local btn = Instance.new("TextButton", container)
     btn.Size                   = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundColor3       = Color3.fromRGB(4, 14, 28)
+    btn.BackgroundColor3       = Color3.fromRGB(28, 20,  4)
     btn.BackgroundTransparency = 0.18
     btn.Text                   = ""
     btn.AutoButtonColor        = false
@@ -13942,9 +14275,9 @@ function CreateGlowButton(parent, nombre, callback)
     -- Gradiente interior sutil, fondo oscuro translucido
     local _gbGrad = Instance.new("UIGradient", btn)
     _gbGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(8,  30, 60)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(4,  16, 36)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(8,  30, 60)),
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(60,  44,  8)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(36,  26,  4)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(60,  44,  8)),
     })
     _gbGrad.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0,   0.30),
@@ -13957,13 +14290,13 @@ function CreateGlowButton(parent, nombre, callback)
     stroke.Thickness       = 1.8
     stroke.Transparency    = 0.10
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Color           = Color3.fromRGB(0, 210, 240)
-    -- Gradiente en el borde: cian -> teal
+    stroke.Color           = Color3.fromRGB(200, 160, 80)
+    -- Gradiente en el borde: oro claro -> oro
     local _gbStrokeGrad = Instance.new("UIGradient", stroke)
     _gbStrokeGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 220, 255)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 200)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 220, 255)),
+        ColorSequenceKeypoint.new(0,   ThemeColors.Primary),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 160, 80)),
+        ColorSequenceKeypoint.new(1,   ThemeColors.Primary),
     })
     _gbStrokeGrad.Rotation = 90
 
@@ -13979,22 +14312,22 @@ function CreateGlowButton(parent, nombre, callback)
     textLabel.ZIndex                 = 3
 
     btn.MouseEnter:Connect(function()
-        TweenService:Create(btn,       TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(6, 24, 48), BackgroundTransparency = 0.05}):Play()
-        TweenService:Create(stroke,    TweenInfo.new(0.15), {Thickness = 2.5, Transparency = 0.0, Color = Color3.fromRGB(0, 240, 255)}):Play()
+        TweenService:Create(btn,       TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(48, 35,  6), BackgroundTransparency = 0.05}):Play()
+        TweenService:Create(stroke,    TweenInfo.new(0.15), {Thickness = 2.5, Transparency = 0.0, Color = ThemeColors.Accent}):Play()
         TweenService:Create(textLabel, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
     end)
     btn.MouseLeave:Connect(function()
-        TweenService:Create(btn,       TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(4, 14, 28), BackgroundTransparency = 0.18}):Play()
-        TweenService:Create(stroke,    TweenInfo.new(0.15), {Thickness = 1.8, Transparency = 0.10, Color = Color3.fromRGB(0, 210, 240)}):Play()
+        TweenService:Create(btn,       TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(28, 20,  4), BackgroundTransparency = 0.18}):Play()
+        TweenService:Create(stroke,    TweenInfo.new(0.15), {Thickness = 1.8, Transparency = 0.10, Color = Color3.fromRGB(200, 160, 80)}):Play()
         TweenService:Create(textLabel, TweenInfo.new(0.12), {TextColor3 = ThemeColors.TextPrimary}):Play()
     end)
 
     btn.Activated:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.07), {BackgroundColor3 = Color3.fromRGB(0, 180, 210), BackgroundTransparency = 0.05}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.07), {BackgroundColor3 = Color3.fromRGB(220, 185, 100), BackgroundTransparency = 0.05}):Play()
         TweenService:Create(stroke, TweenInfo.new(0.07), {Color = Color3.fromRGB(255, 255, 255), Thickness = 3}):Play()
         task.wait(0.13)
-        TweenService:Create(btn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(4, 14, 28), BackgroundTransparency = 0.18}):Play()
-        TweenService:Create(stroke, TweenInfo.new(0.18), {Color = Color3.fromRGB(0, 210, 240), Thickness = 1.8}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(28, 20,  4), BackgroundTransparency = 0.18}):Play()
+        TweenService:Create(stroke, TweenInfo.new(0.18), {Color = Color3.fromRGB(200, 160, 80), Thickness = 1.8}):Play()
         if callback then callback() end
     end)
 
@@ -14007,7 +14340,7 @@ end
 -- groupName  : texto grande en el header (ej: "Bomb")
 -- subtitle   : texto pequeno debajo (ej: "UNIVERSAL / MM2 / MMV")
 -- toggleDefs : tabla de { name, callback, default }
--- El borde usa el mismo gradiente cyan->menta->purpura del glow button.
+-- El borde usa el mismo gradiente dorado del glow button.
 -- ==================================================================
 function CreateGroupedToggles(parent, groupName, subtitle, toggleDefs)
     local actualParent = _currentMainSectionFrame or parent
@@ -14015,7 +14348,7 @@ function CreateGroupedToggles(parent, groupName, subtitle, toggleDefs)
     -- -- Contenedor externo con borde gradiente ----------------------
     local outerFrame = Instance.new("Frame", actualParent)
     outerFrame.Name                   = "GroupedToggles_" .. groupName
-    outerFrame.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+    outerFrame.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
     outerFrame.BackgroundTransparency = 0.85
     outerFrame.BorderSizePixel        = 0
     outerFrame.ClipsDescendants       = false
@@ -14149,7 +14482,7 @@ function CreateButton(parent, nombre, color, callback)
 
     local btn = Instance.new("TextButton", container)
     btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(4, 14, 28)
+    btn.BackgroundColor3 = Color3.fromRGB(28, 20,  4)
     btn.BackgroundTransparency = 0.18
     btn.Text = ""
     btn.AutoButtonColor = false
@@ -14161,9 +14494,9 @@ function CreateButton(parent, nombre, color, callback)
     -- Gradiente fondo glassmorphism oscuro translucido
     local _btnGrad = Instance.new("UIGradient", btn)
     _btnGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.new(_r * 0.10 + 0.02, _g * 0.10 + 0.05, _b * 0.15 + 0.08)),
-        ColorSequenceKeypoint.new(0.5, Color3.new(_r * 0.06 + 0.01, _g * 0.06 + 0.03, _b * 0.12 + 0.06)),
-        ColorSequenceKeypoint.new(1,   Color3.new(_r * 0.10 + 0.02, _g * 0.10 + 0.05, _b * 0.15 + 0.08)),
+        ColorSequenceKeypoint.new(0,   Color3.new(_r * 0.10 + 0.05, _g * 0.10 + 0.035, _b * 0.15 + 0.012)),
+        ColorSequenceKeypoint.new(0.5, Color3.new(_r * 0.06 + 0.03, _g * 0.06 + 0.02, _b * 0.12 + 0.006)),
+        ColorSequenceKeypoint.new(1,   Color3.new(_r * 0.10 + 0.05, _g * 0.10 + 0.035, _b * 0.15 + 0.012)),
     })
     _btnGrad.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0,   0.28),
@@ -14172,17 +14505,17 @@ function CreateButton(parent, nombre, color, callback)
     })
     _btnGrad.Rotation = 90
 
-    -- Borde neon estilo USE: cian brillante con degradado
+    -- Borde del color del hub, con degradado
     local stroke = Instance.new("UIStroke", btn)
-    stroke.Color = Color3.fromRGB(0, 210, 240)
+    stroke.Color = Color3.fromRGB(200, 160, 80)
     stroke.Thickness = 1.8
     stroke.Transparency = 0.12
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local _cbStrokeGrad = Instance.new("UIGradient", stroke)
     _cbStrokeGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 220, 255)),
-        ColorSequenceKeypoint.new(0.5, Color3.new(math.min(_r + 0.05, 1), math.min(_g * 0.5 + 0.35, 1), math.min(_b * 0.5 + 0.45, 1))),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 220, 255)),
+        ColorSequenceKeypoint.new(0,   ThemeColors.Primary),
+        ColorSequenceKeypoint.new(0.5, Color3.new(math.min(_r + 0.05, 1), math.min(_g * 0.5 + 0.35, 1), math.min(_b * 0.5 + 0.10, 1))),
+        ColorSequenceKeypoint.new(1,   ThemeColors.Primary),
     })
     _cbStrokeGrad.Rotation = 90
 
@@ -14561,10 +14894,10 @@ MainSystem = {
 
         local strokeGradient = Instance.new("UIGradient", mainStroke)
         strokeGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,    ThemeColors.Primary),    -- Celeste
+            ColorSequenceKeypoint.new(0,    ThemeColors.Primary),    -- Oro del hub
             ColorSequenceKeypoint.new(0.33, ThemeColors.Accent),     -- Arena
             ColorSequenceKeypoint.new(0.66, ThemeColors.Secondary),  -- Oceano
-            ColorSequenceKeypoint.new(1,    ThemeColors.Primary)     -- Celeste
+            ColorSequenceKeypoint.new(1,    ThemeColors.Primary)     -- Oro del hub
         })
         RegisterShimmer(strokeGradient, 60, math.random(0, 359))
 
@@ -14691,7 +15024,7 @@ MainSystem = {
                 end
 
                 if S.infoEnabled.sheriffInfo then
-                    createInfoLabel(" SHERIFF ", Color3.fromRGB(0, 255, 0))
+                    createInfoLabel(" SHERIFF ", Color3.fromRGB(255, 174, 0))
                     local sheriff = findSheriffPlayer()
                     if sheriff then
                         createInfoLabel("Name: " .. sheriff.Name, ThemeColors.Aurora2)
@@ -14938,9 +15271,9 @@ MainSystem = {
                         end
                     end)
                 end
-                _sfBtn("?\nSUBIR", Color3.fromRGB(60,120,220), vp2.X-bs2*2-15, vp2.Y-bs2*2-10,
+                _sfBtn("?\nSUBIR", Color3.fromRGB(220,169, 60), vp2.X-bs2*2-15, vp2.Y-bs2*2-10,
                     function() _sfUpHeld=true end, function() _sfUpHeld=false end)
-                _sfBtn("?\nBAJAR", Color3.fromRGB(220,80,60), vp2.X-bs2-8, vp2.Y-bs2*2-10,
+                _sfBtn("?\nBAJAR", Color3.fromRGB(220,169,60), vp2.X-bs2-8, vp2.Y-bs2*2-10,
                     function() _sfDownHeld=true end, function() _sfDownHeld=false end)
             end
 
@@ -15763,7 +16096,7 @@ function _createBombBtn()
 
     local btn = Instance.new("TextButton", container)
     btn.Size                   = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundColor3       = Color3.fromRGB(35, 35, 40)
+    btn.BackgroundColor3       = Color3.fromRGB(40, 38, 35)
     btn.BackgroundTransparency = 0.85
     btn.BorderSizePixel        = 0
     btn.Text                   = "BOMB"
@@ -15782,7 +16115,7 @@ function _createBombBtn()
     local dot = Instance.new("Frame", btn)
     dot.Size             = UDim2.new(0, 9, 0, 9)
     dot.Position         = UDim2.new(1, -12, 0, 4)
-    dot.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+    dot.BackgroundColor3 = Color3.fromRGB(200,146, 30)
     dot.BorderSizePixel  = 0
     dot.ZIndex           = 11
     Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
@@ -15791,15 +16124,15 @@ function _createBombBtn()
 
     local function setVisual(on)
         if on then
-            btn.BackgroundColor3 = Color3.fromRGB(15, 85, 15)
-            btn.TextColor3       = Color3.fromRGB(160, 160, 165)
+            btn.BackgroundColor3 = Color3.fromRGB(85, 63, 15)
+            btn.TextColor3       = Color3.fromRGB(165, 163, 160)
             bStroke.Color        = Color3.fromRGB(200, 200, 200)
             dot.BackgroundColor3 = Color3.fromRGB(90, 90, 95)
         else
-            btn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+            btn.BackgroundColor3 = Color3.fromRGB(40, 38, 35)
             btn.TextColor3       = Color3.fromRGB(210, 210, 215)
             bStroke.Color        = ThemeColors.Primary
-            dot.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+            dot.BackgroundColor3 = Color3.fromRGB(200,146, 30)
         end
     end
 
@@ -15990,10 +16323,10 @@ function CreateInfoPanel()
 
     local strokeGrad = Instance.new("UIGradient", mainStroke)
     strokeGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,    ThemeColors.Primary),    -- Celeste
+        ColorSequenceKeypoint.new(0,    ThemeColors.Primary),    -- Oro del hub
         ColorSequenceKeypoint.new(0.33, ThemeColors.Accent),     -- Arena
         ColorSequenceKeypoint.new(0.66, ThemeColors.Secondary),  -- Oceano
-        ColorSequenceKeypoint.new(1,    ThemeColors.Primary)     -- Celeste
+        ColorSequenceKeypoint.new(1,    ThemeColors.Primary)     -- Oro del hub
     })
 
     task.spawn(function()
@@ -16137,7 +16470,7 @@ function CreateInfoPanel()
             local lineCount = 0
 
             if Settings.infoPanel.murdererInfo then
-                makeSep(" MURDERER ", Color3.fromRGB(255,   0,  40))
+                makeSep(" MURDERER ", Color3.fromRGB(255, 174,   0))
                 local murderer = findMurderer()
                 if murderer then
                     makeLabel("Name: " .. murderer.Name, ThemeColors.Accent)
@@ -16161,7 +16494,7 @@ function CreateInfoPanel()
                 local sheriff = findSheriffPlayer()
                 if sheriff then
                     makeLabel("Name: " .. sheriff.Name, ThemeColors.Aurora2)
-                    makeLabel("Role: SHERIFF ", Color3.fromRGB(0, 255, 0))
+                    makeLabel("Role: SHERIFF ", Color3.fromRGB(255, 174, 0))
                     if sheriff.Character and sheriff.Character:FindFirstChild("HumanoidRootPart")
                     and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
                         local _sIP  = sheriff.Character:FindFirstChild("HumanoidRootPart")
@@ -16184,7 +16517,7 @@ function CreateInfoPanel()
                 if LocalPlayer.Character then
                     local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
                     if hum then
-                        makeLabel("HP:   " .. math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth), Color3.fromRGB(255, 50, 50))
+                        makeLabel("HP:   " .. math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth), Color3.fromRGB(255,190, 50))
                     end
                     local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -16212,9 +16545,9 @@ function CreateInfoPanel()
                     elseif r == "Sheriff" then she += 1
                     else inn += 1 end
                 end
-                makeLabel("Innocents: " .. inn, Color3.fromRGB(255, 50, 50))
-                makeLabel("Murderers: " .. mur, Color3.fromRGB(255,   0,  40))
-                makeLabel("Sheriffs:  " .. she, Color3.fromRGB(0, 255, 0))
+                makeLabel("Innocents: " .. inn, Color3.fromRGB(255,236,170))
+                makeLabel("Murderers: " .. mur, Color3.fromRGB(205,124,10))
+                makeLabel("Sheriffs:  " .. she, Color3.fromRGB(255,200,0))
                 lineCount += 4
             end
 
@@ -16222,9 +16555,10 @@ function CreateInfoPanel()
                 makeSep(" PERFORMANCE ", ThemeColors.Aurora2)
                 -- OPT: usar _lastDt global en vez de RenderStepped:Wait() bloqueante
                 local fps = math.floor(1 / math.max(_lastDt or 1/60, 0.001))
-                local fpsColor = fps >= 55 and Color3.fromRGB(130, 130, 135)
-                             or fps >= 30 and Color3.fromRGB(255,200,50)
-                             or Color3.fromRGB(255,80,80)
+                -- FPS: 3 tonos de oro (claro = va bien, ambar = medio, bronce = mal).
+                local fpsColor = fps >= 55 and Color3.fromRGB(255,236,170)
+                             or fps >= 30 and Color3.fromRGB(255,200,0)
+                             or Color3.fromRGB(205,124,10)
                 makeLabel("FPS:  " .. tostring(fps), fpsColor)
                 makeLabel("Ping: ~" .. tostring(CombatState.currentPing) .. " ms", ThemeColors.Aurora3)
                 lineCount += 3
@@ -16306,7 +16640,7 @@ function CreateMainUI_InfoPanel()
     CreateInfoToggleBtn(leftColumn, " Game Information",    "gameInfo",        ThemeColors.Primary)
     CreateInfoToggleBtn(leftColumn, " Coin Information",    "coinInfo",        ThemeColors.Primary)
 
-    CreateButton(leftColumn, " ENABLE ALL INFO", Color3.fromRGB(255, 50, 50), function()
+    CreateButton(leftColumn, " ENABLE ALL INFO", Color3.fromRGB(255,190, 50), function()
         for k in pairs(Settings.infoPanel) do Settings.infoPanel[k] = true end
         CreateInfoPanel()
         CreateCustomNotification(LocalPlayer.Name .. " Says:", "Every info panel section is now broadcasting", 3)
@@ -16476,13 +16810,13 @@ function CreateMainUI_Fly()
             end
 
             -- Boton SUBIR (derecha, arriba)
-            _makeFlyBtn("?\nSUBIR", Color3.fromRGB(60, 120, 220),
+            _makeFlyBtn("?\nSUBIR", ThemeColors.Primary,
                 vp.X - btnSize * 2 - 20, vp.Y - btnSize * 3 - 20,
                 function() _flyUpHeld = true;    _G._flyUpHeld = true end,
                 function() _flyUpHeld = false;   _G._flyUpHeld = false end)
 
             -- Boton BAJAR (derecha, centro)
-            _makeFlyBtn("?\nBAJAR", Color3.fromRGB(220, 80, 60),
+            _makeFlyBtn("?\nBAJAR", Color3.fromRGB(220,169, 60),
                 vp.X - btnSize * 2 - 20, vp.Y - btnSize * 2 - 10,
                 function() _flyDownHeld = true;  _G._flyDownHeld = true end,
                 function() _flyDownHeld = false; _G._flyDownHeld = false end)
@@ -16631,7 +16965,7 @@ function CreateMainUI_Fly()
         -- Selector de tecla
         local _flyKeyRow = Instance.new("Frame", leftColumn)
         _flyKeyRow.Size = UDim2.new(1, -4, 0, 36)
-        _flyKeyRow.BackgroundColor3 = Color3.fromRGB(90, 15, 25)
+        _flyKeyRow.BackgroundColor3 = Color3.fromRGB(90, 66, 15)
         _flyKeyRow.BackgroundTransparency = 0.75
         _flyKeyRow.BorderSizePixel = 0
         Instance.new("UICorner", _flyKeyRow).CornerRadius = UDim.new(0, 8)
@@ -16880,7 +17214,7 @@ function CreateFakeBombCircleButton(key, labelText, posY, onClick)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             TweenService:Create(frame, TweenInfo.new(0.07), {BackgroundColor3 = Color3.fromRGB(93, 93, 93)}):Play()
             task.wait(0.1)
-            TweenService:Create(frame, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(40, 40, 46)}):Play()
+            TweenService:Create(frame, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(46, 44, 40)}):Play()
 
             if onClick then onClick() end
         end
@@ -16899,7 +17233,7 @@ function CreateFakeBombBindlePanel()
         FakeBombBindlePanel.gui = nil
     end
 
-    local BOMB_COLOR   = Color3.fromRGB(255,   0,  40)
+    local BOMB_COLOR   = Color3.fromRGB(255, 174,   0)
     local EQUIP_COLOR  = Color3.fromRGB(255, 160, 40)
     local LAUNCH_COLOR = Color3.fromRGB(170, 170, 170)
     local BTN_SIZE     = 62  -- diametro de cada boton circular
@@ -16919,7 +17253,7 @@ function CreateFakeBombBindlePanel()
     panel.Name              = "BombPanel"
     panel.Size              = UDim2.new(0, panelW, 0, panelH)
     panel.Position          = UDim2.new(0.5, -panelW/2, 0.78, 0)
-    panel.BackgroundColor3  = Color3.fromRGB(  3,   8,  18)
+    panel.BackgroundColor3  = Color3.fromRGB( 22,  18,  12)
     panel.BackgroundTransparency = 0.85
     panel.BorderSizePixel   = 0
     panel.Active            = true
@@ -17176,7 +17510,7 @@ function CreateMainUI_SwimFlyGithub()
     -- Status bar
     local statusF = Instance.new("Frame", sec)
     statusF.Size = UDim2.new(1, -10, 0, 32)
-    statusF.BackgroundColor3 = Color3.fromRGB(180, 55, 70)
+    statusF.BackgroundColor3 = Color3.fromRGB(180,140, 55)
     statusF.BackgroundTransparency = 0.75
     statusF.BorderSizePixel = 0
     Instance.new("UICorner", statusF).CornerRadius = UDim.new(0, 8)
@@ -17196,7 +17530,7 @@ function CreateMainUI_SwimFlyGithub()
     statusL.BackgroundTransparency = 1
     statusL.Text = "Auto Jump: OFF"
     statusL.Font = Enum.Font.Montserrat; statusL.TextSize = 11
-    statusL.TextColor3 = Color3.fromRGB(255, 200, 200)
+    statusL.TextColor3 = Color3.fromRGB(255, 238, 200)
     statusL.TextXAlignment = Enum.TextXAlignment.Left; statusL.ZIndex = 2
 
     local function stopAutoJump()
@@ -17206,13 +17540,13 @@ function CreateMainUI_SwimFlyGithub()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if hum then hum.JumpPower = 50; hum.UseJumpPower = true end
         statusL.Text = "Auto Jump: OFF"
-        statusL.TextColor3 = Color3.fromRGB(255, 200, 200)
+        statusL.TextColor3 = Color3.fromRGB(255, 238, 200)
     end
 
     local function startAutoJump()
         AJ.enabled = true
         statusL.Text = "Auto Jump: ON  cada " .. string.format("%.1f", AJ.jumpInterval) .. "s"
-        statusL.TextColor3 = Color3.fromRGB( 50, 255, 180)
+        statusL.TextColor3 = Color3.fromRGB(255, 190,  50)
         if AJ.conn then pcall(function() pcall(function() coroutine.close(AJ.conn) end) end); AJ.conn = nil end
         AJ.conn = _sp(function()
             while AJ.enabled do
@@ -17251,7 +17585,7 @@ function CreateMainUI_SwimFlyGithub()
 
         local _ajKeyRow = Instance.new("Frame", sec)
         _ajKeyRow.Size = UDim2.new(1, -4, 0, 36)
-        _ajKeyRow.BackgroundColor3 = Color3.fromRGB(90, 15, 25)
+        _ajKeyRow.BackgroundColor3 = Color3.fromRGB(90, 66, 15)
         _ajKeyRow.BackgroundTransparency = 0.75
         _ajKeyRow.BorderSizePixel = 0
         Instance.new("UICorner", _ajKeyRow).CornerRadius = UDim.new(0, 8)
@@ -17315,7 +17649,7 @@ function CreateMainUI_SwimFlyGithub()
             local frame = Instance.new("Frame", sg)
             frame.Name = "AJBindFrame"; frame.Size = UDim2.new(0, BTN, 0, BTN)
             frame.Position = UDim2.new(0, 80, 0.5, -35)
-            frame.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+            frame.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
             frame.BackgroundTransparency = 0.75; frame.BorderSizePixel = 0
             frame.Active = true; frame.ZIndex = 200
             -- FIX: Draggable legacy removido; UIDragDetector + fallback UIS se agrega abajo
@@ -17376,20 +17710,20 @@ function CreateMainUI_SwimFlyGithub()
             lbl.Size = UDim2.new(1, 0, 0, 18); lbl.Position = UDim2.new(0, 0, 1, -22)
             lbl.BackgroundTransparency = 1; lbl.Text = "AUTO\nJUMP"
             lbl.TextSize = 9; lbl.Font = Enum.Font.Montserrat
-            lbl.TextColor3 = Color3.fromRGB(210, 240, 255); lbl.TextWrapped = true; lbl.ZIndex = 201
+            lbl.TextColor3 = Color3.fromRGB(255, 241, 210); lbl.TextWrapped = true; lbl.ZIndex = 201
             local dot = Instance.new("Frame", frame)
             dot.Size = UDim2.new(0, 8, 0, 8); dot.Position = UDim2.new(1, -12, 0, 4)
             dot.BackgroundColor3 = Color3.fromRGB(180, 180, 185); dot.BorderSizePixel = 0; dot.ZIndex = 202
             Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
             local function updateDot()
-                dot.BackgroundColor3 = AJ.enabled and Color3.fromRGB( 50, 255, 180) or Color3.fromRGB(200, 60, 60)
+                dot.BackgroundColor3 = AJ.enabled and Color3.fromRGB(255, 190,  50) or Color3.fromRGB(200,156, 60)
             end
             updateDot()
             frame.InputBegan:Connect(function(inp)
                 if inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-                TweenService:Create(frame, TweenInfo.new(0.08), {BackgroundColor3 = Color3.fromRGB(55, 55, 130)}):Play()
+                TweenService:Create(frame, TweenInfo.new(0.08), {BackgroundColor3 = Color3.fromRGB(130,106,  55)}):Play()
                 _w(0.1)
-                TweenService:Create(frame, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(20, 35, 80), BackgroundTransparency = 0.75}):Play()
+                TweenService:Create(frame, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(80, 61, 20), BackgroundTransparency = 0.75}):Play()
                 if AJ.enabled then stopAutoJump()
                 else startAutoJump() end
                 updateDot()
@@ -17456,7 +17790,7 @@ function CreateMainUI_SwimFlyGithub()
     -- Status bar JB
     local jbStatusF = Instance.new("Frame", jbSec)
     jbStatusF.Size = UDim2.new(1, -10, 0, 32)
-    jbStatusF.BackgroundColor3 = Color3.fromRGB(10, 22, 10)
+    jbStatusF.BackgroundColor3 = Color3.fromRGB(22, 18, 10)
     jbStatusF.BackgroundTransparency = 0.75
     jbStatusF.BorderSizePixel = 0
     Instance.new("UICorner", jbStatusF).CornerRadius = UDim.new(0, 8)
@@ -17474,7 +17808,7 @@ function CreateMainUI_SwimFlyGithub()
     jbStatusL.Size = UDim2.new(1, -10, 1, 0); jbStatusL.Position = UDim2.new(0, 8, 0, 0)
     jbStatusL.BackgroundTransparency = 1; jbStatusL.Text = "Jump Booster: OFF"
     jbStatusL.Font = Enum.Font.Montserrat; jbStatusL.TextSize = 11
-    jbStatusL.TextColor3 = Color3.fromRGB(255, 200, 200)
+    jbStatusL.TextColor3 = Color3.fromRGB(255, 238, 200)
     jbStatusL.TextXAlignment = Enum.TextXAlignment.Left; jbStatusL.ZIndex = 2
 
     -- Funcion de disparo del booster
@@ -17523,7 +17857,7 @@ function CreateMainUI_SwimFlyGithub()
             local burst = Instance.new("ParticleEmitter", att)
             burst.Lifetime = NumberRange.new(0.2, 0.5)
             burst.Speed = NumberRange.new(10, 20)
-            burst.Color = ColorSequence.new(Color3.fromRGB( 50, 255, 180))
+            burst.Color = ColorSequence.new(Color3.fromRGB(255, 190,  50))
             burst.Size = NumberSequence.new(0.3, 0)
             burst.Rate = 0; burst.Enabled = false
             burst:Emit(18)
@@ -17551,11 +17885,11 @@ function CreateMainUI_SwimFlyGithub()
                 end
             end)
             jbStatusL.Text = "Jump Booster: ON  tecla [" .. tostring(JB.keybind):gsub("Enum.KeyCode.", "") .. "]"
-            jbStatusL.TextColor3 = Color3.fromRGB( 50, 255, 180)
+            jbStatusL.TextColor3 = Color3.fromRGB(255, 190,  50)
             -- [notif removed]
         else
             jbStatusL.Text = "Jump Booster: OFF"
-            jbStatusL.TextColor3 = Color3.fromRGB(255, 200, 200)
+            jbStatusL.TextColor3 = Color3.fromRGB(255, 238, 200)
             -- [notif removed]
         end
     end, false)
@@ -17564,7 +17898,7 @@ function CreateMainUI_SwimFlyGithub()
     do
         local _jbKeyRow = Instance.new("Frame", jbSec)
         _jbKeyRow.Size = UDim2.new(1, -4, 0, 36)
-        _jbKeyRow.BackgroundColor3 = Color3.fromRGB(90, 15, 25)
+        _jbKeyRow.BackgroundColor3 = Color3.fromRGB(90, 66, 15)
         _jbKeyRow.BackgroundTransparency = 0.75
         _jbKeyRow.BorderSizePixel = 0
         Instance.new("UICorner", _jbKeyRow).CornerRadius = UDim.new(0, 8)
@@ -18598,7 +18932,7 @@ FU_N_LEFT=22; local FU_N_RIGHT=4
 function _fuBuildCard(parent, item, boxImage, posX, isWinner)
     local card=Instance.new("Frame",parent)
     card.Size=UDim2.new(0,FU_CARD_W,1,-16); card.Position=UDim2.new(0,posX,0,8)
-    card.BackgroundColor3=Color3.fromRGB(  3,   8,  18); card.BorderSizePixel=0; card.ZIndex=3
+    card.BackgroundColor3=Color3.fromRGB( 22,  18,  12); card.BorderSizePixel=0; card.ZIndex=3
     Instance.new("UICorner",card).CornerRadius=UDim.new(0,10)
     local cs=Instance.new("UIStroke",card); cs.Color=fuRC(item.rarity)
     cs.Thickness=isWinner and 3 or 1.5; cs.Transparency=isWinner and 0 or 0.6
@@ -18654,7 +18988,7 @@ function _fuPlayRoulette(box, wonItem)
     if not _fuRouletteGui.Parent then _fuRouletteGui.Parent=LocalPlayer.PlayerGui end
 
     bg=Instance.new("Frame",_fuRouletteGui)
-    bg.Size=UDim2.new(1,0,1,0); bg.BackgroundColor3=Color3.fromRGB(  3,   8,  18)
+    bg.Size=UDim2.new(1,0,1,0); bg.BackgroundColor3=Color3.fromRGB( 22,  18,  12)
     bg.BackgroundTransparency=0.85; bg.BorderSizePixel=0; bg.ZIndex=1
 
     titleLbl=Instance.new("TextLabel",_fuRouletteGui)
@@ -18666,7 +19000,7 @@ function _fuPlayRoulette(box, wonItem)
 
     boxImgFrame=Instance.new("Frame",_fuRouletteGui)
     boxImgFrame.Size=UDim2.new(0,90,0,90); boxImgFrame.Position=UDim2.new(0.5,-VP_W/2-110,0.5,-45)
-    boxImgFrame.BackgroundColor3=Color3.fromRGB(  3,   8,  18); boxImgFrame.BorderSizePixel=0; boxImgFrame.ZIndex=10
+    boxImgFrame.BackgroundColor3=Color3.fromRGB( 22,  18,  12); boxImgFrame.BorderSizePixel=0; boxImgFrame.ZIndex=10
     Instance.new("UICorner",boxImgFrame).CornerRadius=UDim.new(0,12)
     Instance.new("UIStroke",boxImgFrame).Color=ThemeColors.Primary
     boxImgLbl=Instance.new("ImageLabel",boxImgFrame)
@@ -18676,24 +19010,24 @@ function _fuPlayRoulette(box, wonItem)
 
     rouletteBg=Instance.new("Frame",_fuRouletteGui)
     rouletteBg.Size=UDim2.new(0,VP_W,0,165); rouletteBg.Position=UDim2.new(0.5,-VP_W/2,0.5,-82)
-    rouletteBg.BackgroundColor3=Color3.fromRGB(  3,   8,  18); rouletteBg.BorderSizePixel=0; rouletteBg.ZIndex=2
+    rouletteBg.BackgroundColor3=Color3.fromRGB( 22,  18,  12); rouletteBg.BorderSizePixel=0; rouletteBg.ZIndex=2
     Instance.new("UICorner",rouletteBg).CornerRadius=UDim.new(0,14)
     rbs=Instance.new("UIStroke",rouletteBg); rbs.Color=ThemeColors.Primary; rbs.Thickness=2.5
 
     centerLine=Instance.new("Frame",rouletteBg)
     centerLine.Size=UDim2.new(0,3,1,-10); centerLine.Position=UDim2.new(0.5,-1,0,5)
-    centerLine.BackgroundColor3=Color3.fromRGB(255,60,60); centerLine.BorderSizePixel=0; centerLine.ZIndex=10
+    centerLine.BackgroundColor3=Color3.fromRGB(255,193,60); centerLine.BorderSizePixel=0; centerLine.ZIndex=10
 
     triTop=Instance.new("ImageLabel",rouletteBg)
     triTop.Size=UDim2.new(0,18,0,12); triTop.Position=UDim2.new(0.5,-9,0,-1)
     triTop.BackgroundTransparency=1; triTop.Image="rbxassetid://4918357796"
-    triTop.ImageColor3=Color3.fromRGB(255,60,60); triTop.ZIndex=10
+    triTop.ImageColor3=Color3.fromRGB(255,193,60); triTop.ZIndex=10
 
     for _,side in ipairs({"Left","Right"}) do
         local f=Instance.new("Frame",rouletteBg)
         f.Size=UDim2.new(0,100,1,0)
         f.Position=side=="Left" and UDim2.new(0,0,0,0) or UDim2.new(1,-100,0,0)
-        f.BackgroundColor3=Color3.fromRGB(  3,   8,  18); f.BorderSizePixel=0; f.ZIndex=9
+        f.BackgroundColor3=Color3.fromRGB( 22,  18,  12); f.BorderSizePixel=0; f.ZIndex=9
         Instance.new("UICorner",f).CornerRadius=UDim.new(0,14)
         local g=Instance.new("UIGradient",f); g.Rotation=side=="Left" and 90 or 270
         g.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0),NumberSequenceKeypoint.new(1,1)})
@@ -18745,7 +19079,7 @@ function _fuPlayRoulette(box, wonItem)
                 cleanName=wonItem.id:gsub("_K_20%d%d$",""):gsub("_G_20%d%d$",""):gsub("_20%d%d$",""):gsub("_K$",""):gsub("_G$",""):gsub("_"," ")
                 banner=Instance.new("Frame",_fuRouletteGui)
                 banner.Size=UDim2.new(0,440,0,90); banner.Position=UDim2.new(0.5,-220,0.5,95)
-                banner.BackgroundColor3=Color3.fromRGB(  3,   8,  18); banner.BackgroundTransparency=1
+                banner.BackgroundColor3=Color3.fromRGB( 22,  18,  12); banner.BackgroundTransparency=1
                 banner.BorderSizePixel=0; banner.ZIndex=11
                 Instance.new("UICorner",banner).CornerRadius=UDim.new(0,14)
                 bs=Instance.new("UIStroke",banner); bs.Color=fuRC(wonItem.rarity); bs.Thickness=3
@@ -18774,7 +19108,7 @@ function _fuPlayRoulette(box, wonItem)
                 task.wait(0.4)
                 closeBtn=Instance.new("TextButton",_fuRouletteGui)
                 closeBtn.Size=UDim2.new(0,150,0,42); closeBtn.Position=UDim2.new(0.5,-75,0.5,200)
-                closeBtn.BackgroundColor3=Color3.fromRGB(  3,   8,  18); closeBtn.BorderSizePixel=0
+                closeBtn.BackgroundColor3=Color3.fromRGB( 22,  18,  12); closeBtn.BorderSizePixel=0
                 closeBtn.Text="CERRAR"; closeBtn.TextColor3=Color3.fromRGB(255, 210, 80)
                 closeBtn.FontFace = Font.fromEnum(Enum.Font.Arimo); closeBtn.TextSize=18; closeBtn.ZIndex=12
                 Instance.new("UICorner",closeBtn).CornerRadius=UDim.new(0,10)
@@ -18803,7 +19137,7 @@ function CreateMainUI_Toys()
 
     local prevBtn = Instance.new("TextButton", boxSelectorRow)
     prevBtn.Size=UDim2.new(0,32,0,32); prevBtn.Position=UDim2.new(0,0,0.5,-16)
-    prevBtn.BackgroundColor3=Color3.fromRGB(53, 26, 8); prevBtn.BorderSizePixel=0
+    prevBtn.BackgroundColor3=Color3.fromRGB(53, 39, 8); prevBtn.BorderSizePixel=0
     prevBtn.Text="<"; prevBtn.TextColor3=ThemeColors.Primary
     prevBtn.FontFace = Font.fromEnum(Enum.Font.Arimo); prevBtn.TextSize=18; prevBtn.AutoButtonColor=false
     Instance.new("UICorner",prevBtn).CornerRadius=UDim.new(0,8)
@@ -18811,7 +19145,7 @@ function CreateMainUI_Toys()
 
     local boxNameLbl = Instance.new("TextLabel", boxSelectorRow)
     boxNameLbl.Size=UDim2.new(1,-80,1,-4); boxNameLbl.Position=UDim2.new(0,38,0,2)
-    boxNameLbl.BackgroundColor3=Color3.fromRGB(  3,   8,  18); boxNameLbl.BackgroundTransparency=0.3
+    boxNameLbl.BackgroundColor3=Color3.fromRGB( 22,  18,  12); boxNameLbl.BackgroundTransparency=0.3
     boxNameLbl.BorderSizePixel=0; boxNameLbl.Text=FU_BOXES[1].name
     boxNameLbl.TextColor3=Color3.fromRGB(255,255,255); boxNameLbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
     boxNameLbl.TextSize=12; boxNameLbl.TextWrapped=true; boxNameLbl.ZIndex=2
@@ -18820,7 +19154,7 @@ function CreateMainUI_Toys()
 
     local nextBtn = Instance.new("TextButton", boxSelectorRow)
     nextBtn.Size=UDim2.new(0,32,0,32); nextBtn.Position=UDim2.new(1,-32,0.5,-16)
-    nextBtn.BackgroundColor3=Color3.fromRGB(53, 26, 8); nextBtn.BorderSizePixel=0
+    nextBtn.BackgroundColor3=Color3.fromRGB(53, 39, 8); nextBtn.BorderSizePixel=0
     nextBtn.Text=">"; nextBtn.TextColor3=ThemeColors.Primary
     nextBtn.FontFace = Font.fromEnum(Enum.Font.Arimo); nextBtn.TextSize=18; nextBtn.AutoButtonColor=false
     Instance.new("UICorner",nextBtn).CornerRadius=UDim.new(0,8)
@@ -18829,7 +19163,7 @@ function CreateMainUI_Toys()
     local boxCard = Instance.new("Frame", leftColumn)
     boxCard.Name                   = "FU_BoxCard"
     boxCard.Size                   = UDim2.new(1, -10, 0, 86)
-    boxCard.BackgroundColor3       = Color3.fromRGB(  3,   8,  18)
+    boxCard.BackgroundColor3       = Color3.fromRGB( 22,  18,  12)
     boxCard.BackgroundTransparency = 0.68
     boxCard.BorderSizePixel        = 0
     Instance.new("UICorner", boxCard).CornerRadius = UDim.new(0, 12)
@@ -18896,7 +19230,7 @@ function CreateMainUI_Toys()
  boxNameLbl.Text = box.name
         boxImg.Image    = box.image
         boxNameLbl.TextColor3 = box._live
-            and Color3.fromRGB(160, 160, 165)
+            and Color3.fromRGB(165, 163, 160)
             or  Color3.fromRGB(255,255,255)
         task.spawn(_fuScanWeapons)
     end
@@ -19216,7 +19550,7 @@ hubDecorationIds = {
 }
 hubDecorationNames = {"Sin decoracion", "[H] Gorra", "[X] Marco Calavera", " Accesorio 3"}
 
-hubBackgroundId = nil  -- fondo rbxassetid eliminado; se usa fondo rosa solido
+hubBackgroundId = nil  -- fondo rbxassetid eliminado; se usa fondo solido del hub
 hubBackgroundIndex = 1
 hubBackgroundIds = {}
 hubBackgroundNames = {}
@@ -19444,14 +19778,14 @@ function CreateMainUI_BackgroundSelector()
                 end
             end)
 
-            -- Feedback visual: flash rojo
+            -- Feedback visual: flash dorado
             pcall(function()
                 local sg = Instance.new("ScreenGui"); sg.ResetOnSpawn = false
                 sg.Name = "SLFlash"; sg.IgnoreGuiInset = true
                 sg.Parent = LocalPlayer.PlayerGui
                 local f = Instance.new("Frame", sg)
                 f.Size = UDim2.new(1,0,1,0)
-                f.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+                f.BackgroundColor3 = Color3.fromRGB(255,174, 0)
                 f.BackgroundTransparency = 0.35
                 f.BorderSizePixel = 0
                 TweenService:Create(f, TweenInfo.new(0.6), {BackgroundTransparency = 1}):Play()
@@ -20122,7 +20456,7 @@ function _createOverlayLabel(name, posY, textSize, font)
 
     -- Sin borde: elemento completamente flotante
     local stroke = Instance.new("UIStroke", pill)
-    stroke.Color           = Color3.fromRGB(0, 210, 255)
+    stroke.Color           = ThemeColors.Accent
     stroke.Thickness       = 0
     stroke.Transparency    = 1.0   -- invisible siempre
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -20201,7 +20535,7 @@ function CreateMainUI_GameInfo()
         -- Centrado horizontalmente, fijo 6px desde el borde superior de la pantalla
         _cpanel.AnchorPoint = Vector2.new(0.5, 0)
         _cpanel.Position = UDim2.new(0.5, 0, 0, 6)
-        _cpanel.BackgroundColor3 = Color3.fromRGB(5, 14, 30)
+        _cpanel.BackgroundColor3 = Color3.fromRGB(30, 22,  5)
         _cpanel.BackgroundTransparency = 1   -- sin fondo: flota sobre el juego
         _cpanel.BorderSizePixel = 0
         _cpanel.ZIndex = 60
@@ -20217,7 +20551,7 @@ function CreateMainUI_GameInfo()
         Instance.new("UICorner", _cpanel).CornerRadius = UDim.new(0, 14)
 
         local _cpStroke = Instance.new("UIStroke", _cpanel)
-        _cpStroke.Color = Color3.fromRGB(210, 85, 100)
+        _cpStroke.Color = Color3.fromRGB(210,170,  85)
         _cpStroke.Thickness = 0          -- sin borde
         _cpStroke.Transparency = 1.0     -- completamente invisible
         _cpStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -20262,7 +20596,7 @@ function CreateMainUI_GameInfo()
             _timerCaption.Text = "TIMER"
             _timerCaption.Font = Enum.Font.GothamBold
             _timerCaption.TextSize = 11
-            _timerCaption.TextColor3 = Color3.fromRGB(0, 180, 240)
+            _timerCaption.TextColor3 = Color3.fromRGB(200, 160, 80)
             _timerCaption.TextXAlignment = Enum.TextXAlignment.Left
             _timerCaption.ZIndex = 61
 
@@ -20292,7 +20626,7 @@ function CreateMainUI_GameInfo()
             _rolCaption.Text = "MI ROL"
             _rolCaption.Font = Enum.Font.GothamBold
             _rolCaption.TextSize = 11
-            _rolCaption.TextColor3 = Color3.fromRGB(0, 180, 240)
+            _rolCaption.TextColor3 = Color3.fromRGB(200, 160, 80)
             _rolCaption.TextXAlignment = Enum.TextXAlignment.Left
             _rolCaption.ZIndex = 61
 
@@ -20304,7 +20638,7 @@ function CreateMainUI_GameInfo()
             _rolVal.Text = "..."
             _rolVal.Font = Enum.Font.GothamBold
             _rolVal.TextSize = 18
-            _rolVal.TextColor3 = Color3.fromRGB(0, 255, 160)
+            _rolVal.TextColor3 = Color3.fromRGB(255, 174,   0)
             _rolVal.TextXAlignment = Enum.TextXAlignment.Right
             _rolVal.ZIndex = 61
 
@@ -20322,7 +20656,7 @@ function CreateMainUI_GameInfo()
             _pctCaption.Text = "MURDER%"
             _pctCaption.Font = Enum.Font.GothamBold
             _pctCaption.TextSize = 11
-            _pctCaption.TextColor3 = Color3.fromRGB(0, 180, 240)
+            _pctCaption.TextColor3 = Color3.fromRGB(200, 160, 80)
             _pctCaption.TextXAlignment = Enum.TextXAlignment.Left
             _pctCaption.ZIndex = 61
 
@@ -20366,7 +20700,7 @@ function CreateMainUI_GameInfo()
                     local sep = Instance.new("Frame", blk)
                     sep.Size = UDim2.new(0, 1, 0.6, 0)
                     sep.Position = UDim2.new(0, 0, 0.2, 0)
-                    sep.BackgroundColor3 = Color3.fromRGB(210, 85, 100)
+                    sep.BackgroundColor3 = Color3.fromRGB(210,170,  85)
                     sep.BackgroundTransparency = 0.7
                     sep.BorderSizePixel = 0
                     sep.ZIndex = 61
@@ -20379,7 +20713,7 @@ function CreateMainUI_GameInfo()
                 cap.Text = caption
                 cap.Font = Enum.Font.GothamBold
                 cap.TextSize = 10
-                cap.TextColor3 = Color3.fromRGB(0, 180, 240)
+                cap.TextColor3 = Color3.fromRGB(200, 160, 80)
                 cap.TextXAlignment = Enum.TextXAlignment.Center
                 cap.ZIndex = 61
 
@@ -20404,7 +20738,7 @@ function CreateMainUI_GameInfo()
             end
 
             local _timerVal = _makeBlock(_cpanel, "TIMER",   "--:--", Color3.fromRGB(255, 255, 255), 1)
-            local _rolVal   = _makeBlock(_cpanel, "MI ROL",  "...",   Color3.fromRGB(0, 255, 160),   2)
+            local _rolVal   = _makeBlock(_cpanel, "MI ROL",  "...",   Color3.fromRGB(255, 174,   0),   2)
             local _pctVal   = _makeBlock(_cpanel, "MURDER%", "...%",  Color3.fromRGB(255, 200, 60),  3)
 
             _G._cpTimerVal = _timerVal
@@ -20428,12 +20762,13 @@ function CreateMainUI_GameInfo()
             Freezer  = Color3.fromRGB(180, 220, 255),
             Runner   = Color3.fromRGB(255, 150,  60),
             Assassin = Color3.fromRGB(255, 140,   0),
-            Innocent = Color3.fromRGB(0,   255, 160),
+            Innocent = Color3.fromRGB(0,   255,  70),
         }
         local function _timerColor(s)
-            if s > 60 then return Color3.fromRGB(0, 230, 100)
-            elseif s > 30 then return Color3.fromRGB(255, 220, 0)
-            else return Color3.fromRGB(255, 60, 60) end
+            -- Timer: claro = sobra tiempo, ambar = medio, bronce = se acaba.
+            if s > 60 then return Color3.fromRGB(255,236,170)
+            elseif s > 30 then return Color3.fromRGB(255,200,0)
+            else return Color3.fromRGB(205,124,10) end
         end
         local function _fmt(s)
             return string.format("%d:%02d", math.floor(s/60), s%60)
@@ -20508,9 +20843,10 @@ function CreateMainUI_GameInfo()
                     pv.Text = displayTxt
                     local n = tonumber(numStr)
                     if n then
-                        if n >= 50 then pv.TextColor3 = Color3.fromRGB(255, 60, 60)
-                        elseif n >= 25 then pv.TextColor3 = Color3.fromRGB(255, 200, 60)
-                        else pv.TextColor3 = Color3.fromRGB(0, 220, 100) end
+                        -- MURDER%: bronce = alto (peligro), ambar = medio, claro = bajo.
+                        if n >= 50 then pv.TextColor3 = Color3.fromRGB(205,124,10)
+                        elseif n >= 25 then pv.TextColor3 = Color3.fromRGB(255,200,0)
+                        else pv.TextColor3 = Color3.fromRGB(255,236,170) end
                     else
                         pv.TextColor3 = Color3.fromRGB(200, 200, 200)
                     end
@@ -20560,9 +20896,10 @@ function CreateMainUI_GameInfo()
 
         local function _fmt(s) return string.format("%d:%02d", math.floor(s/60), s % 60) end
         local function _color(s)
-            if s > 120 then return Color3.fromRGB(236, 140, 32)
-            elseif s > 60 then return Color3.fromRGB(255, 180, 30)
-            else return Color3.fromRGB(255, 60, 60) end
+            -- Timer del panel: claro = sobra tiempo, ambar = medio, bronce = se acaba.
+            if s > 120 then return Color3.fromRGB(255,236,170)
+            elseif s > 60 then return Color3.fromRGB(255,200,0)
+            else return Color3.fromRGB(205,124,10) end
         end
 
         -- -- Connections (limpieza al desactivar) -------------------------
@@ -20843,7 +21180,7 @@ function CreateMainUI_GameInfo()
             Freezer  = Color3.fromRGB(200, 200, 200),
             Runner   = Color3.fromRGB(198, 100, 17),
             Assassin = Color3.fromRGB(255,140,  0),
-            Innocent = Color3.fromRGB(  0, 255, 160),
+            Innocent = Color3.fromRGB(  0, 255,  70),
         }
  CreateToggle(leftColumn, "Notify ROL My", function(on)
             _notifyRolState.enabled = on
@@ -21114,12 +21451,13 @@ function CreateMainUI_GameInfo()
  lbl.Text = "MURDER% " .. lastPct .. "%"
             n = tonumber(lastPct)
             if n then
+                -- MURDER%: bronce = alto (peligro), ambar = medio, claro = bajo.
                 if n >= 50 then
-                    lbl.TextColor3 = Color3.fromRGB(58, 58, 58)
+                    lbl.TextColor3 = Color3.fromRGB(205,124,10)
                 elseif n >= 25 then
-                    lbl.TextColor3 = Color3.fromRGB(60, 60, 60)
+                    lbl.TextColor3 = Color3.fromRGB(255,200,0)
                 else
-                    lbl.TextColor3 = Color3.fromRGB(236, 140, 32)
+                    lbl.TextColor3 = Color3.fromRGB(255,236,170)
                 end
             else
                 lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -21182,7 +21520,7 @@ function CreateMainUI_FakeUnbox()
     local fuInner = Instance.new("Frame", fuGlow)
     fuInner.Size = UDim2.new(1, -4, 1, -4)
     fuInner.Position = UDim2.new(0, 2, 0, 2)
-    fuInner.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
+    fuInner.BackgroundColor3 = Color3.fromRGB( 22,  18,  12)
     fuInner.BackgroundTransparency = 0
     fuInner.BorderSizePixel = 0
     Instance.new("UICorner", fuInner).CornerRadius = UDim.new(0, 14)
@@ -21203,7 +21541,7 @@ function CreateMainUI_FakeUnbox()
     local fuIconBox = Instance.new("Frame", fuInner)
     fuIconBox.Size = UDim2.new(0, 54, 0, 54)
     fuIconBox.Position = UDim2.new(0, 9, 0.5, -27)
-    fuIconBox.BackgroundColor3 = Color3.fromRGB(54, 27, 8)
+    fuIconBox.BackgroundColor3 = Color3.fromRGB(54, 39, 8)
     fuIconBox.BackgroundTransparency = 0.3
     fuIconBox.BorderSizePixel = 0
     Instance.new("UICorner", fuIconBox).CornerRadius = UDim.new(0, 10)
@@ -21907,7 +22245,7 @@ function CreateMainUI_SecureAuto()
         frame = Instance.new("Frame", bGui)
         frame.Size = UDim2.new(0, 200, 0, 58)
         frame.Position = UDim2.new(0, 20, 0, 200)
-        frame.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
+        frame.BackgroundColor3 = Color3.fromRGB( 22,  18,  12)
         frame.BackgroundTransparency = 0.72
         frame.BorderSizePixel = 0
         frame.Active = true
@@ -21937,7 +22275,7 @@ function CreateMainUI_SecureAuto()
 
         local function _updateBtnText()
  btn.Text = _secAuto.enabled and " SECURE ON" or " SECURE OFF"
-            btn.TextColor3 = _secAuto.enabled and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(58, 58, 58)
+            btn.TextColor3 = _secAuto.enabled and Color3.fromRGB(255,190, 50) or Color3.fromRGB(58, 58, 58)
         end
         _updateBtnText()
 
@@ -22175,12 +22513,12 @@ function CreateMainUI_ResearchFacility_DISABLED()
     -- Status del mapa
     local mapStatusLbl = Instance.new("TextLabel", rightColumn)
     mapStatusLbl.Size = UDim2.new(1, -10, 0, 22)
-    mapStatusLbl.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
+    mapStatusLbl.BackgroundColor3 = Color3.fromRGB( 22,  18,  12)
     mapStatusLbl.BackgroundTransparency = 0.3
     mapStatusLbl.BorderSizePixel = 0
     mapStatusLbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
     mapStatusLbl.TextSize = 11
-    mapStatusLbl.TextColor3 = Color3.fromRGB(180, 180, 200)
+    mapStatusLbl.TextColor3 = Color3.fromRGB(200, 194, 180)
     mapStatusLbl.TextXAlignment = Enum.TextXAlignment.Center
     mapStatusLbl.Text = "Mapa: no detectado"
     mapStatusLbl.ZIndex = 12
@@ -22355,7 +22693,7 @@ function CreateMainUI_KnifeDodge()
         _infoFrame.Size                  = UDim2.new(0, 90, 0, 40)
         _infoFrame.Position              = UDim2.new(0, 12, 0, 12)
         _infoFrame.AnchorPoint           = Vector2.new(0, 0)
-        _infoFrame.BackgroundColor3      = Color3.fromRGB(  3,   8,  18)  -- negro hub
+        _infoFrame.BackgroundColor3      = Color3.fromRGB( 22,  18,  12)  -- negro hub
         _infoFrame.BackgroundTransparency = 0.15
         _infoFrame.BorderSizePixel       = 0
         _infoFrame.ZIndex                = 50
@@ -22372,7 +22710,7 @@ function CreateMainUI_KnifeDodge()
         _infoGrad.Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0,    Color3.fromRGB(220, 220, 220)),
             ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 200, 120)),
-            ColorSequenceKeypoint.new(0.66, Color3.fromRGB(  3,   8,  18)),
+            ColorSequenceKeypoint.new(0.66, Color3.fromRGB( 22,  18,  12)),
             ColorSequenceKeypoint.new(1,    Color3.fromRGB(220, 220, 220)),
         })
         RegisterShimmer(_infoGrad, 60, 0)
@@ -22392,7 +22730,7 @@ function CreateMainUI_KnifeDodge()
         layout.Padding              = UDim.new(0, 2)
         layout.SortOrder            = Enum.SortOrder.LayoutOrder
 
-        -- Label FPS -- texto verde, bold
+        -- Label FPS -- texto dorado, bold
         _infoFpsLbl = Instance.new("TextLabel", _infoFrame)
         _infoFpsLbl.Name                 = "FPS"
         _infoFpsLbl.Size                 = UDim2.new(1, 0, 0, 14)
@@ -22478,7 +22816,7 @@ function CreateMainUI_KnifeDodge()
                 _infoMsLbl.Text    = showMs and ("Ping: " .. ms .. "ms") or ""
                 _infoMsLbl.Visible = showMs
                 _infoMsLbl.TextColor3 = ms < 80 and Color3.fromRGB(247, 151, 36)
-                    or ms < 150 and ThemeColors.Primary or Color3.fromRGB(255,80,80)
+                    or ms < 150 and ThemeColors.Primary or Color3.fromRGB(255,200,80)
             end
         end)
     end
@@ -22622,11 +22960,11 @@ function CreateBorderedSection(parent, title)
     wStroke.Transparency = 0.0
     wStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local wStrokeGrad = Instance.new("UIGradient", wStroke)
-    -- Aurora palette: teal -> cyan -> purple -> teal
-    local _AC1 = ThemeColors.Primary    -- celeste principal
-    local _AC2 = ThemeColors.Accent    -- cyan brillante
-    local _AC3 = ThemeColors.Secondary   -- morado aurora
-    local _AC4 = ThemeColors.Primary   -- celeste medio
+    -- Aurora palette: oro -> ambar -> bronce -> oro
+    local _AC1 = ThemeColors.Primary    -- oro principal
+    local _AC2 = ThemeColors.Accent    -- ambar brillante
+    local _AC3 = ThemeColors.Secondary   -- bronce aurora
+    local _AC4 = ThemeColors.Primary   -- oro medio
     wStrokeGrad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0,   _AC1),
         ColorSequenceKeypoint.new(0.25, _AC2),
@@ -22778,7 +23116,7 @@ function CreateMainTab()
         local _resetAllBtn = Instance.new("TextButton", _resetAllContainer)
         _resetAllBtn.Size = UDim2.new(1, -6, 1, -6)
         _resetAllBtn.Position = UDim2.new(0, 3, 0, 3)
-        _resetAllBtn.BackgroundColor3 = Color3.fromRGB(4, 14, 28)
+        _resetAllBtn.BackgroundColor3 = Color3.fromRGB(28, 20,  4)
         _resetAllBtn.BackgroundTransparency = 0.18
         _resetAllBtn.BorderSizePixel = 0
         _resetAllBtn.AutoButtonColor = false
@@ -22789,9 +23127,9 @@ function CreateMainTab()
         -- Gradiente glassmorphism violeta/oscuro
         local _rabGrad = Instance.new("UIGradient", _resetAllBtn)
         _rabGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(20, 8, 40)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(10, 4, 24)),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(20, 8, 40)),
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(40,30,  8)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(24,18,  4)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(40,30,  8)),
         })
         _rabGrad.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0,   0.30),
@@ -22802,15 +23140,15 @@ function CreateMainTab()
 
         -- Borde neon cian brillante (estilo USE)
         local _rabStroke = Instance.new("UIStroke", _resetAllBtn)
-        _rabStroke.Color = Color3.fromRGB(0, 210, 240)
+        _rabStroke.Color = Color3.fromRGB(200, 160, 80)
         _rabStroke.Thickness = 1.8
         _rabStroke.Transparency = 0.10
         _rabStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         local _rabStrokeGrad = Instance.new("UIGradient", _rabStroke)
         _rabStrokeGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(180, 60, 255)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0,  220, 255)),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 60, 255)),
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(255,193,  60)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255,  174,   0)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(255,193,  60)),
         })
         _rabStrokeGrad.Rotation = 90
 
@@ -22820,7 +23158,7 @@ function CreateMainTab()
         _rabIcon.Position = UDim2.new(0, 0, 0, 0)
         _rabIcon.BackgroundTransparency = 1
         _rabIcon.Text = ""
-        _rabIcon.TextColor3 = Color3.fromRGB(220, 180, 255)
+        _rabIcon.TextColor3 = Color3.fromRGB(255, 231, 180)
         _rabIcon.Font = Enum.Font.GothamBold
         _rabIcon.TextSize = 1
         _rabIcon.TextXAlignment = Enum.TextXAlignment.Left
@@ -22832,7 +23170,7 @@ function CreateMainTab()
         _rabLbl.Position = UDim2.new(0, 8, 0, 0)
         _rabLbl.BackgroundTransparency = 1
         _rabLbl.Text = "RESET ALL TOGGLES"
-        _rabLbl.TextColor3 = Color3.fromRGB(220, 200, 255)
+        _rabLbl.TextColor3 = Color3.fromRGB(255, 238, 200)
         _rabLbl.Font = Enum.Font.GothamBold
         _rabLbl.TextSize = 13
         _rabLbl.TextXAlignment = Enum.TextXAlignment.Center
@@ -22840,30 +23178,30 @@ function CreateMainTab()
 
         -- Glow sutil en el texto
         local _rabTxtStroke = Instance.new("UIStroke", _rabLbl)
-        _rabTxtStroke.Color = Color3.fromRGB(0, 210, 255)
+        _rabTxtStroke.Color = ThemeColors.Accent
         _rabTxtStroke.Thickness = 1.0
         _rabTxtStroke.Transparency = 0.4
 
         -- Hover estilo USE
         _resetAllBtn.MouseEnter:Connect(function()
-            TweenService:Create(_resetAllBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(8, 20, 45), BackgroundTransparency = 0.05}):Play()
-            TweenService:Create(_rabStroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(0, 240, 255), Thickness = 2.5, Transparency = 0.0}):Play()
+            TweenService:Create(_resetAllBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(45, 33,  8), BackgroundTransparency = 0.05}):Play()
+            TweenService:Create(_rabStroke, TweenInfo.new(0.15), {Color = ThemeColors.Accent, Thickness = 2.5, Transparency = 0.0}):Play()
             TweenService:Create(_rabLbl, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
         end)
         _resetAllBtn.MouseLeave:Connect(function()
-            TweenService:Create(_resetAllBtn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(4, 14, 28), BackgroundTransparency = 0.18}):Play()
-            TweenService:Create(_rabStroke, TweenInfo.new(0.18), {Color = Color3.fromRGB(0, 210, 240), Thickness = 1.8, Transparency = 0.10}):Play()
-            TweenService:Create(_rabLbl, TweenInfo.new(0.18), {TextColor3 = Color3.fromRGB(220, 200, 255)}):Play()
+            TweenService:Create(_resetAllBtn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(28, 20,  4), BackgroundTransparency = 0.18}):Play()
+            TweenService:Create(_rabStroke, TweenInfo.new(0.18), {Color = Color3.fromRGB(200, 160, 80), Thickness = 1.8, Transparency = 0.10}):Play()
+            TweenService:Create(_rabLbl, TweenInfo.new(0.18), {TextColor3 = Color3.fromRGB(255, 238, 200)}):Play()
         end)
 
         -- Click: apagar todos los toggles y cortar sus conexiones
         _resetAllBtn.Activated:Connect(function()
             -- Flash visual: pulso cian brillante estilo USE
-            TweenService:Create(_resetAllBtn, TweenInfo.new(0.06), {BackgroundColor3 = Color3.fromRGB(0, 160, 200), BackgroundTransparency = 0.05}):Play()
+            TweenService:Create(_resetAllBtn, TweenInfo.new(0.06), {BackgroundColor3 = Color3.fromRGB(190, 145, 65), BackgroundTransparency = 0.05}):Play()
             TweenService:Create(_rabStroke, TweenInfo.new(0.06), {Color = Color3.fromRGB(255, 255, 255), Thickness = 3}):Play()
             task.wait(0.12)
-            TweenService:Create(_resetAllBtn, TweenInfo.new(0.25), {BackgroundColor3 = Color3.fromRGB(4, 14, 28), BackgroundTransparency = 0.18}):Play()
-            TweenService:Create(_rabStroke, TweenInfo.new(0.25), {Color = Color3.fromRGB(0, 210, 240), Thickness = 1.8}):Play()
+            TweenService:Create(_resetAllBtn, TweenInfo.new(0.25), {BackgroundColor3 = Color3.fromRGB(28, 20,  4), BackgroundTransparency = 0.18}):Play()
+            TweenService:Create(_rabStroke, TweenInfo.new(0.25), {Color = Color3.fromRGB(200, 160, 80), Thickness = 1.8}):Play()
 
             local _count = 0
             local _ts = _G._toggleStates or {}
@@ -23091,7 +23429,7 @@ function CreateMainTab()
             end
             -- Actualizar color del boton flotante si existe
             if _ncBtnRef and _ncBtnRef.Parent then
-                _ncBtnRef.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+                _ncBtnRef.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
                 _ncBtnRef.BackgroundTransparency = 0.75
                 _ncBtnRef.Text = "NC"
             end
@@ -23134,7 +23472,7 @@ function CreateMainTab()
             end)
             -- Actualizar color del boton flotante
             if _ncBtnRef and _ncBtnRef.Parent then
-                _ncBtnRef.BackgroundColor3 = Color3.fromRGB( 50, 255, 180)
+                _ncBtnRef.BackgroundColor3 = Color3.fromRGB(255, 190,  50)
                 _ncBtnRef.Text = "NC "
             end
         end
@@ -23191,18 +23529,18 @@ function CreateMainTab()
             if _ncIsMobile then
                 local _ncMobileTip = Instance.new("TextLabel", _ncSection)
                 _ncMobileTip.Size = UDim2.new(1, -8, 0, 32)
-                _ncMobileTip.BackgroundColor3 = Color3.fromRGB(80, 15, 25)
+                _ncMobileTip.BackgroundColor3 = Color3.fromRGB(80, 59, 15)
                 _ncMobileTip.BackgroundTransparency = 0.5
                 _ncMobileTip.BorderSizePixel = 0
                 _ncMobileTip.Text = "?? Mobile: use the 'Noclip (Button)' below"
-                _ncMobileTip.TextColor3 = Color3.fromRGB(255, 175, 188)
+                _ncMobileTip.TextColor3 = Color3.fromRGB(255, 230, 175)
                 _ncMobileTip.FontFace = Font.fromEnum(Enum.Font.Montserrat)
                 _ncMobileTip.TextSize = 10
                 _ncMobileTip.TextWrapped = true
                 _ncMobileTip.ZIndex = 13
                 Instance.new("UICorner", _ncMobileTip).CornerRadius = UDim.new(0, 6)
                 local _ncTS = Instance.new("UIStroke", _ncMobileTip)
-                _ncTS.Color = Color3.fromRGB(210, 85, 100); _ncTS.Thickness = 1; _ncTS.Transparency = 0.4
+                _ncTS.Color = Color3.fromRGB(210,170,  85); _ncTS.Thickness = 1; _ncTS.Transparency = 0.4
             end
         end
 
@@ -23738,10 +24076,10 @@ function CreateMainTab()
         _lbl.Font=Enum.Font.Montserrat; _lbl.TextSize=11
         _lbl.TextXAlignment=Enum.TextXAlignment.Left; _lbl.ZIndex=13
         local _box=Instance.new("TextBox",_spSec)
-        _box.Size=UDim2.new(1,-8,0,28); _box.BackgroundColor3=Color3.fromRGB(10,20,8)
+        _box.Size=UDim2.new(1,-8,0,28); _box.BackgroundColor3=Color3.fromRGB(20,16,8)
         _box.BackgroundTransparency = 0.75; _box.BorderSizePixel=0; _box.Text=_ss.currentId
         _box.TextColor3=ThemeColors.Primary; _box.PlaceholderText="ID de la cancion..."
-        _box.PlaceholderColor3=Color3.fromRGB(80,100,70); _box.Font=Enum.Font.Montserrat
+        _box.PlaceholderColor3=Color3.fromRGB(100, 90,70); _box.Font=Enum.Font.Montserrat
         _box.TextSize=13; _box.ClearTextOnFocus=false; _box.ZIndex=13
         Instance.new("UICorner",_box).CornerRadius=UDim.new(0,6)
         local _bs=Instance.new("UIStroke",_box); _bs.Color=ThemeColors.Primary
@@ -26287,7 +26625,7 @@ function startCoinESPLoop()
         local hl = Instance.new("Highlight")
         hl.Name              = "CoinChams"
         hl.FillColor         = Color3.fromRGB(255, 215, 0)    -- dorado
-        hl.OutlineColor      = Color3.fromRGB(255, 255, 80)
+        hl.OutlineColor      = Color3.fromRGB(255, 200, 80)
         hl.FillTransparency  = 0.35
         hl.OutlineTransparency = 0
         hl.DepthMode         = Enum.HighlightDepthMode.AlwaysOnTop
@@ -26316,7 +26654,7 @@ function startCoinESPLoop()
                 local hl = Instance.new("Highlight")
                 hl.Name              = "CoinChams"
                 hl.FillColor         = Color3.fromRGB(255, 215, 0)
-                hl.OutlineColor      = Color3.fromRGB(255, 255, 80)
+                hl.OutlineColor      = Color3.fromRGB(255, 200, 80)
                 hl.FillTransparency  = 0.35
                 hl.OutlineTransparency = 0
                 hl.DepthMode         = Enum.HighlightDepthMode.AlwaysOnTop
@@ -26352,9 +26690,9 @@ end
 
 -- Colores globales de cada sistema visual (usuario puede cambiar a verde/rojo/azul)
 _G._vsColors = _G._vsColors or {
-    cham     = Color3.fromRGB(50,  200,  80),   -- verde (Innocent)
+    cham     = Color3.fromRGB( 0,  235,  70),   -- verde (Innocent)
     outline  = Color3.fromRGB( 80, 160, 255),   -- azul por defecto
-    esp      = Color3.fromRGB( 60, 220, 100),   -- verde por defecto
+    esp      = Color3.fromRGB(  0, 245,  70),   -- verde por defecto
     box      = Color3.fromRGB(255, 170,  60),   -- naranja por defecto
     skeleton = Color3.fromRGB(255, 255, 255),   -- blanco por defecto
     tracer   = Color3.fromRGB(255,  60,  60),   -- rojo por defecto
@@ -26369,6 +26707,11 @@ VisualState = {
                  knife=false, coins=false },
     outline  = { everyone=false, murderer=false, sheriff=false, hero=false,
                  assassin=false, dead=false, survivor=false, zombie=false, knife=false },
+    -- v58: highlight ya vive aca. Antes se creaba recien al construir la card
+    -- HIGHLIGHT del tab VISUALS, y hasta entonces updateHighlight leia nil y no
+    -- pintaba nada aunque el toggle estuviera guardado en disco.
+    highlight = { everyone=false, murderer=false, sheriff=false, hero=false,
+                 assassin=false, dead=false, innocent=false, survivor=false, zombie=false },
     box      = { everyone=false, murderer=false, sheriff=false, hero=false,
                  assassin=false, dead=false, survivor=false, zombie=false, knife=false },
     skeleton = { everyone=false, murderer=false, sheriff=false, hero=false,
@@ -26403,12 +26746,28 @@ do
         ["Cham Hero Only"]     = {VisualState.cham, "hero"},
         ["Cham Assassin Only"] = {VisualState.cham, "assassin"},
         ["Cham Dead Only"]     = {VisualState.cham, "dead"},
-        -- Outline (Highlight)
-        ["Highlight Everyone"]      = {VisualState.outline, "everyone"},
-        ["Highlight Murderer Only"] = {VisualState.outline, "murderer"},
-        ["Highlight Sheriff Only"]  = {VisualState.outline, "sheriff"},
-        ["Highlight Hero Only"]     = {VisualState.outline, "hero"},
-        ["Highlight Assassin Only"] = {VisualState.outline, "assassin"},
+        -- Highlight (solo bordes) -- v58: apuntaban a VisualState.outline, que es
+        -- la tabla de los toggles "Outline X". Con el reparto nuevo (Highlight =
+        -- bordes, Outline = cuerpo entero) esa mezcla restauraba el estilo
+        -- equivocado, asi que cada familia va a su propia tabla.
+        ["Highlight Everyone"]      = {VisualState.highlight, "everyone"},
+        ["Highlight Murderer Only"] = {VisualState.highlight, "murderer"},
+        ["Highlight Sheriff Only"]  = {VisualState.highlight, "sheriff"},
+        ["Highlight Hero Only"]     = {VisualState.highlight, "hero"},
+        ["Highlight Assassin Only"] = {VisualState.highlight, "assassin"},
+        ["Highlight Innocent Only"] = {VisualState.highlight, "innocent"},
+        ["Highlight Survivor Only"] = {VisualState.highlight, "survivor"},
+        ["Highlight Zombie Only"]   = {VisualState.highlight, "zombie"},
+        ["Highlight Dead Only"]     = {VisualState.highlight, "dead"},
+        -- Outline (cuerpo entero) -- no tenian entrada, no se restauraban
+        ["Outline Everyone"]      = {VisualState.outline, "everyone"},
+        ["Outline Murderer Only"] = {VisualState.outline, "murderer"},
+        ["Outline Sheriff Only"]  = {VisualState.outline, "sheriff"},
+        ["Outline Hero Only"]     = {VisualState.outline, "hero"},
+        ["Outline Assassin Only"] = {VisualState.outline, "assassin"},
+        ["Outline Survivor Only"] = {VisualState.outline, "survivor"},
+        ["Outline Zombie Only"]   = {VisualState.outline, "zombie"},
+        ["Outline Dead Only"]     = {VisualState.outline, "dead"},
         -- Box ESP
         ["Box ESP Everyone"]      = {VisualState.box, "everyone"},
         ["Box ESP Murderer Only"] = {VisualState.box, "murderer"},
@@ -26516,8 +26875,8 @@ end)
 ChamRaggyState = {
     enabled     = false,
     highlights  = {},   -- { [Model] = Highlight }
-    fillColor   = Color3.fromRGB(255, 0,  40),       -- rojo vivo
-    outlineColor = Color3.fromRGB(255,   0,  40),
+    fillColor   = Color3.fromRGB(255,174,   0),       -- ambar vivo
+    outlineColor = Color3.fromRGB(255, 174,   0),
     fillTransp  = 0.4,
     outTransp   = 0.0,
     conn        = nil,  -- workspace.DescendantAdded connection
@@ -26556,9 +26915,9 @@ do
                 if model.Name == p.Name or modelName:find(p.Name:lower()) then
                     local role = GetPlayerRole(p)
                     if role == "Murderer" then
-                        return Color3.fromRGB(255, 60, 60), Color3.fromRGB(255, 180, 180)
+                        return Color3.fromRGB(255,193, 60), Color3.fromRGB(255, 231, 180)
                     elseif role == "Sheriff" or role == "Hero" then
-                        return Color3.fromRGB(80, 80, 85), Color3.fromRGB(80, 80, 85)
+                        return Color3.fromRGB(85, 83, 80), Color3.fromRGB(85, 83, 80)
                     end
                 end
             end
@@ -26689,12 +27048,12 @@ function colorOf(role)
     -- FIX: verde hasta que murderer o sheriff sean detectados
     local rolesKnown = (_roleCache.murderer ~= nil) or (_roleCache.sheriff ~= nil)
     if not rolesKnown then
-        return Color3.fromRGB(  0, 255, 160)  -- VERDE Innocent (todos innocents hasta detectar)
+        return Color3.fromRGB(  0, 255,  70)  -- VERDE Innocent (todos innocents hasta detectar)
     end
     if role == "Murderer"  then return Color3.fromRGB(255,   0,  40)  end  -- rojo
     if role == "Sheriff"   then return Color3.fromRGB(  0, 140, 255)  end  -- Azul Sheriff
     if role == "Hero"      then return Color3.fromRGB(255, 230, 0)    end
-    return Color3.fromRGB(  0, 255, 160)  -- Innocent / resto (verde)
+    return Color3.fromRGB(  0, 255,  70)  -- Innocent / resto (verde)
 end
 
 -- vsShow: determina si el ESP/Cham debe mostrarse para este jugador
@@ -26840,7 +27199,7 @@ function updateBoard(player)
         hbBg.Name               = "HBBg"
         hbBg.Size               = UDim2.new(0.85, 0, 0.18, 0)
         hbBg.Position           = UDim2.new(0.075, 0, 0.80, 0)
-        hbBg.BackgroundColor3   = Color3.fromRGB(  3,   8,  18)
+        hbBg.BackgroundColor3   = Color3.fromRGB( 22,  18,  12)
         hbBg.BackgroundTransparency = 0.3
         hbBg.BorderSizePixel    = 0
         Instance.new("UICorner", hbBg).CornerRadius = UDim.new(1, 0)
@@ -26893,9 +27252,14 @@ function updateBoard(player)
                 if math.abs(pct - prevPct) > 0.01 then
                     hbFill:SetAttribute("_pct", pct)
                     hbFill.Size = UDim2.new(pct, 0, 1, 0)
-                    local r2 = math.min(1, 2 * (1 - pct))
-                    local g2 = math.min(1, 2 * pct)
-                    hbFill.BackgroundColor3 = Color3.new(r2, g2, 0.1)
+                    -- Vida en tonos de oro: bronce (205,124,10) con poca vida
+                    -- -> oro claro (255,236,170) con la vida llena.
+                    local _hp = math.clamp(pct, 0, 1)
+                    hbFill.BackgroundColor3 = Color3.new(
+                        0.804 + 0.196 * _hp,
+                        0.486 + 0.439 * _hp,
+                        0.039 + 0.628 * _hp
+                    )
                 end
             end
         end
@@ -26903,48 +27267,60 @@ function updateBoard(player)
 end
 
 -- ==================================================================
--- OUTLINE -- BoxHandleAdornment (PieceOutline) por cada parte del cuerpo
--- Funciona igual que PieceCham pero con Transparency alta para efecto de borde
+-- OUTLINE ESP v58 -- PINTA EL CUERPO COMPLETO
+-- Antes esto ponia un BoxHandleAdornment ("PieceOutline") por cada parte:
+-- salian cajas sueltas, los accesorios quedaban a pedazos y costaba una
+-- instancia por parte del personaje. Ahora es UN solo Highlight sobre el
+-- modelo, con relleno del color del rol (cuerpo entero) y contorno visible,
+-- todo AlwaysOnTop para que se vea a traves de las paredes.
+-- El reparto con el Highlight ESP quedo asi:
+--   Highlight ESP -> solo los bordes  (FillTransparency = 1)
+--   Outline ESP   -> el cuerpo entero (FillTransparency = _OUT_FILL_TRANSP)
+-- Los nombres de las dos funciones no cambian: hay 6 call sites repartidos
+-- por el archivo (updateOutline, fin de ronda, limpieza de personaje) y
+-- todos siguen andando igual.
+_OUT_FILL_TRANSP = 0.12   -- 0 = totalmente solido; 0.12 deja ver la silueta
+
 function _aplicarPieceOutline(char, color)
-    local _now = tick()
-    if not _outCacheTs[char] or (_now - _outCacheTs[char]) > 3 then
+    if not char or not char.Parent then return end
+    local hl = char:FindFirstChild("PieceOutlineHL")
+    if hl and not hl:IsA("Highlight") then
+        pcall(function() hl:Destroy() end)
+        hl = nil
+    end
+    if hl and hl.Adornee ~= char then
+        pcall(function() hl:Destroy() end)
+        hl = nil
+    end
+    if not hl then
+        -- Primera pasada sobre este char: barrer los adornos del esquema viejo.
+        -- Va aca adentro a proposito, asi el GetDescendants() corre una sola vez
+        -- por personaje y no en cada tick del instanceLoop.
         _outPartList[char] = nil
-        _outCacheTs[char]  = _now
-    end
-    if not _outPartList[char] then
-        local parts = {}
-        for _, part in ipairs(char:GetDescendants()) do
-            -- FIX DISAPPEAR: mismo fix que _chamPartList, no filtrar por Transparency
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                parts[#parts+1] = part
+        _outCacheTs[char]  = nil
+        for _, desc in ipairs(char:GetDescendants()) do
+            if desc:IsA("BoxHandleAdornment") and desc.Name == "PieceOutline" then
+                pcall(function() desc:Destroy() end)
             end
-        end
-        _outPartList[char] = parts
-    end
-    for _, part in ipairs(_outPartList[char]) do
-        if not part.Parent then _outPartList[char] = nil; break end
-        local prev = part:FindFirstChild("PieceOutline")
-        if prev and prev:IsA("BoxHandleAdornment") then
-            if _color3Equals(prev.Color3, color) then
-                continue
-            else
-                pcall(function() prev:Destroy() end)
-            end
-        elseif prev then
-            pcall(function() prev:Destroy() end)
         end
         pcall(function()
-            local b = Instance.new("BoxHandleAdornment")
-            b.Name         = "PieceOutline"
-            b.Size         = part.Size + Vector3.new(0.02, 0.02, 0.02)
-            b.AlwaysOnTop  = true
-            b.ZIndex       = 4
-            b.Adornee      = part
-            b.Color3       = color
-            b.Transparency = 0.35  -- cuerpo completo relleno semi-transparente
-            b.CFrame       = CFrame.new(0, 0, 0)
-            b.Parent       = part
+            local h = Instance.new("Highlight")
+            h.Name                = "PieceOutlineHL"
+            h.FillColor           = color
+            h.FillTransparency    = _OUT_FILL_TRANSP
+            h.OutlineColor        = color
+            h.OutlineTransparency = 0
+            h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+            h.Adornee             = char
+            h.Parent              = char
         end)
+        return
+    end
+    if not _color3Equals(hl.FillColor, color) then
+        pcall(function() hl.FillColor = color; hl.OutlineColor = color end)
+    end
+    if hl.FillTransparency ~= _OUT_FILL_TRANSP then
+        pcall(function() hl.FillTransparency = _OUT_FILL_TRANSP end)
     end
 end
 
@@ -26956,10 +27332,21 @@ function _limpiarPieceOutline(char)
     for _, desc in ipairs(char:GetDescendants()) do
         if desc:IsA("BoxHandleAdornment") and desc.Name == "PieceOutline" then
             toDestroy[#toDestroy+1] = desc
+        elseif desc:IsA("Highlight") and desc.Name == "PieceOutlineHL" then
+            toDestroy[#toDestroy+1] = desc
         end
     end
     for _, desc in ipairs(toDestroy) do
         pcall(function() desc:Destroy() end)
+    end
+    -- FIX DISAPPEAR (el mismo de removeHighlight): destruir un Highlight con
+    -- AlwaysOnTop puede dejar LocalTransparencyModifier tocado y el jugador
+    -- invisible. Al limpiar el outline devolvemos las partes a 0.
+    for _, part in ipairs(char:GetDescendants()) do
+        if (part:IsA("BasePart") or part:IsA("MeshPart"))
+        and part.LocalTransparencyModifier ~= 0 then
+            pcall(function() part.LocalTransparencyModifier = 0 end)
+        end
     end
 end
 
@@ -27128,7 +27515,7 @@ function updateCham(player)
         chamHighlight[player] = nil
     end
 
-    local GREEN = Color3.fromRGB(  0, 255, 160)  -- VERDE Innocent para Innocents
+    local GREEN = Color3.fromRGB(  0, 255,  70)  -- VERDE Innocent para Innocents
 
     -- FIX TRANSICION: si estamos entre rondas (mapa viejo destruido, RoundStart no llego),
     -- bloquear chams completamente para evitar que roles viejos del cache pinten a todos.
@@ -27272,7 +27659,7 @@ function updateOutline(player)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then removeOutline(player); return end
 
-    local GREEN = Color3.fromRGB(  0, 255, 160)
+    local GREEN = Color3.fromRGB(  0, 255,  70)
 
     -- Si el char cambio (respawn) -> limpiar outline del char viejo
     if outHighlight[player] and outHighlight[player] ~= char then
@@ -27331,7 +27718,10 @@ end
 
 -- =============================================================
 -- HIGHLIGHT ESP -- Highlight de Roblox: solo BORDES del cuerpo
--- FillColor = color del rol, FillTransparency por rol, OutlineTransparency=0 (bordes visibles)
+-- v58: FillTransparency = 1 SIEMPRE (el cuerpo no se pinta) y
+-- OutlineTransparency = 0 con el color del rol: se ve el contorno
+-- del jugador a traves de las paredes y nada mas. El relleno del
+-- cuerpo ahora es trabajo del Outline ESP, no de este.
 -- =============================================================
 hlObjects = {}  -- [player] = Highlight instance
 
@@ -27390,7 +27780,7 @@ function updateHighlight(player)
     if     role == "Murderer" then col = Color3.fromRGB(255,   0,  40)
     elseif role == "Sheriff"  then col = Color3.fromRGB(  0, 140, 255)
     elseif role == "Hero"     then col = Color3.fromRGB(255, 200,   0)
-    else                           col = Color3.fromRGB(  0, 255, 160)  -- verde Innocent
+    else                           col = Color3.fromRGB(  0, 255,  70)  -- verde Innocent
     end
 
     local hl = hlObjects[player]
@@ -27402,21 +27792,25 @@ function updateHighlight(player)
         hl = nil; hlObjects[player] = nil
     end
 
-    -- Fill transparency por rol: Murder/Sheriff/Hero mas solido, Innocent sutil
-    local fillTransp
-    if     role == "Murderer" then fillTransp = 0.30
-    elseif role == "Sheriff"  then fillTransp = 0.35
-    elseif role == "Hero"     then fillTransp = 0.35
-    else                           fillTransp = 0.55   -- Innocent: muy sutil
+    -- v58: el Highlight ESP NO pinta el cuerpo. El relleno queda en 1
+    -- (invisible) para todos los roles y lo unico que se ve es el borde.
+    -- Lo que antes variaba por rol (fillTransp) ahora varia el borde:
+    -- Murderer/Sheriff/Hero con contorno solido, Innocent un poco mas suave.
+    local fillTransp = 1
+    local outTransp
+    if     role == "Murderer" then outTransp = 0
+    elseif role == "Sheriff"  then outTransp = 0
+    elseif role == "Hero"     then outTransp = 0
+    else                           outTransp = 0.12   -- Innocent: borde apenas mas suave
     end
 
     if not hl then
         hl = Instance.new("Highlight")
         hl.Name                = "PlayerHL"
         hl.FillColor           = col
-        hl.FillTransparency    = fillTransp        -- relleno con color de rol
+        hl.FillTransparency    = fillTransp        -- v58: 1 = el cuerpo NO se pinta
         hl.OutlineColor        = col
-        hl.OutlineTransparency = 0                 -- bordes bien visibles
+        hl.OutlineTransparency = outTransp         -- v58: solo el borde, con color de rol
         hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
         hl.Adornee             = char
         hl.Parent              = char
@@ -27425,8 +27819,14 @@ function updateHighlight(player)
         if not _color3Equals(hl.OutlineColor, col) then
             pcall(function() hl.OutlineColor = col; hl.FillColor = col end)
         end
+        -- v58: reafirmar el relleno en 1 en cada tick. Si otro sistema (o una
+        -- version vieja del estado guardado) dejo el Highlight con relleno,
+        -- este chequeo lo devuelve a "solo bordes" sin recrear el objeto.
         if hl.FillTransparency ~= fillTransp then
             pcall(function() hl.FillTransparency = fillTransp end)
+        end
+        if hl.OutlineTransparency ~= outTransp then
+            pcall(function() hl.OutlineTransparency = outTransp end)
         end
     end
 end
@@ -27569,14 +27969,37 @@ end
 ESPBoards = { coin = {} }
 
 -- Caches event-driven para evitar workspace:GetDescendants() en cada tick
-_coinWorldCache  = {}   -- [obj] = true
+_coinWorldCache  = {}   -- [obj] = true  (BasePart O Model, ver _coinIsCoin)
 _knifeWorldCache = {}   -- [obj] = true
+_coinChamHL      = {}   -- v58: [obj] = Highlight del cham dorado del ESP Coin
+
+-- v58: el nombre que usa MM2 para las monedas del servidor es "Coin_Server", y
+-- ese objeto es un MODEL, no una BasePart. El filtro viejo matcheaba el nombre y
+-- despues descartaba todo lo que no fuera BasePart, asi que Coin_Server nunca
+-- entraba al cache y el ESP Coin no mostraba nada. Ahora entran los dos.
+function _coinIsCoin(obj)
+    if not obj then return false end
+    if not (obj:IsA("BasePart") or obj:IsA("Model")) then return false end
+    local n = obj.Name
+    if n == "Coin_Server" then return true end
+    return (n:lower():find("coin")) and true or false
+end
+
+-- Un Model no se puede usar como Adornee de BillboardGui: hay que darle una
+-- parte. Los Highlight si aceptan el Model directo.
+function _coinAdornee(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    return obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+end
 
 workspace.DescendantAdded:Connect(function(obj)
     if not obj:IsA("BasePart") and not obj:IsA("Model") then return end
     local n = obj.Name
-    if n == "Coin_Server" or n:lower():find("coin") then
-        if obj:IsA("BasePart") then _coinWorldCache[obj] = true end
+    if _coinIsCoin(obj) then
+        -- v58: si es un Model "Coin_Server" no cacheamos tambien sus partes:
+        -- alcanza el Model y evita dos ESP encima de la misma moneda.
+        _coinWorldCache[obj] = true
     end
     if n == "Knife" or n == "KnifeHandle" then
         if not obj:IsDescendantOf(Players) then _knifeWorldCache[obj] = true end
@@ -27592,10 +28015,8 @@ end)
 task.spawn(function()
     for _, obj in ipairs(workspace:GetDescendants()) do
         local n = obj.Name
-        if obj:IsA("BasePart") then
-            if n == "Coin_Server" or n:lower():find("coin") then
-                _coinWorldCache[obj] = true
-            end
+        if _coinIsCoin(obj) then
+            _coinWorldCache[obj] = true
         end
         if n == "Knife" or n == "KnifeHandle" then
             if not obj:IsDescendantOf(Players) then _knifeWorldCache[obj] = true end
@@ -27603,11 +28024,46 @@ task.spawn(function()
     end
 end)
 
+-- v58: el ESP Coin ahora tambien pinta la moneda con el cham dorado (el mismo
+-- look que el toggle "Cham Coins": relleno oro + contorno claro, AlwaysOnTop).
+-- Antes solo ponia la etiqueta " Coin" flotando y la moneda no se veia a traves
+-- de las paredes.
+_COIN_CHAM_FILL    = Color3.fromRGB(255, 215,   0)
+_COIN_CHAM_OUTLINE = Color3.fromRGB(255, 200,  80)
+
+function _coinChamApply(obj)
+    if not obj or not obj.Parent then return end
+    local prev = _coinChamHL[obj]
+    if prev and prev.Parent then return end
+    if obj:IsA("BasePart") and obj.Transparency >= 0.9 then return end
+    local ok, hl = pcall(function()
+        local h = Instance.new("Highlight")
+        h.Name                = "_ZQ_CoinChamHL"
+        h.FillColor           = _COIN_CHAM_FILL
+        h.FillTransparency    = 0.35
+        h.OutlineColor        = _COIN_CHAM_OUTLINE
+        h.OutlineTransparency = 0
+        h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee             = obj
+        h.Parent              = obj
+        return h
+    end)
+    if ok and hl then _coinChamHL[obj] = hl end
+end
+
+function _coinChamClear()
+    for obj, hl in pairs(_coinChamHL) do
+        pcall(function() if hl and hl.Parent then hl:Destroy() end end)
+        _coinChamHL[obj] = nil
+    end
+end
+
 function clearCoinsESP()
     for obj, bb in pairs(ESPBoards.coin) do
         pcall(function() bb:Destroy() end)
         ESPBoards.coin[obj] = nil
     end
+    _coinChamClear()
 end
 
 -- Detecta ThrowingKnife del murderer en workspace (knife lanzado)
@@ -27664,7 +28120,7 @@ function _applyKnifeTextESP(obj)
     lbl.BackgroundTransparency = 1   -- fondo invisible
     lbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
     lbl.TextSize               = 11
-    lbl.TextColor3             = Color3.fromRGB(255, 80, 60)
+    lbl.TextColor3             = Color3.fromRGB(255,193, 60)
     lbl.TextStrokeTransparency = 0.2
     lbl.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
     lbl.Text                   = "knife"
@@ -27713,8 +28169,13 @@ _knifeDangerGui    = nil
 function makeCoinBoard(obj)
     if ESPBoards.coin[obj] and ESPBoards.coin[obj].Parent then return end
     local gui = getESPGui(); if not gui then return end
+    -- v58: con Coin_Server el obj es un Model y BillboardGui.Adornee necesita
+    -- una BasePart; si el Model todavia no tiene partes, salimos y el proximo
+    -- tick reintenta.
+    local adornee = _coinAdornee(obj)
+    if not adornee then return end
     local bb = Instance.new("BillboardGui")
-    bb.Adornee      = obj
+    bb.Adornee      = adornee
     bb.Size         = UDim2.new(0, 80, 0, 24)
     bb.StudsOffset  = Vector3.new(0, 2, 0)
     bb.AlwaysOnTop  = true
@@ -27734,7 +28195,106 @@ end
 DeathPoseState = {
     enabled   = false,
     highlights = {},  -- [userId] = { hl=Highlight, bb=BillboardGui, char=Model }
+    lastStyle = nil,  -- v58: ultimo estilo que el usuario prendio
 }
+
+-- ==================================================================
+-- ESP DE MUERTOS v58 -- TRES ESTILOS, UNA SOLA DETECCION
+-- ------------------------------------------------------------------
+-- La deteccion de muerte no se duplica: sigue siendo la misma de
+-- siempre (DeathPoseState.enabled -> hookCharDeathPose/_onDeath,
+-- spawnDeathClone y _applyDeathPoseAdornments). Lo unico que cambia
+-- entre los tres toggles es COMO se pinta el cuerpo:
+--   "cham"      -> una caja rellena por parte (lo de siempre)
+--   "outline"   -> un Highlight con el CUERPO ENTERO relleno
+--   "highlight" -> un Highlight con SOLO EL BORDE
+-- Asi "Highlight Dead" y "Outline Dead" quedan iguales a sus versiones
+-- de vivos: mismo criterio de relleno, mismo AlwaysOnTop.
+-- ==================================================================
+_DEAD_STYLE_CHAM      = "cham"
+_DEAD_STYLE_OUTLINE   = "outline"
+_DEAD_STYLE_HIGHLIGHT = "highlight"
+
+-- Cual de los tres manda. Gana el ultimo que el usuario prendio (si sigue
+-- prendido); si no, orden fijo cham > outline > highlight. Hace falta un
+-- desempate porque un Highlight solo puede tener un relleno a la vez.
+function _deadEspStyle()
+    local vs = VisualState or {}
+    local onCham = (vs.cham      and vs.cham.dead)      or false
+    local onOut  = (vs.outline   and vs.outline.dead)   or false
+    local onHL   = (vs.highlight and vs.highlight.dead) or false
+    local last   = DeathPoseState.lastStyle
+    if     last == _DEAD_STYLE_CHAM      and onCham then return _DEAD_STYLE_CHAM      end
+    if     last == _DEAD_STYLE_OUTLINE   and onOut  then return _DEAD_STYLE_OUTLINE   end
+    if     last == _DEAD_STYLE_HIGHLIGHT and onHL   then return _DEAD_STYLE_HIGHLIGHT end
+    if onCham then return _DEAD_STYLE_CHAM      end
+    if onOut  then return _DEAD_STYLE_OUTLINE   end
+    if onHL   then return _DEAD_STYLE_HIGHLIGHT end
+    return _DEAD_STYLE_CHAM
+end
+
+-- Solo el cham pinta con cajas por parte. Los otros dos van con un Highlight.
+function _deadEspUsesBoxes()
+    return _deadEspStyle() == _DEAD_STYLE_CHAM
+end
+
+-- Transparencias del Highlight segun el estilo activo -> fill, outline
+function _deadEspTransp()
+    local st = _deadEspStyle()
+    if st == _DEAD_STYLE_HIGHLIGHT then
+        return 1, 0        -- solo borde, igual que el Highlight ESP de vivos
+    elseif st == _DEAD_STYLE_OUTLINE then
+        local f = (type(_OUT_FILL_TRANSP) == "number") and _OUT_FILL_TRANSP or 0.12
+        return f, 0        -- cuerpo entero, igual que el Outline ESP de vivos
+    end
+    local f = (type(_DeathEspFillTransp) == "number") and _DeathEspFillTransp or 0.35
+    return f, 0
+end
+
+-- Pone (o actualiza) UN Highlight "_ZQ_DeadHL" sobre el cuerpo/clon muerto.
+-- Lleva el atributo _deadCham para que _clearAllDeadCham lo barra solo.
+function _deadEspHighlight(target, fillCol, outCol)
+    if not target or not target.Parent then return nil end
+    local fillT, outT = _deadEspTransp()
+    local hl = target:FindFirstChild("_ZQ_DeadHL")
+    if hl and not hl:IsA("Highlight") then
+        pcall(function() hl:Destroy() end)
+        hl = nil
+    end
+    if not hl then
+        local ok, made = pcall(function()
+            local h = Instance.new("Highlight")
+            h.Name      = "_ZQ_DeadHL"
+            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            h.Adornee   = target
+            h.Parent    = target
+            return h
+        end)
+        if not ok or not made then return nil end
+        hl = made
+    end
+    pcall(function()
+        hl.FillColor           = fillCol
+        hl.OutlineColor        = outCol or fillCol
+        hl.FillTransparency    = fillT
+        hl.OutlineTransparency = outT
+        hl:SetAttribute("_deadCham", true)
+    end)
+    return hl
+end
+
+-- Si el toggle de muertos venia guardado en disco, el bloque de auto-restore ya
+-- dejo el flag en VisualState, pero DeathPoseState todavia no existia (se define
+-- aca, mas abajo en el archivo). Se re-lee para que el ESP de muertos ande sin
+-- tener que entrar al tab VISUALS.
+do
+    local vs = VisualState
+    if vs and (((vs.cham      or {}).dead)
+            or ((vs.outline   or {}).dead)
+            or ((vs.highlight or {}).dead)) then
+        DeathPoseState.enabled = true
+    end
+end
 
 -- -- Limpia TODOS los clones y ESPs del Dead Cham al fin de ronda -------------
 function _clearAllDeadCham()
@@ -27814,6 +28374,39 @@ function _clearAllDeadCham()
 end
 _G._clearAllDeadCham = _clearAllDeadCham
 
+-- v58: los tres toggles de muertos (Cham / Highlight / Outline Dead) comparten
+-- deteccion, asi que comparten tambien el encendido. Recalcula
+-- DeathPoseState.enabled desde los tres flags, deja anotado el estilo que gana,
+-- repinta a los que ya estan muertos y limpia cuando no queda ninguno prendido.
+-- style = el estilo del toggle que se acaba de tocar (nil si se apago).
+function _ZQ_DeadEspSync(style, label)
+    local vs = VisualState or {}
+    local on = ((vs.cham      or {}).dead)
+            or ((vs.outline   or {}).dead)
+            or ((vs.highlight or {}).dead) or false
+    if style then DeathPoseState.lastStyle = style end
+    DeathPoseState.enabled = on and true or false
+    -- Limpiar siempre: si el estilo cambio, lo pintado antes es del estilo viejo.
+    if type(_clearAllDeadCham) == "function" then pcall(_clearAllDeadCham) end
+    if on then
+        if _vcRefreshAll then pcall(_vcRefreshAll) end
+        for _, pl in pairs(Players:GetPlayers()) do
+            if pl ~= Players.LocalPlayer and pl.Character then
+                local hum = pl.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health <= 0 then
+                    _sp(function() pcall(_applyDeathPoseAdornments, pl, pl.Character) end)
+                end
+            end
+        end
+        CreateCustomNotification("VISUALS", (label or "Dead ESP") .. " ON -- dura toda la ronda", 2)
+    else
+        _deadBodies = {}
+        CreateCustomNotification("VISUALS", (label or "Dead ESP") .. " OFF", 1)
+    end
+    _G._forceInstanceTick = true
+end
+_G._ZQ_DeadEspSync = _ZQ_DeadEspSync
+
 CLONE_FOLDER_NAME = "DeathPoseClones_Local"  -- kept for compatibility
 function getCloneFolder()
     local folder = workspace:FindFirstChild(CLONE_FOLDER_NAME)
@@ -27857,8 +28450,8 @@ function spawnDeathClone(player, _snapOverride)
         _espFill    = Color3.fromRGB( 80, 160, 255)  -- Azul (sheriff/hero)
         _espOutline = Color3.fromRGB(255, 200,  70)  -- Amarillo contorno
     else
-        _espFill    = Color3.fromRGB( 60, 220, 100)
-        _espOutline = Color3.fromRGB(120, 255, 150)
+        _espFill    = Color3.fromRGB(  0, 245,  70)
+        _espOutline = Color3.fromRGB( 70, 255, 120)
     end
 
     -- Aplicar color de paleta si el usuario eligio uno
@@ -27866,7 +28459,7 @@ function spawnDeathClone(player, _snapOverride)
         nil,  -- indice 1 = por rol (no override)
         { fill = Color3.fromRGB(255, 60, 60), outline = Color3.fromRGB(255,150,150) },
         { fill = Color3.fromRGB( 80,160,255), outline = Color3.fromRGB(255, 200, 70) },
-        { fill = Color3.fromRGB( 30,220, 80), outline = Color3.fromRGB(255, 181, 51) },
+        { fill = Color3.fromRGB(  0,245, 60), outline = Color3.fromRGB(255, 181, 51) },
         { fill = Color3.fromRGB(220,220,255), outline = Color3.fromRGB(255,255,255) },
         { fill = Color3.fromRGB(255,140,  0), outline = Color3.fromRGB(255,200, 80) },
     }
@@ -27878,14 +28471,10 @@ function spawnDeathClone(player, _snapOverride)
     end
 
     -- -- Highlight directo sobre el cuerpo muerto -----------------------------
-    local hl = Instance.new("Highlight")
-    hl.FillColor           = _espFill
-    hl.FillTransparency    = (type(_DeathEspFillTransp) == "number") and _DeathEspFillTransp or 0.35
-    hl.OutlineColor        = _espOutline
-    hl.OutlineTransparency = 0.0
-    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Adornee             = deadChar   -- apunta al model del personaje muerto
-    hl.Parent              = deadChar   -- parented en el mismo char
+    -- v58: las transparencias ya no se fijan aca. Las decide _deadEspHighlight
+    -- segun cual de los tres toggles de muertos esta prendido: relleno medio
+    -- (cham), cuerpo entero (outline) o solo borde (highlight).
+    local hl = _deadEspHighlight(deadChar, _espFill, _espOutline)
 
     -- -- BillboardGui flotante -------------------------------------------------
     local hrp = deadChar:FindFirstChild("HumanoidRootPart")
@@ -28010,8 +28599,18 @@ function _applyDeathPoseAdornments(player, char)
 
     local adornments = {}
 
+    -- v58: las cajas por parte son exclusivas del estilo cham. Highlight Dead y
+    -- Outline Dead pintan con un solo Highlight sobre el modelo, asi que la
+    -- lista de partes queda vacia y el for de abajo no hace nada.
+    local _dHL = nil
+    local _deadParts = _DEATH_POSE_PARTS
+    if not _deadEspUsesBoxes() then
+        _deadParts = {}
+        _dHL = _deadEspHighlight(char, color, color)
+    end
+
     -- Aplicar BoxHandleAdornment en cada parte del cuerpo
-    for _, partName in ipairs(_DEATH_POSE_PARTS) do
+    for _, partName in ipairs(_deadParts) do
         local part = char:FindFirstChild(partName)
         if part and part:IsA("BasePart") then
             local ok, adorn = pcall(function()
@@ -28077,7 +28676,7 @@ function _applyDeathPoseAdornments(player, char)
         roleL.TextXAlignment         = Enum.TextXAlignment.Center
     end
 
-    DeathPoseState.highlights[uid] = { adornments = adornments, bb = bb, char = char }
+    DeathPoseState.highlights[uid] = { adornments = adornments, bb = bb, char = char, hl = _dHL }
 
     -- NO auto-limpiar: el cuerpo dura toda la ronda
     -- Se limpia solo cuando empieza nueva ronda (RoundStart -> clearDeathPose)
@@ -28293,10 +28892,18 @@ function hookCharDeathPose(player, char)
             clone.Name   = "DeathPose_" .. player.Name
             clone.Parent = folder
 
-            -- -- PILAR 3: BoxHandleAdornment en todos los BaseParts del clon -----
+            -- -- PILAR 3: pintado del clon --------------------------------------
+            -- v58: cham -> una caja por parte y las partes en Transparency 1
+            -- (solo se ve el adorno). Highlight/Outline Dead -> un Highlight
+            -- sobre el clon y las partes se dejan VISIBLES: con relleno 1 o 0.12
+            -- el Highlight necesita geometria visible abajo para dibujar borde.
             local adornments = {}
+            local _useBoxes = _deadEspUsesBoxes()
+            if not _useBoxes then
+                _deadEspHighlight(clone, color, color)
+            end
             for _, p in ipairs(clone:GetDescendants()) do
-                if p:IsA("BasePart") then
+                if _useBoxes and p:IsA("BasePart") then
                     p.Transparency = 1  -- parte invisible, solo se ve el adorno
 
                     local a = Instance.new("BoxHandleAdornment")
@@ -28437,7 +29044,7 @@ DeadBodyESP = {
 -- Colores por rol (rojo=murder, azul=sheriff, verde=innocent)
 _DB_COLOR_MURDER   = Color3.fromRGB(255,  60,  60)  -- Rojo
 _DB_COLOR_SHERIFF  = Color3.fromRGB( 80, 160, 255)  -- Azul
-_DB_COLOR_INNOCENT = Color3.fromRGB( 60, 220, 100)  -- Verde
+_DB_COLOR_INNOCENT = Color3.fromRGB(  0, 245,  70)  -- Verde
 
 function _getDeadRoleColor(player)
     if _roleCache.murderer == player then
@@ -28990,7 +29597,7 @@ do
                                 if chamActive then
                                     local dc = player.Character
                                     if dc then
-                                        local GREEN_COL = Color3.fromRGB(  0, 255, 160)
+                                        local GREEN_COL = Color3.fromRGB(255, 174,   0)
                                         pcall(function() _aplicarPieceChams(dc, GREEN_COL) end)
                                         chamHighlight[player] = dc
                                     end
@@ -29069,7 +29676,7 @@ do
                                     or _vcdG2.survivor or _vcdG2.assassin
                                 )
                                 if not chamG2 then return end
-                                local GREEN2 = Color3.fromRGB(0, 255, 160)
+                                local GREEN2 = Color3.fromRGB(255, 174,   0)
                                 if _hl_remove then pcall(_hl_remove, pc2) end
                                 pcall(function() _aplicarPieceChams(pc2, GREEN2) end)
                                 chamHighlight[player] = pc2
@@ -29122,8 +29729,13 @@ do
                 end
             end
             for obj in pairs(_coinWorldCache) do
-                if obj.Parent and not ESPBoards.coin[obj] then
-                    pcall(makeCoinBoard, obj)
+                if obj.Parent then
+                    if not ESPBoards.coin[obj] then
+                        pcall(makeCoinBoard, obj)
+                    end
+                    -- v58: el cham va aparte del board -- _coinChamApply corta
+                    -- solo si el Highlight ya existe, asi que es barato.
+                    pcall(_coinChamApply, obj)
                 end
             end
         else
@@ -29217,7 +29829,7 @@ _G._tracerHBConn = RunService.Heartbeat:Connect(function()
                     if onScreen then
                         local line = getLine()
                         line.From = center; line.To = Vector2.new(sp.X, sp.Y)
-                        line.Color = Color3.fromRGB(255, 60, 0)
+                        line.Color = Color3.fromRGB(255,174, 0)
                         line.Thickness = 2.5; line.Transparency = 1; line.Visible = true
                     end
                 end
@@ -29344,6 +29956,1036 @@ function CreateVisualCard(parent, icon, title, accentColor)
     return inner, AddSubLabel
 end
 
+-- ===================================================================
+-- == ZQ ESP PARTS v48
+-- ==   1) Paleta de Google Material literal (19 familias x 10 tonos)
+-- ==   2) Color picker con cuadrado saturacion/valor + barra de hue + hex
+-- ==   3) Motor de ESP por parte del cuerpo, separado por rol
+-- == Todo cuelga de _G para no gastar locals del scope raiz.
+-- ===================================================================
+do
+    local TS  = TweenService
+    local UIS = UserInputService
+
+    -- ---------------------------------------------------------------
+    -- PALETA GOOGLE MATERIAL DESIGN -- valores oficiales, tono 50..900
+    -- ---------------------------------------------------------------
+    _G._ZQ_GPAL_TONES = { "50","100","200","300","400","500","600","700","800","900" }
+    _G._ZQ_GPAL = {
+        { name = "Red",         shades = { {255,235,238},{255,205,210},{239,154,154},{229,115,115},{239, 83, 80},{244, 67, 54},{229, 57, 53},{211, 47, 47},{198, 40, 40},{183, 28, 28} } },
+        { name = "Pink",        shades = { {252,228,236},{248,187,208},{244,143,177},{240, 98,146},{236, 64,122},{233, 30, 99},{216, 27, 96},{194, 24, 91},{173, 20, 87},{136, 14, 79} } },
+        { name = "Purple",      shades = { {243,229,245},{225,190,231},{206,147,216},{186,104,200},{171, 71,188},{156, 39,176},{142, 36,170},{123, 31,162},{106, 27,154},{ 74, 20,140} } },
+        { name = "Deep Purple", shades = { {237,231,246},{209,196,233},{179,157,219},{149,117,205},{126, 87,194},{103, 58,183},{ 94, 53,177},{ 81, 45,168},{ 69, 39,160},{ 49, 27,146} } },
+        { name = "Indigo",      shades = { {232,234,246},{197,202,233},{159,168,218},{121,134,203},{ 92,107,192},{ 63, 81,181},{ 57, 73,171},{ 48, 63,159},{ 40, 53,147},{ 26, 35,126} } },
+        { name = "Blue",        shades = { {227,242,253},{187,222,251},{144,202,249},{100,181,246},{ 66,165,245},{ 33,150,243},{ 30,136,229},{ 25,118,210},{ 21,101,192},{ 13, 71,161} } },
+        { name = "Light Blue",  shades = { {225,245,254},{179,229,252},{129,212,250},{ 79,195,247},{ 41,182,246},{  3,169,244},{  3,155,229},{  2,136,209},{  2,119,189},{  1, 87,155} } },
+        { name = "Cyan",        shades = { {224,247,250},{178,235,242},{128,222,234},{ 77,208,225},{ 38,198,218},{  0,188,212},{  0,172,193},{  0,151,167},{  0,131,143},{  0, 96,100} } },
+        { name = "Teal",        shades = { {224,242,241},{178,223,219},{128,203,196},{ 77,182,172},{ 38,166,154},{  0,150,136},{  0,137,123},{  0,121,107},{  0,105, 92},{  0, 77, 64} } },
+        { name = "Green",       shades = { {232,245,233},{200,230,201},{165,214,167},{129,199,132},{102,187,106},{ 76,175, 80},{ 67,160, 71},{ 56,142, 60},{ 46,125, 50},{ 27, 94, 32} } },
+        { name = "Light Green", shades = { {241,248,233},{220,237,200},{197,225,165},{174,213,129},{156,204,101},{139,195, 74},{124,179, 66},{104,159, 56},{ 85,139, 47},{ 51,105, 30} } },
+        { name = "Lime",        shades = { {249,251,231},{240,244,195},{230,238,156},{220,231,117},{212,225, 87},{205,220, 57},{192,202, 51},{175,180, 43},{158,157, 36},{130,119, 23} } },
+        { name = "Yellow",      shades = { {255,253,231},{255,249,196},{255,245,157},{255,241,118},{255,238, 88},{255,235, 59},{253,216, 53},{251,192, 45},{249,168, 37},{245,127, 23} } },
+        { name = "Amber",       shades = { {255,248,225},{255,236,179},{255,224,130},{255,213, 79},{255,202, 40},{255,193,  7},{255,179,  0},{255,160,  0},{255,143,  0},{255,111,  0} } },
+        { name = "Orange",      shades = { {255,243,224},{255,224,178},{255,204,128},{255,183, 77},{255,167, 38},{255,152,  0},{251,140,  0},{245,124,  0},{239,108,  0},{230, 81,  0} } },
+        { name = "Deep Orange", shades = { {251,233,231},{255,204,188},{255,171,145},{255,138,101},{255,112, 67},{255, 87, 34},{244, 81, 30},{230, 74, 25},{216, 67, 21},{191, 54, 12} } },
+        { name = "Brown",       shades = { {239,235,233},{215,204,200},{188,170,164},{161,136,127},{141,110, 99},{121, 85, 72},{109, 76, 65},{ 93, 64, 55},{ 78, 52, 46},{ 62, 39, 35} } },
+        { name = "Grey",        shades = { {250,250,250},{245,245,245},{238,238,238},{224,224,224},{189,189,189},{158,158,158},{117,117,117},{ 97, 97, 97},{ 66, 66, 66},{ 33, 33, 33} } },
+        { name = "Blue Grey",   shades = { {236,239,241},{207,216,220},{176,190,197},{144,164,174},{120,144,156},{ 96,125,139},{ 84,110,122},{ 69, 90,100},{ 55, 71, 79},{ 38, 50, 56} } },
+    }
+
+    -- ---------------------------------------------------------------
+    -- HELPERS DE COLOR
+    -- ---------------------------------------------------------------
+    local function _hex(c)
+        return string.format("#%02X%02X%02X",
+            math.floor(c.R * 255 + 0.5),
+            math.floor(c.G * 255 + 0.5),
+            math.floor(c.B * 255 + 0.5))
+    end
+    _G._ZQ_Hex = _hex
+
+    local function _parseHex(txt)
+        if type(txt) ~= "string" then return nil end
+        local h = txt:gsub("#", "")
+        h = h:gsub("%s", "")
+        if #h == 3 then
+            h = h:sub(1,1) .. h:sub(1,1) .. h:sub(2,2) .. h:sub(2,2) .. h:sub(3,3) .. h:sub(3,3)
+        end
+        if #h ~= 6 then return nil end
+        if not h:match("^%x%x%x%x%x%x$") then return nil end
+        local r = tonumber(h:sub(1,2), 16)
+        local g = tonumber(h:sub(3,4), 16)
+        local b = tonumber(h:sub(5,6), 16)
+        if not (r and g and b) then return nil end
+        return Color3.fromRGB(r, g, b)
+    end
+    _G._ZQ_ParseHex = _parseHex
+
+    local function _guiParentZQ(sg)
+        local done = false
+        pcall(function()
+            if type(gethui) == "function" then
+                local okH, h = pcall(gethui)
+                if okH and h then sg.Parent = h; done = true end
+            end
+        end)
+        if not done then
+            pcall(function() sg.Parent = game:GetService("CoreGui"); done = true end)
+        end
+        if not sg.Parent then
+            pcall(function()
+                local lp = Players and Players.LocalPlayer
+                if lp then sg.Parent = lp:FindFirstChildOfClass("PlayerGui") end
+            end)
+        end
+        return sg.Parent ~= nil
+    end
+
+    -- ---------------------------------------------------------------
+    -- COLOR PICKER: cuadrado saturacion/valor + barra de hue + hex
+    -- + la grilla completa de la paleta de Google.
+    -- Uso: _G._ZQ_OpenColorPicker({ title=, color=, onApply=function(c3) })
+    -- ---------------------------------------------------------------
+    local _pickGui   = nil
+    local _pickConns = {}
+
+    local function _pickClearConns()
+        for _, c in ipairs(_pickConns) do pcall(function() c:Disconnect() end) end
+        _pickConns = {}
+    end
+
+    local function _pickClose()
+        _pickClearConns()
+        if _pickGui then
+            pcall(function() _pickGui:Destroy() end)
+            _pickGui = nil
+        end
+    end
+    _G._ZQ_CloseColorPicker = _pickClose
+
+    function _G._ZQ_OpenColorPicker(cfg)
+        cfg = cfg or {}
+        _pickClose()
+
+        local T = ThemeColors
+        local startC = cfg.color or Color3.fromRGB(244,176, 30)
+        local hh, ss, vv = Color3.toHSV(startC)
+
+        local sg = Instance.new("ScreenGui")
+        sg.Name           = "ZQ_ColorPicker"
+        sg.ResetOnSpawn   = false
+        sg.IgnoreGuiInset = true
+        sg.DisplayOrder   = 10050
+        if not _guiParentZQ(sg) then return end
+        _pickGui = sg
+
+        -- Fondo modal: bloquea el juego de atras. NO cierra el selector
+        -- (v50: cerrar solo con APLICAR / CANCELAR).
+        local back = Instance.new("TextButton", sg)
+        back.Name                   = "Back"
+        back.Size                   = UDim2.new(1, 0, 1, 0)
+        back.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+        back.BackgroundTransparency = 0.45
+        back.BorderSizePixel        = 0
+        back.Text                   = ""
+        back.AutoButtonColor        = false
+        back.Modal                  = true
+        back.Selectable             = false
+        back.ZIndex                 = 1
+
+        local panel = Instance.new("Frame", sg)
+        panel.Name                   = "Panel"
+        panel.AnchorPoint            = Vector2.new(0.5, 0.5)
+        panel.Position               = UDim2.new(0.5, 0, 0.5, 0)
+        panel.Size                   = UDim2.fromOffset(330, 406)
+        panel.BackgroundColor3       = Color3.fromRGB(14, 12, 10)
+        panel.BackgroundTransparency = 0.04
+        panel.BorderSizePixel        = 0
+        panel.Active                 = true   -- v50: consume el input, no pasa al fondo
+        panel.ZIndex                 = 2
+        Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+        local pStroke = Instance.new("UIStroke", panel)
+        pStroke.Color           = T.Primary
+        pStroke.Thickness       = 1.4
+        pStroke.Transparency    = 0.25
+        pStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        -- Escalado para pantallas chicas de celular.
+        local uiScale = Instance.new("UIScale", panel)
+        pcall(function()
+            local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+            if vp and vp.Y > 0 and vp.Y < 620 then
+                uiScale.Scale = math.max(0.62, vp.Y / 620)
+            end
+        end)
+
+        local titleLbl = Instance.new("TextLabel", panel)
+        titleLbl.Position               = UDim2.fromOffset(12, 8)
+        titleLbl.Size                   = UDim2.fromOffset(306, 26)
+        titleLbl.BackgroundTransparency = 1
+        titleLbl.Text                   = tostring(cfg.title or "ELEGIR COLOR")
+        titleLbl.TextSize               = 13
+        titleLbl.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        titleLbl.TextColor3             = T.TextPrimary
+        titleLbl.TextXAlignment         = Enum.TextXAlignment.Left
+        titleLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+        titleLbl.ZIndex                 = 3
+
+        -- ---- cuadrado saturacion / valor ----
+        local sq = Instance.new("Frame", panel)
+        sq.Name             = "SV"
+        sq.Position         = UDim2.fromOffset(12, 40)
+        sq.Size             = UDim2.fromOffset(262, 262)
+        sq.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
+        sq.BorderSizePixel  = 0
+        sq.Active           = true   -- v50: el press/release se queda aca
+        sq.ZIndex           = 3
+        Instance.new("UICorner", sq).CornerRadius = UDim.new(0, 8)
+
+        local white = Instance.new("Frame", sq)
+        white.Size             = UDim2.fromScale(1, 1)
+        white.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        white.BorderSizePixel  = 0
+        white.ZIndex           = 4
+        Instance.new("UICorner", white).CornerRadius = UDim.new(0, 8)
+        local wGrad = Instance.new("UIGradient", white)
+        wGrad.Color        = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+        wGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+
+        local black = Instance.new("Frame", sq)
+        black.Size             = UDim2.fromScale(1, 1)
+        black.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        black.BorderSizePixel  = 0
+        black.ZIndex           = 5
+        Instance.new("UICorner", black).CornerRadius = UDim.new(0, 8)
+        local bGrad = Instance.new("UIGradient", black)
+        bGrad.Rotation     = 90
+        bGrad.Color        = ColorSequence.new(Color3.fromRGB(0, 0, 0))
+        bGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(1, 0),
+        })
+
+        local cursor = Instance.new("Frame", sq)
+        cursor.Name                   = "Cursor"
+        cursor.AnchorPoint            = Vector2.new(0.5, 0.5)
+        cursor.Size                   = UDim2.fromOffset(15, 15)
+        cursor.BackgroundTransparency = 1
+        cursor.BorderSizePixel        = 0
+        cursor.ZIndex                 = 9
+        Instance.new("UICorner", cursor).CornerRadius = UDim.new(1, 0)
+        local cStrk = Instance.new("UIStroke", cursor)
+        cStrk.Color           = Color3.fromRGB(255, 255, 255)
+        cStrk.Thickness       = 2.5
+        cStrk.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        -- ---- barra de hue VERTICAL (arcoiris) ----
+        -- El arcoiris se arma con Color3.fromHSV y NO con literales fromRGB a
+        -- proposito: asi ningun retinte futuro lo puede aplanar. En v51/v52 los 7
+        -- keypoints terminaron todos en el mismo dorado y la barra dejo de servir.
+        local hueBar = Instance.new("Frame", panel)
+        hueBar.Name             = "Hue"
+        hueBar.Position         = UDim2.fromOffset(286, 40)
+        hueBar.Size             = UDim2.fromOffset(32, 262)
+        hueBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        hueBar.BorderSizePixel  = 0
+        hueBar.Active           = true   -- v50: el press/release se queda aca
+        hueBar.ZIndex           = 3
+        Instance.new("UICorner", hueBar).CornerRadius = UDim.new(0, 8)
+        local hGrad = Instance.new("UIGradient", hueBar)
+        hGrad.Rotation = 90   -- arriba hue 0, abajo hue 1
+        hGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0.000, Color3.fromHSV(0.0000, 1, 1)),
+            ColorSequenceKeypoint.new(0.167, Color3.fromHSV(0.1667, 1, 1)),
+            ColorSequenceKeypoint.new(0.333, Color3.fromHSV(0.3333, 1, 1)),
+            ColorSequenceKeypoint.new(0.500, Color3.fromHSV(0.5000, 1, 1)),
+            ColorSequenceKeypoint.new(0.667, Color3.fromHSV(0.6667, 1, 1)),
+            ColorSequenceKeypoint.new(0.833, Color3.fromHSV(0.8333, 1, 1)),
+            ColorSequenceKeypoint.new(1.000, Color3.fromHSV(1.0000, 1, 1)),
+        })
+
+        local hueThumb = Instance.new("Frame", hueBar)
+        hueThumb.AnchorPoint            = Vector2.new(0.5, 0.5)
+        hueThumb.Position               = UDim2.new(0.5, 0, hh, 0)
+        hueThumb.Size                   = UDim2.fromOffset(18, 18)
+        hueThumb.BackgroundColor3       = Color3.fromHSV(hh, 1, 1)
+        hueThumb.BackgroundTransparency = 1   -- anillo hueco, se ve el arcoiris atras
+        hueThumb.BorderSizePixel        = 0
+        hueThumb.ZIndex                 = 8
+        Instance.new("UICorner", hueThumb).CornerRadius = UDim.new(1, 0)
+        local htStrk = Instance.new("UIStroke", hueThumb)
+        htStrk.Color           = Color3.fromRGB(255, 255, 255)
+        htStrk.Thickness       = 2
+        htStrk.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        -- ---- fila hex ----
+        local hexRow = Instance.new("Frame", panel)
+        hexRow.Position               = UDim2.fromOffset(12, 314)
+        hexRow.Size                   = UDim2.fromOffset(306, 30)
+        hexRow.BackgroundColor3       = Color3.fromRGB(26, 22, 18)
+        hexRow.BackgroundTransparency = 0.25
+        hexRow.BorderSizePixel        = 0
+        hexRow.ZIndex                 = 3
+        Instance.new("UICorner", hexRow).CornerRadius = UDim.new(0, 8)
+        local hrStrk = Instance.new("UIStroke", hexRow)
+        hrStrk.Color           = T.Primary
+        hrStrk.Thickness       = 1
+        hrStrk.Transparency    = 0.6
+        hrStrk.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        local prev = Instance.new("Frame", hexRow)
+        prev.Name             = "Preview"
+        prev.AnchorPoint      = Vector2.new(0, 0.5)
+        prev.Position         = UDim2.new(0, 6, 0.5, 0)
+        prev.Size             = UDim2.fromOffset(20, 20)
+        prev.BackgroundColor3 = startC
+        prev.BorderSizePixel  = 0
+        prev.ZIndex           = 4
+        Instance.new("UICorner", prev).CornerRadius = UDim.new(1, 0)
+        local prevStroke = Instance.new("UIStroke", prev)
+        prevStroke.Color           = startC
+        prevStroke.Thickness       = 2
+        prevStroke.Transparency    = 0.35
+        prevStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        local hexBox = Instance.new("TextBox", hexRow)
+        hexBox.Name                   = "Hex"
+        hexBox.Position               = UDim2.fromOffset(32, 0)
+        hexBox.Size                   = UDim2.new(1, -40, 1, 0)
+        hexBox.BackgroundTransparency = 1
+        hexBox.Text                   = _hex(startC)
+        hexBox.PlaceholderText        = "#RRGGBB"
+        hexBox.TextSize               = 13
+        hexBox.FontFace               = Font.fromEnum(Enum.Font.RobotoMono)
+        hexBox.TextColor3             = T.TextPrimary
+        hexBox.TextXAlignment         = Enum.TextXAlignment.Left
+        hexBox.ClearTextOnFocus       = false
+        hexBox.ZIndex                 = 5
+
+        -- ---- estado y refresco ----
+        local curC = startC
+        local _refresh
+        local function _setHSV(h2, s2, v2, skipHex)
+            hh, ss, vv = h2, s2, v2
+            _refresh(skipHex)
+        end
+        local function _setFromColor(c3)
+            local h2, s2, v2 = Color3.toHSV(c3)
+            _setHSV(h2, s2, v2)
+        end
+
+        _refresh = function(skipHex)
+            curC = Color3.fromHSV(hh, ss, vv)
+            sq.BackgroundColor3       = Color3.fromHSV(hh, 1, 1)
+            cursor.Position           = UDim2.new(ss, 0, 1 - vv, 0)
+            hueThumb.Position         = UDim2.new(0.5, 0, hh, 0)
+            hueThumb.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
+            prev.BackgroundColor3     = curC
+            prevStroke.Color          = curC
+            if not skipHex then hexBox.Text = _hex(curC) end
+        end
+        _refresh()
+
+        -- ---- arrastre del cuadrado y de la barra ----
+        local dragSq  = false
+        local dragHue = false
+
+        local function _applySqPos(px, py)
+            local abs  = sq.AbsolutePosition
+            local size = sq.AbsoluteSize
+            if size.X <= 0 or size.Y <= 0 then return end
+            local nx = math.clamp((px - abs.X) / size.X, 0, 1)
+            local ny = math.clamp((py - abs.Y) / size.Y, 0, 1)
+            _setHSV(hh, nx, 1 - ny)
+        end
+
+        local function _applyHuePos(py)
+            local abs  = hueBar.AbsolutePosition
+            local size = hueBar.AbsoluteSize
+            if size.Y <= 0 then return end
+            local ny = math.clamp((py - abs.Y) / size.Y, 0, 1)
+            _setHSV(ny, ss, vv)
+        end
+
+        local function _isPress(inp)
+            local t = nil
+            local okT = pcall(function() t = inp.UserInputType end)
+            if not okT or t == nil then return false end
+            return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch
+        end
+        local function _isMove(inp)
+            local t = nil
+            local okT = pcall(function() t = inp.UserInputType end)
+            if not okT or t == nil then return false end
+            return t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch
+        end
+
+        sq.InputBegan:Connect(function(inp)
+            if _isPress(inp) then
+                dragSq = true
+                _applySqPos(inp.Position.X, inp.Position.Y)
+            end
+        end)
+        hueBar.InputBegan:Connect(function(inp)
+            if _isPress(inp) then
+                dragHue = true
+                _applyHuePos(inp.Position.Y)
+            end
+        end)
+
+        table.insert(_pickConns, UIS.InputChanged:Connect(function(inp)
+            if not _isMove(inp) then return end
+            if dragSq  then _applySqPos(inp.Position.X, inp.Position.Y) end
+            if dragHue then _applyHuePos(inp.Position.Y) end
+        end))
+        table.insert(_pickConns, UIS.InputEnded:Connect(function(inp)
+            if _isPress(inp) then dragSq = false; dragHue = false end
+        end))
+
+        -- ---- hex escrito a mano ----
+        hexBox.FocusLost:Connect(function()
+            local c = _parseHex(hexBox.Text)
+            if c then
+                _setFromColor(c)
+            else
+                hexBox.Text = _hex(curC)
+            end
+        end)
+
+        -- ---- botones ----
+        local function _mkBtn(x, w, txt, col, fill)
+            local b = Instance.new("TextButton", panel)
+            b.Name                   = txt
+            b.Position               = UDim2.fromOffset(x, 356)
+            b.Size                   = UDim2.fromOffset(w, 38)
+            b.BackgroundColor3       = col
+            b.BackgroundTransparency = fill and 0.08 or 0.86
+            b.BorderSizePixel        = 0
+            b.Text                   = txt
+            b.TextSize               = 13
+            b.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+            b.TextColor3             = fill and Color3.fromRGB(16, 14, 12) or col
+            b.AutoButtonColor        = false
+            b.Selectable             = false
+            b.ZIndex                 = 6
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 9)
+            local st = Instance.new("UIStroke", b)
+            st.Color           = col
+            st.Thickness       = 1.2
+            st.Transparency    = 0.35
+            st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            b.MouseEnter:Connect(function()
+                pcall(function()
+                    TS:Create(b, TweenInfo.new(0.12), { BackgroundTransparency = fill and 0 or 0.7 }):Play()
+                end)
+            end)
+            b.MouseLeave:Connect(function()
+                pcall(function()
+                    TS:Create(b, TweenInfo.new(0.12), { BackgroundTransparency = fill and 0.08 or 0.86 }):Play()
+                end)
+            end)
+            return b
+        end
+
+        local btnCancel = _mkBtn(12, 100, "CANCELAR", Color3.fromRGB(235, 191, 95), false)
+        local btnApply  = _mkBtn(120, 198, "APLICAR", T.Primary, true)
+
+        btnCancel.Activated:Connect(function()
+            if cfg.onCancel then pcall(cfg.onCancel) end
+            _pickClose()
+        end)
+        btnApply.Activated:Connect(function()
+            local c = curC
+            if cfg.onApply then pcall(cfg.onApply, c) end
+            _pickClose()
+        end)
+
+        -- v50: el click en el fondo YA NO cancela. Antes, al soltar el mouse
+        -- dentro del cuadrado de color el press llegaba a este TextButton de
+        -- fondo (los Frame con Active=false no consumen input) y el selector se
+        -- cerraba solo. Ahora se cierra unicamente con APLICAR o CANCELAR.
+
+        -- Animacion de entrada.
+        panel.BackgroundTransparency = 1
+        local baseScale = tonumber(uiScale.Scale) or 1
+        uiScale.Scale = baseScale * 0.9
+        pcall(function()
+            TS:Create(panel, TweenInfo.new(0.16), { BackgroundTransparency = 0.04 }):Play()
+            TS:Create(uiScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = baseScale }):Play()
+        end)
+
+        return sg
+    end
+
+    -- ---------------------------------------------------------------
+    -- FILA DE COLOR REUTILIZABLE (v54)
+    -- Apariencia: etiqueta chica arriba, la muestra de color, el hex y
+    -- un chevron a la derecha; al tocarla se abre _ZQ_OpenColorPicker.
+    -- Uso:
+    --   local r = _G._ZQ_ColorRow(parent, {
+    --       label  = "Color Principal",
+    --       get    = function() return ThemeColors.Primary end,
+    --       set    = function(c) ThemeColors.Primary = c end,
+    --       order  = 3,        -- LayoutOrder (opcional)
+    --       height = 46,       -- alto de la tarjeta (opcional)
+    --       title  = "...",    -- titulo del selector (opcional)
+    --   })
+    --   r.refresh()  -- repinta si el color cambio por otro lado
+    -- Opcionales para las celdas de ESP PARTS (grilla posicionada a mano):
+    --   size    UDim2 del envoltorio (por defecto ancho completo)
+    --   pos     UDim2 del envoltorio (si no viene manda el UIListLayout)
+    --   onTap   si viene, tocar la fila llama a esto y el selector queda
+    --           SOLO en la muestra de color (asi el nombre sigue siendo
+    --           el on/off de la parte del cuerpo)
+    --   state   function -> bool, para el look prendido/apagado
+    --   tint    true: el fondo y el borde toman el color elegido
+    --   compact true: muestra y hex mas chicos, para celdas angostas
+    --   check   true: casilla de tilde a la izquierda que hace el onTap, y
+    --           entonces la fila ENTERA abre la paleta. Necesita onTap Y
+    --           state; sin casilla la fila sigue llamando a onTap.
+    -- El chevron se dibuja con dos barras rotadas y NO con un caracter
+    -- unicode: todo el codigo nuevo del hub es ASCII puro.
+    -- ---------------------------------------------------------------
+    local function _crBar(par, dx, rot, col, w, dy)
+        local b = Instance.new("Frame", par)
+        b.AnchorPoint      = Vector2.new(0.5, 0.5)
+        b.Position         = UDim2.new(0.5, dx, 0.5, dy or 0)
+        b.Size             = UDim2.fromOffset(w, 2)
+        b.Rotation         = rot
+        b.BackgroundColor3 = col
+        b.BorderSizePixel  = 0
+        b.ZIndex           = 14
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 1)
+        return b
+    end
+
+    function _G._ZQ_ColorRow(parent, cfg)
+        if not parent then return nil end
+        cfg = cfg or {}
+        local T   = ThemeColors
+        local CMP = cfg.compact and true or false
+        local H   = tonumber(cfg.height) or (CMP and 40 or 46)
+        local BY  = math.floor(16 + (H - 16) / 2)
+        local nm  = tostring(cfg.label or "COLOR")
+        local SWW = CMP and 18 or 22
+        local HXS = CMP and 11 or 13
+        -- Casilla de on/off: solo si la piden Y hay algo que prender y algo
+        -- que leer. CHW/CHG corren la muestra y el hex a la derecha; con
+        -- CHW = 0 la fila queda identica a como estaba.
+        local CHK = (cfg.check and type(cfg.onTap) == "function"
+                     and type(cfg.state) == "function") and true or false
+        local CHW = CHK and (CMP and 16 or 18) or 0
+        local CHG = CHK and 6 or 0
+
+        local function _cur()
+            if type(cfg.get) == "function" then
+                local ok, c = pcall(cfg.get)
+                if ok and c then return c end
+            end
+            return cfg.color or Color3.fromRGB(244, 176, 30)
+        end
+
+        -- Envoltorio transparente: da el aire entre filas, porque el
+        -- UIListLayout de las secciones tiene Padding 0.
+        local wrap = Instance.new("Frame", parent)
+        wrap.Name                   = "ZQColorRowWrap"
+        wrap.Size                   = cfg.size or UDim2.new(1, 0, 0, H + 6)
+        wrap.BackgroundTransparency = 1
+        wrap.BorderSizePixel        = 0
+        wrap.LayoutOrder            = tonumber(cfg.order) or 0
+        wrap.ZIndex                 = 11
+        if cfg.pos then wrap.Position = cfg.pos end
+
+        local row = Instance.new("TextButton", wrap)
+        row.Name                   = "ZQColorRow"
+        row.Position               = UDim2.fromOffset(4, 3)
+        row.Size                   = UDim2.new(1, -8, 0, H)
+        row.BackgroundColor3       = T.BackgroundLight
+        row.BackgroundTransparency = 0.32
+        row.BorderSizePixel        = 0
+        row.AutoButtonColor        = false
+        row.Selectable             = false
+        row.Text                   = ""
+        row.ZIndex                 = 12
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+        local rStrk = Instance.new("UIStroke", row)
+        rStrk.Color           = T.Primary
+        rStrk.Thickness       = 1
+        rStrk.Transparency    = 0.72
+        rStrk.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        local nameLbl = Instance.new("TextLabel", row)
+        nameLbl.Name                   = "Label"
+        nameLbl.Position               = UDim2.fromOffset(10, 3)
+        nameLbl.Size                   = UDim2.new(1, -34, 0, 13)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Text                   = nm
+        nameLbl.TextSize               = 10
+        nameLbl.FontFace               = Font.fromEnum(Enum.Font.Gotham)
+        nameLbl.TextColor3             = T.TextSecondary
+        nameLbl.TextXAlignment         = Enum.TextXAlignment.Left
+        nameLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+        nameLbl.ZIndex                 = 13
+
+        -- La muestra es un TextButton aparte: cuando la fila tiene onTap
+        -- (ESP PARTS) el selector se abre solo desde aca.
+        local sw = Instance.new("TextButton", row)
+        sw.Name             = "Swatch"
+        sw.AnchorPoint      = Vector2.new(0, 0.5)
+        sw.Position         = UDim2.fromOffset(10 + CHW + CHG, BY)
+        sw.Size             = UDim2.fromOffset(SWW, SWW - 2)
+        sw.BorderSizePixel  = 0
+        sw.Text             = ""
+        sw.AutoButtonColor  = false
+        sw.Selectable       = false
+        sw.ZIndex           = 13
+        Instance.new("UICorner", sw).CornerRadius = UDim.new(0, 5)
+        local swStrk = Instance.new("UIStroke", sw)
+        swStrk.Color        = Color3.fromRGB(255, 255, 255)
+        swStrk.Thickness    = 1
+        swStrk.Transparency = 0.55
+
+        local hexLbl = Instance.new("TextLabel", row)
+        hexLbl.Name                   = "Hex"
+        hexLbl.AnchorPoint            = Vector2.new(0, 0.5)
+        hexLbl.Position               = UDim2.fromOffset(14 + SWW + CHW + CHG, BY)
+        hexLbl.Size                   = UDim2.new(1, -(50 + SWW + CHW + CHG), 0, 18)
+        hexLbl.BackgroundTransparency = 1
+        hexLbl.Text                   = "#000000"
+        hexLbl.TextSize               = HXS
+        hexLbl.FontFace               = Font.fromEnum(Enum.Font.RobotoMono)
+        hexLbl.TextColor3             = T.TextPrimary
+        hexLbl.TextXAlignment         = Enum.TextXAlignment.Left
+        hexLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+        hexLbl.ZIndex                 = 13
+
+        -- chevron para abajo, armado con dos barras rotadas
+        local chev = Instance.new("Frame", row)
+        chev.Name                   = "Chevron"
+        chev.AnchorPoint            = Vector2.new(1, 0.5)
+        chev.Position               = UDim2.new(1, -10, 0, math.floor(H / 2))
+        chev.Size                   = UDim2.fromOffset(16, 14)
+        chev.BackgroundTransparency = 1
+        chev.ZIndex                 = 13
+        local _cw = CMP and 7 or 9
+        _crBar(chev, -math.floor(_cw / 3),  45, T.TextSecondary, _cw)
+        _crBar(chev,  math.floor(_cw / 3), -45, T.TextSecondary, _cw)
+
+        -- Casilla de prendido/apagado, a la izquierda de la muestra. Es el
+        -- unico lugar que prende/apaga; el resto de la fila abre la paleta.
+        -- El tilde son dos barras rotadas (ASCII puro, sin unicode).
+        local chkBox, chkStrk, chkTick = nil, nil, nil
+        if CHK then
+            chkBox = Instance.new("TextButton", row)
+            chkBox.Name            = "Check"
+            chkBox.AnchorPoint     = Vector2.new(0, 0.5)
+            chkBox.Position        = UDim2.fromOffset(10, BY)
+            chkBox.Size            = UDim2.fromOffset(CHW, CHW)
+            chkBox.BorderSizePixel = 0
+            chkBox.Text            = ""
+            chkBox.AutoButtonColor = false
+            chkBox.Selectable      = false
+            chkBox.ZIndex          = 14
+            Instance.new("UICorner", chkBox).CornerRadius = UDim.new(0, 4)
+            chkStrk = Instance.new("UIStroke", chkBox)
+            chkStrk.Thickness       = 1
+            chkStrk.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            local _tw = CMP and 0 or 1
+            local _tc = Color3.fromRGB(16, 15, 14)
+            chkTick = {
+                _crBar(chkBox, -3,  45, _tc, 6 + _tw,  1),
+                _crBar(chkBox,  2, -45, _tc, 9 + _tw,  0),
+            }
+            for _, b in ipairs(chkTick) do b.ZIndex = 15 end
+        end
+
+        -- Valores de reposo: los recalcula _paint segun cfg.state, y el
+        -- hover se mueve relativo a ellos (asi una fila apagada no se
+        -- prende sola al pasar el mouse).
+        local _restBT, _restST = 0.32, 0.72
+
+        local function _paint()
+            local c = _cur()
+            sw.BackgroundColor3 = c
+            hexLbl.Text         = _hex(c)
+            if cfg.tint then
+                row.BackgroundColor3 = c
+                rStrk.Color          = c
+            end
+            if type(cfg.state) == "function" then
+                local ok, v = pcall(cfg.state)
+                local on = (ok and v) and true or false
+                if cfg.tint then
+                    _restBT = on and 0.62 or 0.9
+                    _restST = on and 0.25 or 0.8
+                else
+                    -- v56: sin tint la fila prendida tiene que verse igual que
+                    -- cualquier otra fila del hub (fondo 0.32, borde 0.72).
+                    -- Apagada baja un poco, pero el aviso de verdad es la
+                    -- casilla: antes 0.9 la dejaba practicamente invisible.
+                    _restBT = on and 0.32 or 0.55
+                    _restST = on and 0.72 or 0.85
+                end
+                nameLbl.TextColor3        = on and T.TextPrimary or T.TextSecondary
+                sw.BackgroundTransparency = on and 0 or 0.4
+                hexLbl.TextTransparency   = on and 0 or 0.5
+                if chkBox then
+                    chkBox.BackgroundColor3       = c
+                    chkBox.BackgroundTransparency = on and 0 or 0.85
+                    chkStrk.Color                 = on and c or T.TextSecondary
+                    chkStrk.Transparency          = on and 0 or 0.45
+                    for _, b in ipairs(chkTick) do b.Visible = on end
+                end
+            end
+            row.BackgroundTransparency = _restBT
+            rStrk.Transparency         = _restST
+        end
+        _paint()
+
+        local function _open()
+            if not _G._ZQ_OpenColorPicker then return end
+            _G._ZQ_OpenColorPicker({
+                title = tostring(cfg.title or nm),
+                color = _cur(),
+                onApply = function(c)
+                    if type(cfg.set) == "function" then pcall(cfg.set, c) end
+                    _paint()
+                    if type(cfg.onApply) == "function" then pcall(cfg.onApply, c) end
+                end,
+            })
+        end
+
+        sw.Activated:Connect(_open)
+        if chkBox then
+            chkBox.Activated:Connect(function()
+                pcall(cfg.onTap)
+                _paint()
+            end)
+        end
+        row.Activated:Connect(function()
+            -- Con casilla, tocar la fila abre la paleta (el on/off esta en la
+            -- casilla). Sin casilla se mantiene el onTap de siempre.
+            if chkBox == nil and type(cfg.onTap) == "function" then
+                pcall(cfg.onTap)
+                _paint()
+            else
+                _open()
+            end
+        end)
+
+        row.MouseEnter:Connect(function()
+            pcall(function()
+                TS:Create(rStrk, TweenInfo.new(0.12), { Transparency = math.max(0, _restST - 0.38) }):Play()
+                TS:Create(row,   TweenInfo.new(0.12), { BackgroundTransparency = math.max(0, _restBT - 0.16) }):Play()
+            end)
+        end)
+        row.MouseLeave:Connect(function()
+            pcall(function()
+                TS:Create(rStrk, TweenInfo.new(0.12), { Transparency = _restST }):Play()
+                TS:Create(row,   TweenInfo.new(0.12), { BackgroundTransparency = _restBT }):Play()
+            end)
+        end)
+
+        return {
+            wrap    = wrap,
+            frame   = row,
+            swatch  = sw,
+            hex     = hexLbl,
+            label   = nameLbl,
+            check   = chkBox,
+            refresh = _paint,
+            open    = _open,
+        }
+    end
+
+    -- ===============================================================
+    -- MOTOR DE ESP POR PARTE DEL CUERPO (ESP PARTS PLAYERS)
+    -- ===============================================================
+    _G._ZQEP_PARTS = {
+        "Head",
+        "LeftFoot",
+        "LeftHand",
+        "LeftLowerArm",
+        "LeftLowerLeg",
+        "LeftUpperArm",
+        "LeftUpperLeg",
+        "LowerTorso",
+        "RightFoot",
+        "RightHand",
+        "RightLowerArm",
+        "RightLowerLeg",
+        "RightUpperArm",
+        "RightUpperLeg",
+        "UpperTorso",
+        "HumanoidRootPart",
+    }
+
+    -- Rigs R6: varias partes R15 caen en la misma parte R6.
+    _G._ZQEP_R6 = {
+        Head             = "Head",
+        UpperTorso       = "Torso",
+        LowerTorso       = "Torso",
+        HumanoidRootPart = "HumanoidRootPart",
+        LeftUpperArm     = "Left Arm",
+        LeftLowerArm     = "Left Arm",
+        LeftHand         = "Left Arm",
+        RightUpperArm    = "Right Arm",
+        RightLowerArm    = "Right Arm",
+        RightHand        = "Right Arm",
+        LeftUpperLeg     = "Left Leg",
+        LeftLowerLeg     = "Left Leg",
+        LeftFoot         = "Left Leg",
+        RightUpperLeg    = "Right Leg",
+        RightLowerLeg    = "Right Leg",
+        RightFoot        = "Right Leg",
+    }
+
+    -- Los 4 roles pedidos, con la etiqueta exacta que tiene que mostrar la card.
+    _G._ZQEP_ROLES = {
+        { key = "Murderer", label = "MURDER"   },
+        { key = "Sheriff",  label = "SHERIFF"  },
+        { key = "Hero",     label = "HEROE"    },
+        { key = "Innocent", label = "INOCENTE" },
+    }
+
+    local PREFIX = "_ZQEP_"
+
+    local function _roleDefault(key)
+        local c = nil
+        pcall(function()
+            if type(GetRoleColor) == "function" then c = GetRoleColor(key) end
+        end)
+        if typeof(c) == "Color3" then return c end
+        if key == "Murderer" then return Color3.fromRGB(244,  67,  54) end
+        if key == "Sheriff"  then return Color3.fromRGB( 33, 150, 243) end
+        if key == "Hero"     then return Color3.fromRGB(255, 193,   7) end
+        return Color3.fromRGB(  0, 250,  80)
+    end
+
+    -- Estado. Se crea una sola vez y se rellena con los 4 roles x 16 partes.
+    if type(_G._ZQEP) ~= "table" then
+        _G._ZQEP = { enabled = false, fillT = 0.35, token = 0, roles = {} }
+    end
+    do
+        local st = _G._ZQEP
+        st.roles = st.roles or {}
+        for _, rr in ipairs(_G._ZQEP_ROLES) do
+            local r = st.roles[rr.key]
+            if type(r) ~= "table" then
+                r = { on = true, parts = {} }
+                st.roles[rr.key] = r
+            end
+            r.parts = r.parts or {}
+            local def = _roleDefault(rr.key)
+            for _, pn in ipairs(_G._ZQEP_PARTS) do
+                local e = r.parts[pn]
+                if type(e) ~= "table" then
+                    r.parts[pn] = { on = false, color = def }
+                elseif typeof(e.color) ~= "Color3" then
+                    e.color = def
+                end
+            end
+        end
+    end
+
+    -- ---- guardado propio (archivo aparte del config del hub) ----
+    local _uid = "unknown"
+    pcall(function()
+        if Players.LocalPlayer then _uid = tostring(Players.LocalPlayer.UserId) end
+    end)
+    local EP_FILE  = "rex_espparts_" .. _uid .. ".json"
+    local _HTTP    = nil
+    pcall(function() _HTTP = game:GetService("HttpService") end)
+    local _savePend = false
+
+    local function _epSaveNow()
+        if type(writefile) ~= "function" or not _HTTP then return end
+        local out = { enabled = _G._ZQEP.enabled and true or false, fillT = _G._ZQEP.fillT, roles = {} }
+        for _, rr in ipairs(_G._ZQEP_ROLES) do
+            local r = _G._ZQEP.roles[rr.key]
+            if r then
+                local dst = { on = r.on and true or false, parts = {} }
+                for pn, e in pairs(r.parts) do
+                    dst.parts[pn] = { on = e.on and true or false, hex = _G._ZQ_Hex(e.color) }
+                end
+                out.roles[rr.key] = dst
+            end
+        end
+        local ok, json = pcall(function() return _HTTP:JSONEncode(out) end)
+        if ok and json then pcall(function() writefile(EP_FILE, json) end) end
+    end
+
+    function _G._ZQEP_Save()
+        if _savePend then return end
+        _savePend = true
+        task.delay(1.2, function()
+            _savePend = false
+            task.spawn(function() pcall(_epSaveNow) end)
+        end)
+    end
+
+    function _G._ZQEP_Load()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" or not _HTTP then return end
+        local okF, has = pcall(function() return isfile(EP_FILE) end)
+        if not okF or not has then return end
+        local okR, raw = pcall(function() return readfile(EP_FILE) end)
+        if not okR or type(raw) ~= "string" or raw == "" then return end
+        local okD, dat = pcall(function() return _HTTP:JSONDecode(raw) end)
+        if not okD or type(dat) ~= "table" then return end
+        if type(dat.fillT) == "number" then _G._ZQEP.fillT = dat.fillT end
+        if type(dat.roles) == "table" then
+            for _, rr in ipairs(_G._ZQEP_ROLES) do
+                local src = dat.roles[rr.key]
+                local dst = _G._ZQEP.roles[rr.key]
+                if type(src) == "table" and dst then
+                    if src.on ~= nil then dst.on = src.on and true or false end
+                    if type(src.parts) == "table" then
+                        for pn, e in pairs(src.parts) do
+                            local cur = dst.parts[pn]
+                            if cur and type(e) == "table" then
+                                cur.on = e.on and true or false
+                                local c = _G._ZQ_ParseHex(tostring(e.hex or ""))
+                                if c then cur.color = c end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        _G._ZQEP.wantEnabled = dat.enabled and true or false
+    end
+    pcall(_G._ZQEP_Load)
+
+    -- ---- pintado ----
+    local function _isR6(char)
+        local r6 = false
+        pcall(function()
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.RigType == Enum.HumanoidRigType.R6 then r6 = true end
+        end)
+        return r6
+    end
+
+    local function _resolvePart(char, pn, r6)
+        local p = nil
+        if r6 then
+            local alias = _G._ZQEP_R6[pn]
+            if alias then p = char:FindFirstChild(alias) end
+        end
+        if not p then p = char:FindFirstChild(pn) end
+        if p and p:IsA("BasePart") then return p end
+        return nil
+    end
+
+    local function _stripChar(char)
+        if not char then return end
+        local kill = {}
+        for _, d in ipairs(char:GetChildren()) do
+            if d:IsA("Highlight") and d.Name:sub(1, #PREFIX) == PREFIX then
+                table.insert(kill, d)
+            end
+        end
+        for _, d in ipairs(kill) do pcall(function() d:Destroy() end) end
+    end
+
+    local function _paintChar(char, roleCfg)
+        if not (char and char.Parent) then return end
+        if not roleCfg or not roleCfg.on then _stripChar(char); return end
+
+        local r6   = _isR6(char)
+        local want = {}
+        for _, pn in ipairs(_G._ZQEP_PARTS) do
+            local e = roleCfg.parts[pn]
+            if e and e.on then
+                local target = _resolvePart(char, pn, r6)
+                if target then
+                    want[PREFIX .. pn] = { part = target, color = e.color }
+                end
+            end
+        end
+
+        -- Borrar los highlights que ya no corresponden (colectar y despues destruir).
+        local kill = {}
+        for _, d in ipairs(char:GetChildren()) do
+            if d:IsA("Highlight") and d.Name:sub(1, #PREFIX) == PREFIX and not want[d.Name] then
+                table.insert(kill, d)
+            end
+        end
+        for _, d in ipairs(kill) do pcall(function() d:Destroy() end) end
+
+        local fillT = _G._ZQEP.fillT or 0.35
+        for nm, info in pairs(want) do
+            pcall(function()
+                local hl = char:FindFirstChild(nm)
+                if not (hl and hl:IsA("Highlight")) then
+                    hl = Instance.new("Highlight")
+                    hl.Name      = nm
+                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    hl.Parent    = char
+                end
+                hl.Adornee             = info.part
+                hl.FillColor           = info.color
+                hl.OutlineColor        = info.color
+                hl.FillTransparency    = fillT
+                hl.OutlineTransparency = 0
+                hl.Enabled             = true
+            end)
+        end
+    end
+
+    function _G._ZQEP_ClearAll()
+        pcall(function()
+            for _, plr in ipairs(Players:GetPlayers()) do
+                pcall(function() _stripChar(plr.Character) end)
+            end
+        end)
+    end
+
+    function _G._ZQEP_Refresh()
+        if not _G._ZQEP.enabled then _G._ZQEP_ClearAll(); return end
+        local lp = Players.LocalPlayer
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= lp then
+                pcall(function()
+                    local char = plr.Character
+                    if not char then return end
+                    local role = "Innocent"
+                    if type(GetPlayerRole) == "function" then
+                        local okR, rr = pcall(GetPlayerRole, plr)
+                        if okR and type(rr) == "string" then role = rr end
+                    end
+                    local cfg = _G._ZQEP.roles[role]
+                    if cfg then
+                        _paintChar(char, cfg)
+                    else
+                        _stripChar(char)
+                    end
+                end)
+            end
+        end
+    end
+
+    function _G._ZQEP_SetEnabled(on)
+        _G._ZQEP.enabled = on and true or false
+        _G._ZQEP_Save()
+        if not _G._ZQEP.enabled then
+            _G._ZQEP_ClearAll()
+            return
+        end
+        _G._ZQEP.token = (_G._ZQEP.token or 0) + 1
+        local myTok = _G._ZQEP.token
+        task.spawn(function()
+            while _G._ZQEP.enabled and _G._ZQEP.token == myTok do
+                pcall(_G._ZQEP_Refresh)
+                task.wait(0.35)
+            end
+        end)
+    end
+end
+
 function CreateVisualsTab()
     -- FIX: asegurar que contentContainer existe antes de construir el tab
     if not contentContainer or not contentContainer.Parent then
@@ -29385,7 +31027,7 @@ function CreateVisualsTab()
     -- Crea un selector de jugador para "pinear" un jugador especifico en un ESP.
     -- flags.pinPlayer = Player | nil  (nil = sin pin, aplica filtros normales)
     local function makeESPPlayerPin(parent, flags, accentColor)
-        local PIN_COLOR = accentColor or Color3.fromRGB( 50, 255, 180)
+        local PIN_COLOR = accentColor or Color3.fromRGB(255, 190,  50)
         MiniHeader(parent, "PINEAR JUGADOR ESPECIFICO", PIN_COLOR)
 
         -- Contenedor del selector
@@ -29403,7 +31045,7 @@ function CreateVisualsTab()
         -- Label con nombre del jugador pineado
         local pinLbl = Instance.new("TextLabel", pinRow)
         pinLbl.Size = UDim2.new(1, -70, 1, 0)
-        pinLbl.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+        pinLbl.BackgroundColor3 = Color3.fromRGB(22, 18, 12)
         pinLbl.BackgroundTransparency = 0.4
         pinLbl.BorderSizePixel = 0
         pinLbl.Text = "  Ninguno (todos)"
@@ -29420,11 +31062,11 @@ function CreateVisualsTab()
         -- Boton X para quitar el pin
         local clearBtn = Instance.new("TextButton", pinRow)
         clearBtn.Size = UDim2.new(0, 30, 1, 0)
-        clearBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+        clearBtn.BackgroundColor3 = Color3.fromRGB(180,136, 40)
         clearBtn.BackgroundTransparency = 0.5
         clearBtn.BorderSizePixel = 0
         clearBtn.Text = "X"
-        clearBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+        clearBtn.TextColor3 = Color3.fromRGB(255, 212, 120)
         clearBtn.FontFace = Font.fromEnum(Enum.Font.Montserrat)
         clearBtn.TextSize = 12
         clearBtn.AutoButtonColor = false
@@ -29502,7 +31144,7 @@ function CreateVisualsTab()
                 Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
                 -- Color segun si es el pineado actual
                 local isPinned = flags.pinPlayer == p
-                btn.BackgroundColor3 = isPinned and PIN_COLOR or Color3.fromRGB(25, 25, 32)
+                btn.BackgroundColor3 = isPinned and PIN_COLOR or Color3.fromRGB(32, 30, 25)
                 btn.BackgroundTransparency = isPinned and 0.3 or 0.5
                 btn.TextColor3 = isPinned and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(210, 210, 210)
                 local bStroke = Instance.new("UIStroke", btn)
@@ -29560,7 +31202,7 @@ function CreateVisualsTab()
         local vc = VisualState.cham
         MiniHeader(inner, "EVERYONE", Color3.fromRGB(255,255,255))
         CreateAuroraToggle(inner, "Cham Everyone", function(v) vc.everyone=v end, vc.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,100,100))
+        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,206,100))
         CreateAuroraToggle(inner, "Cham Murderer Only", function(v) vc.murderer=v end, vc.murderer)
         MiniHeader(inner, "SHERIFF", Color3.fromRGB(255, 181, 51))
         CreateAuroraToggle(inner, "Cham Sheriff Only", function(v) vc.sheriff=v end, vc.sheriff)
@@ -29568,34 +31210,14 @@ function CreateVisualsTab()
         CreateAuroraToggle(inner, "Cham Hero Only", function(v) vc.hero=v end, vc.hero)
         MiniHeader(inner, "ASSASSIN", Color3.fromRGB(255, 210,   0))
         CreateAuroraToggle(inner, "Cham Assassin Only", function(v) vc.assassin=v end, vc.assassin)
-        MiniHeader(inner, "DEAD", Color3.fromRGB(255,120,120))
- -- Cham Dead Only: muestra pose de muerte del jugador, dura TODA la ronda
+        MiniHeader(inner, "DEAD", Color3.fromRGB(255,212,120))
+ -- Cham Dead Only: muestra pose de muerte del jugador, dura TODA la ronda.
+ -- v58: todo el cuerpo del callback se fue a _ZQ_DeadEspSync, que es el mismo
+ -- que usan "Highlight Dead Only" y "Outline Dead Only": los tres prenden la
+ -- misma deteccion y solo se diferencian en el estilo de pintado.
  CreateAuroraToggle(inner, "Cham Dead Only", function(v)
             VisualState.cham.dead = v
-            DeathPoseState.enabled = v  -- vincular dead pose al mismo toggle
-            if v and _vcRefreshAll then _vcRefreshAll() end
-            if v then
-                -- Hookear todos los jugadores actuales
-                for _, p in pairs(Players:GetPlayers()) do
-                    if p ~= Players.LocalPlayer then
-                        -- Si ya esta muerto, aplicar adornos ahora
-                        if p.Character then
-                            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-                            if hum and hum.Health <= 0 then
-                                _sp(function()
-                                    pcall(_applyDeathPoseAdornments, p, p.Character)
-                                end)
-                            end
-                        end
-                    end
-                end
-                CreateCustomNotification("VISUALS", "Cham Dead ON -- dura toda la ronda", 2)
-            else
-                -- Toggle OFF: limpiar TODO (ESP, clones, highlights, _DeathPoseESP)
-                if type(_clearAllDeadCham) == "function" then pcall(_clearAllDeadCham) end
-                _deadBodies = {}
-                CreateCustomNotification("VISUALS", "Cham Dead OFF", 1)
-            end
+            _ZQ_DeadEspSync(v and _DEAD_STYLE_CHAM or nil, "Cham Dead")
         end, VisualState.cham.dead or false)
         MiniHeader(inner, " SURVIVOR",        Color3.fromRGB(255,255,255))
  CreateAuroraToggle(inner, "Cham Survivor Only", function(v) vc.survivor=v end, vc.survivor)
@@ -29624,7 +31246,7 @@ function CreateVisualsTab()
                     local hl = Instance.new("Highlight")
                     hl.Name = "_ChamCoinHL"
                     hl.FillColor = Color3.fromRGB(255, 215, 0)
-                    hl.OutlineColor = Color3.fromRGB(255, 255, 80)
+                    hl.OutlineColor = Color3.fromRGB(255, 200, 80)
                     hl.OutlineTransparency = 0
                     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                     hl.Adornee = obj; hl.Parent = obj
@@ -29648,7 +31270,7 @@ function CreateVisualsTab()
             end
         end, vc.coins)
 
-        MiniHeader(inner, "GUN DROP", Color3.fromRGB(50, 60, 150))
+        MiniHeader(inner, "GUN DROP", Color3.fromRGB(150,118,  50))
         CreateAuroraToggle(inner, "Cham Gun (GunDrop)", function(v)
     _G._chamDropGun = v
     -- Limpiar chams anteriores al apagar
@@ -29690,7 +31312,7 @@ function CreateVisualsTab()
             pcall(function()
                 local hl = Instance.new("Highlight")
                 hl.Name                = "GunCham"
-                hl.FillColor           = (_G._vsColors and _G._vsColors.cham) or Color3.fromRGB(90, 90, 95)
+                hl.FillColor           = (_G._vsColors and _G._vsColors.cham) or Color3.fromRGB(95, 93, 90)
                 hl.OutlineColor        = Color3.fromRGB(255, 255, 255)
                 hl.OutlineTransparency = 0.2
                 hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
@@ -29746,7 +31368,7 @@ function CreateVisualsTab()
     end)
 end, _G._chamDropGun or false)
 
-        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255, 80, 40))
+        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255,187, 40))
         CreateAuroraToggle(inner, "Cham ThrowingKnife", function(v)
             _G._chamTKEnabled = v
             if not v then
@@ -29769,7 +31391,7 @@ end, _G._chamDropGun or false)
                 pcall(function()
                     local hl = Instance.new("Highlight")
                     hl.Name = "_ChamTKHL"
-                    hl.FillColor = Color3.fromRGB(255, 60, 20)
+                    hl.FillColor = Color3.fromRGB(255,181, 20)
                     hl.OutlineColor = Color3.fromRGB(255, 180, 100)
                     hl.OutlineTransparency = 0
                     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -29797,7 +31419,7 @@ end, _G._chamDropGun or false)
         local ve = VisualState.esp
         MiniHeader(inner, "EVERYONE", Color3.fromRGB(255,255,255))
         CreateAuroraToggle(inner, "ESP Everyone", function(v) ve.everyone=v end, ve.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,100,100))
+        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,206,100))
         CreateAuroraToggle(inner, "ESP Murderer Only", function(v) ve.murderer=v end, ve.murderer)
         MiniHeader(inner, "SHERIFF", Color3.fromRGB(255, 181, 51))
         CreateAuroraToggle(inner, "ESP Sheriff Only", function(v) ve.sheriff=v end, ve.sheriff)
@@ -29807,7 +31429,7 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "ESP Assassin Only", function(v) ve.assassin=v end, ve.assassin)
         MiniHeader(inner, "SURVIVOR", Color3.fromRGB(255, 210,   0))
         CreateAuroraToggle(inner, "ESP Survivor Only", function(v) ve.survivor=v end, ve.survivor)
-        MiniHeader(inner, "ZOMBIE", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, "ZOMBIE", Color3.fromRGB(255, 190,  50))
         CreateAuroraToggle(inner, "ESP Zombie Only", function(v) ve.zombie=v end, ve.zombie)
         MiniHeader(inner, "BY OBJECT", Color3.fromRGB(255,220,100))
         CreateAuroraToggle(inner, "ESP Dropped Gun", function(v)
@@ -29911,7 +31533,7 @@ end, _G._chamDropGun or false)
             end)
         end, _G._espGunEnabled or false)
 
-        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255, 80, 40))
+        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255,187, 40))
         CreateAuroraToggle(inner, "ESP ThrowingKnife", function(v)
             _G._espTKEnabled = v
             if not v then
@@ -29935,7 +31557,7 @@ end, _G._chamDropGun or false)
                 pcall(function()
                     local hl = Instance.new("Highlight")
                     hl.Name = "_ESPTKHighlight"
-                    hl.FillColor = Color3.fromRGB(255, 60, 20)
+                    hl.FillColor = Color3.fromRGB(255,181, 20)
                     hl.OutlineColor = Color3.fromRGB(255, 200, 100)
                     hl.OutlineTransparency = 0
                     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -29953,7 +31575,7 @@ end, _G._chamDropGun or false)
                         local lbl = Instance.new("TextLabel", bb)
                         lbl.Size = UDim2.new(1, 0, 1, 0)
                         lbl.Text = "[ THROWING KNIFE ]"
-                        lbl.TextColor3 = Color3.fromRGB(255, 100, 40)
+                        lbl.TextColor3 = Color3.fromRGB(255, 187, 40)
                         lbl.BackgroundTransparency = 1
                         lbl.TextStrokeTransparency = 0
                         lbl.Font = Enum.Font.Montserrat
@@ -29999,11 +31621,11 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Highlight Everyone", function(v)
             vh.everyone=v; _recalcHL()
         end, vh.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,100,100))
+        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,206,100))
         CreateAuroraToggle(inner, "Highlight Murderer Only", function(v)
             vh.murderer=v; _recalcHL()
         end, vh.murderer)
-        MiniHeader(inner, "SHERIFF", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, "SHERIFF", Color3.fromRGB(255, 190,  50))
         CreateAuroraToggle(inner, "Highlight Sheriff Only", function(v)
             vh.sheriff=v; _recalcHL()
         end, vh.sheriff)
@@ -30015,7 +31637,7 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Highlight Assassin Only", function(v)
             vh.assassin=v; _recalcHL()
         end, vh.assassin)
-        MiniHeader(inner, "INNOCENT", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, "INNOCENT", Color3.fromRGB(255, 190,  50))
         CreateAuroraToggle(inner, "Highlight Innocent Only", function(v)
             vh.innocent=v; _recalcHL()
         end, vh.innocent or false)
@@ -30023,11 +31645,17 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Highlight Survivor Only", function(v)
             vh.survivor=v; _recalcHL()
         end, vh.survivor)
-        MiniHeader(inner, "ZOMBIE", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, "ZOMBIE", Color3.fromRGB(255, 190,  50))
         CreateAuroraToggle(inner, "Highlight Zombie Only", function(v)
             vh.zombie=v; _recalcHL()
         end, vh.zombie)
-        MiniHeader(inner, "OUTLINE (pinta cuerpo entero)", Color3.fromRGB(160, 220, 255))
+        -- v58: DEAD con la logica del Cham Dead pero pintando solo el borde.
+        MiniHeader(inner, "DEAD (solo borde)", Color3.fromRGB(255,212,120))
+        CreateAuroraToggle(inner, "Highlight Dead Only", function(v)
+            vh.dead = v
+            _ZQ_DeadEspSync(v and _DEAD_STYLE_HIGHLIGHT or nil, "Highlight Dead")
+        end, vh.dead or false)
+        MiniHeader(inner, "OUTLINE (pinta cuerpo entero)", Color3.fromRGB(255, 225, 160))
         local vo = VisualState.outline
         -- FIX DISAPPEAR: helper que refresca SOLO los outlines sin tocar ESP/Cham highlights.
         -- Antes los toggles de Outline no tenian callback propio y doToggle llamaba
@@ -30052,7 +31680,13 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Outline Assassin Only", function(v) vo.assassin=v; _refreshOutlineOnly(v) end, vo.assassin)
         CreateAuroraToggle(inner, "Outline Survivor Only", function(v) vo.survivor=v; _refreshOutlineOnly(v) end, vo.survivor)
         CreateAuroraToggle(inner, "Outline Zombie Only", function(v) vo.zombie=v; _refreshOutlineOnly(v) end, vo.zombie)
-        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255, 80, 40))
+        -- v58: DEAD con la logica del Cham Dead pero rellenando el cuerpo entero.
+        MiniHeader(inner, "DEAD (cuerpo entero)", Color3.fromRGB(255,212,120))
+        CreateAuroraToggle(inner, "Outline Dead Only", function(v)
+            vo.dead = v
+            _ZQ_DeadEspSync(v and _DEAD_STYLE_OUTLINE or nil, "Outline Dead")
+        end, vo.dead or false)
+        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255,187, 40))
         CreateAuroraToggle(inner, "Outline ThrowingKnife", function(v)
             _G._outlineTKEnabled = v
             if not v then
@@ -30075,7 +31709,7 @@ end, _G._chamDropGun or false)
                     local hl = Instance.new("Highlight")
                     hl.Name = "_OutlineTKHL"
                     hl.FillTransparency = 1
-                    hl.OutlineColor = Color3.fromRGB(255, 120, 60)
+                    hl.OutlineColor = Color3.fromRGB(255, 193, 60)
                     hl.OutlineTransparency = 0
                     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                     hl.Adornee = obj
@@ -30112,7 +31746,7 @@ end, _G._chamDropGun or false)
             end
 
             -- Funcion que aplica el highlight a cualquier gun drop
-            -- (igual que el codigo de referencia: azul electrico, AlwaysOnTop, apaga particulas)
+            -- (igual que el codigo de referencia: contorno blanco, AlwaysOnTop, apaga particulas)
             local function _applyHlGun(obj)
                 if not obj or not obj.Parent then return end
                 -- Aceptar cualquier nombre de gun suelta en todos los mapas
@@ -30197,7 +31831,7 @@ end, _G._chamDropGun or false)
                         if obj:IsDescendantOf(Players) then return end
                         pcall(function()
                             local hl=Instance.new("Highlight"); hl.Adornee=obj.Parent
-                            hl.FillColor=Color3.fromRGB(255,60,30); hl.OutlineColor=Color3.fromRGB(255,150,100)
+                            hl.FillColor=Color3.fromRGB(255,184,30); hl.OutlineColor=Color3.fromRGB(255,206,100)
                             hl.OutlineTransparency=0
                             hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent=obj.Parent
                             hl.FillTransparency=0.4
@@ -30232,7 +31866,7 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Box Everyone", function(v)
             vb.everyone = v; _refreshBoxESP()
         end, vb.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(255, 100, 100))
+        MiniHeader(inner, "MURDERER", Color3.fromRGB(255, 206, 100))
         CreateAuroraToggle(inner, "Box Murderer Only", function(v)
             vb.murderer = v; _refreshBoxESP()
         end, vb.murderer)
@@ -30240,7 +31874,7 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Box Sheriff Only", function(v)
             vb.sheriff = v; _refreshBoxESP()
         end, vb.sheriff)
-        MiniHeader(inner, "HERO", Color3.fromRGB(255, 230, 0))
+        MiniHeader(inner, "HERO", Color3.fromRGB(255, 174, 0))
         CreateAuroraToggle(inner, "Box Hero Only", function(v)
             vb.hero = v; _refreshBoxESP()
         end, vb.hero)
@@ -30248,7 +31882,7 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Box Assassin Only", function(v)
             vb.assassin = v; _refreshBoxESP()
         end, vb.assassin)
-        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255, 80, 40))
+        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(255,187, 40))
         CreateAuroraToggle(inner, "Box ThrowingKnife", function(v)
             _G._boxTKEnabled = v
             if not v then
@@ -30271,7 +31905,7 @@ end, _G._chamDropGun or false)
                 pcall(function()
                     local box = Instance.new("SelectionBox")
                     box.Name = "_BoxTKAdornment"
-                    box.SurfaceColor3 = Color3.fromRGB(255, 60, 20)
+                    box.SurfaceColor3 = Color3.fromRGB(255,181, 20)
                     box.SurfaceTransparency = 0.6
                     box.LineThickness = 0.04
                     box.Color3 = Color3.fromRGB(255, 180, 80)
@@ -30392,9 +32026,9 @@ end, _G._chamDropGun or false)
             end
         end
 
-        local inner = CreateVisualCard(leftColumn, "", "VIEW TRAP", Color3.fromRGB(255, 100, 60))
+        local inner = CreateVisualCard(leftColumn, "", "VIEW TRAP", Color3.fromRGB(255, 193, 60))
 
-        MiniHeader(inner, " ESP DE TRAMPAS (visible + invisible)", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, " ESP DE TRAMPAS (visible + invisible)", Color3.fromRGB(255, 190,  50))
  CreateAuroraToggle(inner, "View Trap ESP", function(v)
             _trapEnabled = v
             if _trapWSConn then _trapWSConn:Disconnect(); _trapWSConn = nil end
@@ -30441,7 +32075,7 @@ end, _G._chamDropGun or false)
         MiniHeader(inner, " SCAN MANUAL", Color3.fromRGB(195, 195, 200))
         local scanBtn = Instance.new("TextButton", inner)
         scanBtn.Size = UDim2.new(1, 0, 0, 36)
-        scanBtn.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+        scanBtn.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
         scanBtn.BackgroundTransparency = 0.75
         scanBtn.BorderSizePixel = 0
  scanBtn.Text = " Scan Todas las Trampas"
@@ -30479,7 +32113,7 @@ end, _G._chamDropGun or false)
         local vt = VisualState.tracer
         MiniHeader(inner, "EVERYONE", Color3.fromRGB(255,255,255))
         CreateAuroraToggle(inner, "Tracer Everyone", function(v) vt.everyone=v end, vt.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,100,100))
+        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,206,100))
         CreateAuroraToggle(inner, "Tracer Murderer Only", function(v) vt.murderer=v end, vt.murderer)
         MiniHeader(inner, "SHERIFF", Color3.fromRGB(255, 181, 51))
         CreateAuroraToggle(inner, "Tracer Sheriff Only", function(v) vt.sheriff=v end, vt.sheriff)
@@ -30487,11 +32121,11 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Tracer Hero Only", function(v) vt.hero=v end, vt.hero)
         MiniHeader(inner, "ASSASSIN", Color3.fromRGB(255, 210,   0))
         CreateAuroraToggle(inner, "Tracer Assassin Only", function(v) vt.assassin=v end, vt.assassin)
-        MiniHeader(inner, "DEAD", Color3.fromRGB(255,120,120))
+        MiniHeader(inner, "DEAD", Color3.fromRGB(255,212,120))
         CreateAuroraToggle(inner, "Tracer Dead Only", function(v) vt.dead=v end, vt.dead)
         MiniHeader(inner, "SURVIVOR", Color3.fromRGB(255, 210,   0))
         CreateAuroraToggle(inner, "Tracer Survivor Only", function(v) vt.survivor=v end, vt.survivor)
-        MiniHeader(inner, "ZOMBIE", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, "ZOMBIE", Color3.fromRGB(255, 190,  50))
         CreateAuroraToggle(inner, "Tracer Zombie Only", function(v) vt.zombie=v end, vt.zombie)
         MiniHeader(inner, "ORIGIN", Color3.fromRGB(200,200,200))
         -- NOTA: los tracers ahora SIEMPRE salen de arriba de la pantalla y apuntan a la cabeza.
@@ -30509,7 +32143,7 @@ end, _G._chamDropGun or false)
         local vs2 = VisualState.skeleton
         MiniHeader(inner, "EVERYONE", Color3.fromRGB(255,255,255))
         CreateAuroraToggle(inner, "Skeleton Everyone", function(v) vs2.everyone=v end, vs2.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,100,100))
+        MiniHeader(inner, "MURDERER", Color3.fromRGB(255,206,100))
         CreateAuroraToggle(inner, "Skeleton Murderer Only", function(v) vs2.murderer=v end, vs2.murderer)
         MiniHeader(inner, "SHERIFF", Color3.fromRGB(255, 181, 51))
         CreateAuroraToggle(inner, "Skeleton Sheriff Only", function(v) vs2.sheriff=v end, vs2.sheriff)
@@ -30517,11 +32151,11 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Skeleton Hero Only", function(v) vs2.hero=v end, vs2.hero)
         MiniHeader(inner, "ASSASSIN", Color3.fromRGB(255, 210,   0))
         CreateAuroraToggle(inner, "Skeleton Assassin Only", function(v) vs2.assassin=v end, vs2.assassin)
-        MiniHeader(inner, "DEAD", Color3.fromRGB(255,120,120))
+        MiniHeader(inner, "DEAD", Color3.fromRGB(255,212,120))
         CreateAuroraToggle(inner, "Skeleton Dead Only", function(v) vs2.dead=v end, vs2.dead)
         MiniHeader(inner, "SURVIVOR", Color3.fromRGB(255, 210,   0))
         CreateAuroraToggle(inner, "Skeleton Survivor Only", function(v) vs2.survivor=v end, vs2.survivor)
-        MiniHeader(inner, "ZOMBIE", Color3.fromRGB( 50, 255, 180))
+        MiniHeader(inner, "ZOMBIE", Color3.fromRGB(255, 190,  50))
         CreateAuroraToggle(inner, "Skeleton Zombie Only", function(v) vs2.zombie=v end, vs2.zombie)
     end
 
@@ -30614,6 +32248,215 @@ end, _G._chamDropGun or false)
             end
         end)
     end
+
+    -- ===============================================================
+    -- COLORES DE ARMAS (v54)
+    -- _G._vsColors ya existia (L26632) pero no habia forma de tocarla
+    -- desde el hub. De sus 6 claves solo 2 se leen de verdad:
+    --   cham -> GunCham (armas tiradas) + el highlight del clon muerto
+    --   esp  -> GunESPHL / GunHighlight (armas y cuchillos)
+    -- Las otras cuatro (outline/box/skeleton/tracer) no tienen ningun
+    -- lector en todo el archivo, asi que NO se exponen aca: serian
+    -- selectores que no cambian nada. Los colores por rol de los
+    -- jugadores (colorOf / updateCham / GetRoleColor) no se tocan.
+    -- ===============================================================
+    do
+        local vcInner = CreateVisualCard(rightColumn, "", "COLORES DE ARMAS", ThemeColors.Accent)
+        local VC      = _G._vsColors
+
+        -- Repinta los Highlight que ya existen; si no, el color nuevo
+        -- solo se veria en las armas que aparezcan despues.
+        local function _vcRepaint(nameA, nameB, c)
+            pcall(function()
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj:IsA("Highlight") and (obj.Name == nameA or obj.Name == nameB) then
+                        obj.FillColor = c
+                    end
+                end
+            end)
+        end
+
+        if VC and _G._ZQ_ColorRow then
+            _G._ZQ_ColorRow(vcInner, {
+                label = "Cham de armas tiradas",
+                order = 1,
+                title = "ARMAS  //  CHAM",
+                get   = function() return VC.cham end,
+                set   = function(c) VC.cham = c; _vcRepaint("GunCham", nil, c) end,
+            })
+            _G._ZQ_ColorRow(vcInner, {
+                label = "Highlight de armas y cuchillos",
+                order = 2,
+                title = "ARMAS  //  HIGHLIGHT",
+                get   = function() return VC.esp end,
+                set   = function(c) VC.esp = c; _vcRepaint("GunESPHL", "GunHighlight", c) end,
+            })
+        end
+    end
+
+    -- ===============================================================
+    -- ESP PARTS PLAYERS -- pinta partes del cuerpo por rol
+    -- Roles: MURDER / SHERIFF / HEROE / INOCENTE
+    -- Un selector de color por cada parte (paleta Google Material)
+    -- ===============================================================
+    do
+        local epInner = CreateVisualCard(rightColumn, "", "ESP PARTS PLAYERS", ThemeColors.Aurora1)
+        local ST      = _G._ZQEP
+
+        if ST then
+            CreateAuroraToggle(epInner, "ESP Parts Players", function(v)
+                if _G._ZQEP_SetEnabled then pcall(_G._ZQEP_SetEnabled, v) end
+            end, (ST.wantEnabled or ST.enabled) and true or false)
+
+            CreateSlider(epInner, "ESP Parts Relleno", 0, 100, math.floor((ST.fillT or 0.35) * 100), function(v)
+                ST.fillT = v / 100
+                if ST.enabled and _G._ZQEP_Refresh then pcall(_G._ZQEP_Refresh) end
+                if _G._ZQEP_Save then _G._ZQEP_Save() end
+            end)
+
+            local EP_HEAD_H = 26
+            local EP_CELL_H = 46   -- v54: la celda es una fila de color
+            local EP_ROWS   = math.ceil(#_G._ZQEP_PARTS / 2)
+
+            local function _epMiniBtn(parent, x, w, txt, col)
+                local b = Instance.new("TextButton", parent)
+                b.Position               = UDim2.new(1, x, 0, 4)
+                b.Size                   = UDim2.fromOffset(w, 18)
+                b.BackgroundColor3       = col
+                b.BackgroundTransparency = 0.82
+                b.BorderSizePixel        = 0
+                b.Text                   = txt
+                b.TextSize               = 9
+                b.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+                b.TextColor3             = col
+                b.AutoButtonColor        = false
+                b.Selectable             = false
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+                local st = Instance.new("UIStroke", b)
+                st.Color           = col
+                st.Thickness       = 1
+                st.Transparency    = 0.5
+                st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                return b
+            end
+
+            local function _epBuildRole(rr, order)
+                local rcfg = ST.roles[rr.key]
+                if not rcfg then return end
+                local rcol = Color3.fromRGB(200, 200, 200)
+                pcall(function()
+                    if type(GetRoleColor) == "function" then rcol = GetRoleColor(rr.key) end
+                end)
+
+                local box = Instance.new("Frame", epInner)
+                box.Name                   = "ZQEP_" .. rr.key
+                box.LayoutOrder            = 50 + order
+                box.Size                   = UDim2.new(1, -8, 0, EP_HEAD_H + EP_ROWS * EP_CELL_H + 6)
+                box.BackgroundColor3       = Color3.fromRGB(12, 11, 10)
+                box.BackgroundTransparency = 0.45
+                box.BorderSizePixel        = 0
+                Instance.new("UICorner", box).CornerRadius = UDim.new(0, 7)
+                local bStrk = Instance.new("UIStroke", box)
+                bStrk.Color           = rcol
+                bStrk.Thickness       = 1
+                bStrk.Transparency    = 0.55
+                bStrk.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+                local dot = Instance.new("Frame", box)
+                dot.Position         = UDim2.fromOffset(8, 9)
+                dot.Size             = UDim2.fromOffset(8, 8)
+                dot.BackgroundColor3 = rcol
+                dot.BorderSizePixel  = 0
+                Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+                local lbl = Instance.new("TextLabel", box)
+                lbl.Position               = UDim2.fromOffset(22, 3)
+                lbl.Size                   = UDim2.new(1, -170, 0, 20)
+                lbl.BackgroundTransparency = 1
+                lbl.Text                   = rr.label
+                lbl.TextSize               = 11
+                lbl.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+                lbl.TextColor3             = rcol
+                lbl.TextXAlignment         = Enum.TextXAlignment.Left
+                lbl.TextTruncate           = Enum.TextTruncate.AtEnd
+
+                local cells = {}
+
+                local btnAll  = _epMiniBtn(box, -142, 46, "TODAS", rcol)
+                local btnNone = _epMiniBtn(box, -92, 46, "NINGUNA", rcol)
+                local btnRole = _epMiniBtn(box, -42, 34, "ON", rcol)
+
+                local function _paintRoleBtn()
+                    btnRole.Text                   = rcfg.on and "ON" or "OFF"
+                    btnRole.BackgroundTransparency = rcfg.on and 0.3 or 0.85
+                    btnRole.TextColor3             = rcfg.on and Color3.fromRGB(16, 15, 14) or rcol
+                end
+                _paintRoleBtn()
+
+                local function _pushChange()
+                    if ST.enabled and _G._ZQEP_Refresh then pcall(_G._ZQEP_Refresh) end
+                    if _G._ZQEP_Save then _G._ZQEP_Save() end
+                end
+
+                btnRole.Activated:Connect(function()
+                    rcfg.on = not rcfg.on
+                    _paintRoleBtn()
+                    _pushChange()
+                end)
+
+                for idx, pn in ipairs(_G._ZQEP_PARTS) do
+                    local e   = rcfg.parts[pn]
+                    local col = (idx - 1) % 2
+                    local row = math.floor((idx - 1) / 2)
+
+                    -- v54: la celda es la misma fila de color del resto del
+                    -- hub (_ZQ_ColorRow) en modo compacto y teniida con el
+                    -- color de la parte.
+                    -- v55: tocar la celda abre la paleta. El prendido/apagado
+                    -- de la parte se fue a la casilla de la izquierda: antes
+                    -- era la celda entera y la unica forma de abrir la paleta
+                    -- era pegarle a la muestra de 18 px.
+                    -- v56: sin tint. La celda ya no se pinta del color de la
+                    -- parte (que dejaba cajas verdes, rojas y azules segun el
+                    -- rol): queda igual que cualquier fila de color del hub y
+                    -- el color se ve en la muestra y en la casilla.
+                    if e then
+                        local r = _G._ZQ_ColorRow and _G._ZQ_ColorRow(box, {
+                            label   = pn,
+                            title   = rr.label .. "  //  " .. pn,
+                            compact = true,
+                            check   = true,
+                            height  = EP_CELL_H - 6,
+                            pos     = UDim2.new(0.5 * col, 6, 0, EP_HEAD_H + row * EP_CELL_H),
+                            size    = UDim2.new(0.5, -12, 0, EP_CELL_H),
+                            get     = function() return e.color end,
+                            state   = function() return e.on end,
+                            set     = function(c) e.color = c; e.on = true end,
+                            onApply = function() _pushChange() end,
+                            onTap   = function() e.on = not e.on; _pushChange() end,
+                        })
+                        if r then cells[idx] = r.refresh end
+                    end
+                end
+
+                local function _setAll(v)
+                    for _, pn in ipairs(_G._ZQEP_PARTS) do
+                        local e = rcfg.parts[pn]
+                        if e then e.on = v end
+                    end
+                    for _, fn in ipairs(cells) do pcall(fn) end
+                    _pushChange()
+                end
+                btnAll.Activated:Connect(function() _setAll(true) end)
+                btnNone.Activated:Connect(function() _setAll(false) end)
+            end
+
+            for i, rr in ipairs(_G._ZQEP_ROLES) do
+                pcall(_epBuildRole, rr, i)
+            end
+        end
+    end
+
 
 end
 
@@ -31221,42 +33064,63 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
     end
     _G._toggleApplyStates = _G._toggleApplyStates or {}
 
-    -- Paleta identica a las pestanas del dock
-    local C_BG      = Color3.fromRGB(42, 77, 160)    -- azul panel (igual a tabs)
-    local C_STROKE  = Color3.fromRGB(83, 126, 218)   -- azul brillante (igual a tabs)
-    local C_TEXT    = Color3.fromRGB(244, 247, 255)   -- blanco azulado (igual a tabs)
-    local C_ON_BG   = Color3.fromRGB(50, 180, 80)    -- verde ON
-    local C_ON_KN   = Color3.fromRGB(240, 255, 240)  -- knob ON blanco verdoso
-    local C_OFF_BG  = Color3.fromRGB(180, 30, 30)    -- rojo OFF
-    local C_OFF_KN  = Color3.fromRGB(255, 230, 230)  -- knob OFF blanco rojizo
-    local ROW_H     = 70
-    local PILL_W    = 54
-    local PILL_H    = 28
-    local KNOB_SZ   = 22
+    -- ============================================================
+    -- ZERQON TOGGLE STYLE v8 — forma imagen 2:
+    -- pill rectangular (no capsule), knob cuadrado redondeado,
+    -- borde amber del hub en TODO (container + pill)
+    -- ============================================================
+    local C_BG        = ThemeColors.Background
+    local C_STROKE    = ThemeColors.Primary          -- amber: borde del container
+    local C_TEXT      = ThemeColors.TextPrimary
+    local C_SUBTEXT   = ThemeColors.TextSecondary
+    local C_TRACK_ON  = ThemeColors.Accent           -- amber brillante ON
+    local C_TRACK_OFF = Color3.fromRGB(62, 54, 38)   -- marrón oscuro cálido OFF
+    local C_KNOB_ON   = Color3.fromRGB(22, 16, 8)    -- casi negro sobre amber
+    local C_KNOB_OFF  = Color3.fromRGB(210, 195, 165) -- marfil cálido OFF
+    local ROW_H   = 50
+    local TRACK_W = 58   -- ancho del track (imagen 2: rectangular)
+    local TRACK_H = 28   -- alto generoso
+    local KNOB_SZ = 22   -- knob grande, casi llena el alto del track
+    local KNOB_CORNER = UDim.new(0, 5)  -- esquinas levemente redondeadas (cuadradito img2)
 
-    -- Contenedor principal: mismo look que los botones del dock
+    -- Contenedor principal — borde AMBER del hub, siempre visible
     local container = Instance.new("Frame", actualParent)
     container.Name                   = "AuroraToggleRow_" .. nombre
     container.Size                   = UDim2.new(1, 0, 0, ROW_H)
     container.BackgroundColor3       = C_BG
-    container.BackgroundTransparency = 0.72
+    container.BackgroundTransparency = 1
     container.BorderSizePixel        = 0
     container.ZIndex                 = 20
-    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 9)
+    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 8)
     local _contStroke = Instance.new("UIStroke", container)
-    _contStroke.Color       = C_STROKE
-    _contStroke.Thickness   = 1.3
-    _contStroke.Transparency = 0.30
-    _contStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    _contStroke.Color            = C_STROKE          -- AMBER del hub, siempre
+    _contStroke.Thickness        = 1.3
+    _contStroke.Transparency     = 0.25              -- visible pero no invasivo
+    _contStroke.ApplyStrokeMode  = Enum.ApplyStrokeMode.Border
+    -- v47: el borde de la fila entra al ciclo RGB con la paleta del hub.
+    -- El hover sigue funcionando: pisa el color un instante y el ciclo lo retoma.
+    if _G._ZQRGB_add then _G._ZQRGB_add(_contStroke, "row") end
 
-    -- Etiqueta de nombre (lado izquierdo)
+    -- Barra de acento izquierda (como en Zerqon Core option cards)
+    local accentBar = Instance.new("Frame", container)
+    accentBar.Name                   = "AccentBar"
+    accentBar.AnchorPoint            = Vector2.new(0, 0.5)
+    accentBar.Position               = UDim2.fromScale(0, 0.5)
+    accentBar.Size                   = UDim2.fromScale(0.008, 0.55)
+    accentBar.BackgroundColor3       = estado and C_TRACK_ON or C_STROKE
+    accentBar.BackgroundTransparency = 0.05
+    accentBar.BorderSizePixel        = 0
+    accentBar.ZIndex                 = 21
+    Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0, 5)
+
+    -- Etiqueta de nombre
     local label = Instance.new("TextLabel", container)
-    label.Size             = UDim2.new(1, -(PILL_W + 24), 1, 0)
-    label.Position         = UDim2.new(0, 12, 0, 0)
+    label.Size             = UDim2.new(1, -(TRACK_W + 28), 1, 0)
+    label.Position         = UDim2.new(0, 18, 0, 0)
     label.BackgroundTransparency = 1
     label.Text             = nombre
-    label.TextSize         = 14
-    label.FontFace         = Font.fromEnum(Enum.Font.GothamSemibold)
+    label.TextSize         = 11
+    label.FontFace         = Font.fromEnum(Enum.Font.GothamBold)
     label.TextColor3       = C_TEXT
     label.TextXAlignment   = Enum.TextXAlignment.Left
     label.TextYAlignment   = Enum.TextYAlignment.Center
@@ -31271,36 +33135,38 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         end
     end
 
-    -- Pildora ON/OFF (lado derecho) - estilo imagen 1
+    -- Track — forma rectangular con esquinas moderadas (imagen 2, NO capsule)
     local pill = Instance.new("Frame", container)
     pill.Name                   = "TogglePill"
-    pill.Size                   = UDim2.new(0, PILL_W, 0, PILL_H)
+    pill.Size                   = UDim2.new(0, TRACK_W, 0, TRACK_H)
     pill.AnchorPoint            = Vector2.new(1, 0.5)
     pill.Position               = UDim2.new(1, -10, 0.5, 0)
-    pill.BackgroundColor3       = estado and C_ON_BG or C_OFF_BG
+    pill.BackgroundColor3       = estado and C_TRACK_ON or C_TRACK_OFF
     pill.BackgroundTransparency = 0
     pill.BorderSizePixel        = 0
     pill.ZIndex                 = 23
-    Instance.new("UICorner", pill).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(0, 7)  -- rect redondeado, NO pill
 
+    -- Borde de la pill — también amber del hub
     local pillStroke = Instance.new("UIStroke", pill)
-    pillStroke.Color       = estado and Color3.fromRGB(80, 220, 100) or Color3.fromRGB(220, 60, 60)
-    pillStroke.Thickness   = 1.5
-    pillStroke.Transparency = 0.2
+    pillStroke.Color        = estado and C_TRACK_ON or C_STROKE
+    pillStroke.Thickness    = 1.5
+    pillStroke.Transparency = estado and 0.05 or 0.20
+    pillStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-    -- Knob dentro de la pildora
+    -- Knob — cuadrado con esquinas levemente redondeadas (imagen 2)
     local knob = Instance.new("Frame", pill)
     knob.Name                   = "Knob"
     knob.Size                   = UDim2.new(0, KNOB_SZ, 0, KNOB_SZ)
     knob.AnchorPoint            = Vector2.new(0.5, 0.5)
     knob.Position               = estado
-        and UDim2.new(1, -KNOB_SZ/2 - 2, 0.5, 0)
-        or  UDim2.new(0, KNOB_SZ/2 + 2, 0.5, 0)
-    knob.BackgroundColor3       = estado and C_ON_KN or C_OFF_KN
+        and UDim2.new(1, -KNOB_SZ/2 - 3, 0.5, 0)
+        or  UDim2.new(0, KNOB_SZ/2 + 3, 0.5, 0)
+    knob.BackgroundColor3       = estado and C_KNOB_ON or C_KNOB_OFF
     knob.BackgroundTransparency = 0
     knob.BorderSizePixel        = 0
     knob.ZIndex                 = 25
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(0, 5)
+    Instance.new("UICorner", knob).CornerRadius = KNOB_CORNER  -- levemente cuadrado
 
     -- Boton invisible sobre todo el row
     local clickRow = Instance.new("TextButton", container)
@@ -31310,45 +33176,71 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
     clickRow.ZIndex                 = 30
     clickRow.AutoButtonColor        = false
 
-    local _ti = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local _ti  = TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+    local _tiK = TweenInfo.new(0.26, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
     local function ApplyState(on, animate)
-        local knobPosOn  = UDim2.new(1, -KNOB_SZ/2 - 2, 0.5, 0)
-        local knobPosOff = UDim2.new(0, KNOB_SZ/2 + 2, 0.5, 0)
+        local knobPosOn  = UDim2.new(1, -KNOB_SZ/2 - 3, 0.5, 0)
+        local knobPosOff = UDim2.new(0, KNOB_SZ/2 + 3, 0.5, 0)
         if animate then
-            TweenService:Create(pill, _ti, {BackgroundColor3 = on and C_ON_BG or C_OFF_BG}):Play()
-            TweenService:Create(knob, _ti, {
-                Position = on and knobPosOn or knobPosOff,
-                BackgroundColor3 = on and C_ON_KN or C_OFF_KN,
+            TweenService:Create(pill, _ti, {BackgroundColor3 = on and C_TRACK_ON or C_TRACK_OFF}):Play()
+            TweenService:Create(knob, _tiK, {
+                Position         = on and knobPosOn or knobPosOff,
+                BackgroundColor3 = on and C_KNOB_ON or C_KNOB_OFF,
             }):Play()
             TweenService:Create(pillStroke, _ti, {
-                Color = on and Color3.fromRGB(80, 220, 100) or Color3.fromRGB(220, 60, 60)
+                Color        = on and C_TRACK_ON or C_STROKE,  -- amber siempre
+                Transparency = on and 0.05 or 0.20,
+            }):Play()
+            TweenService:Create(accentBar, _ti, {
+                BackgroundColor3 = on and C_TRACK_ON or C_STROKE,
+                Size = on and UDim2.fromScale(0.008, 0.72) or UDim2.fromScale(0.008, 0.55),
+            }):Play()
+            TweenService:Create(label, _ti, {
+                TextColor3 = on and C_TRACK_ON or C_TEXT,
             }):Play()
         else
-            pill.BackgroundColor3   = on and C_ON_BG or C_OFF_BG
+            pill.BackgroundColor3   = on and C_TRACK_ON or C_TRACK_OFF
             knob.Position           = on and knobPosOn or knobPosOff
-            knob.BackgroundColor3   = on and C_ON_KN or C_OFF_KN
-            pillStroke.Color        = on and Color3.fromRGB(80, 220, 100) or Color3.fromRGB(220, 60, 60)
+            knob.BackgroundColor3   = on and C_KNOB_ON or C_KNOB_OFF
+            pillStroke.Color        = on and C_TRACK_ON or C_STROKE
+            pillStroke.Transparency = on and 0.05 or 0.20
+            accentBar.BackgroundColor3 = on and C_TRACK_ON or C_STROKE
+            accentBar.Size          = on and UDim2.fromScale(0.008, 0.72) or UDim2.fromScale(0.008, 0.55)
+            label.TextColor3        = on and C_TRACK_ON or C_TEXT
         end
     end
 
     _G._toggleApplyStates[nombre] = ApplyState
     ApplyState(estado, false)
 
-    -- Hover: iluminar como tabs activos
+    -- Hover: efecto Zerqon suave - SIN fondo, solo borde brilla
     clickRow.MouseEnter:Connect(function()
+        -- FIX: fondo siempre transparente, solo el stroke cambia en hover
         TweenService:Create(container, _ti, {
-            BackgroundColor3    = Color3.fromRGB(83, 126, 218),
-            BackgroundTransparency = 0.04,
+            BackgroundTransparency = 1,  -- FIX: SIEMPRE transparente
         }):Play()
-        TweenService:Create(_contStroke, _ti, {Thickness = 1.8, Transparency = 0.05}):Play()
+        TweenService:Create(_contStroke, _ti, {
+            Color       = C_TRACK_ON,
+            Thickness   = 1.4,
+            Transparency = 0.10,
+        }):Play()
+        TweenService:Create(accentBar, _ti, {
+            Size = UDim2.fromScale(0.012, 0.72),
+        }):Play()
     end)
     clickRow.MouseLeave:Connect(function()
         TweenService:Create(container, _ti, {
-            BackgroundColor3    = C_BG,
-            BackgroundTransparency = 0.72,
+            BackgroundTransparency = 1,  -- FIX: SIEMPRE transparente al salir hover
         }):Play()
-        TweenService:Create(_contStroke, _ti, {Thickness = 1.3, Transparency = 0.30}):Play()
+        TweenService:Create(_contStroke, _ti, {
+            Color       = C_STROKE,
+            Thickness   = 1.2,
+            Transparency = 0.20,
+        }):Play()
+        TweenService:Create(accentBar, _ti, {
+            Size = estado and UDim2.fromScale(0.008, 0.72) or UDim2.fromScale(0.008, 0.55),
+        }):Play()
     end)
 
     local _doToggleLastTime = 0
@@ -31673,7 +33565,7 @@ function CreateWorldUI_FakeBombCustomization()
     previewLbl.Position = UDim2.new(0, 40, 0, 0)
     previewLbl.BackgroundTransparency = 1
     previewLbl.Text = "Color de la bomba (RGB)"
-    previewLbl.TextColor3 = Color3.fromRGB(200, 200, 210)
+    previewLbl.TextColor3 = Color3.fromRGB(210, 207, 200)
     previewLbl.FontFace = Font.fromEnum(Enum.Font.Montserrat)
     previewLbl.TextSize = 13
     previewLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -31777,13 +33669,13 @@ end
 
 function CreateWorldUI_Emotes()
     local EMOTES = {
-        { name = "Sit",      key = "Z", keyCode = Enum.KeyCode.Z, id = "2431845940", emoji = "[SIT]",  accent = Color3.fromRGB( 80, 200, 255) },
-        { name = "Ninja",    key = "X", keyCode = Enum.KeyCode.X, id = "2431864798", emoji = "[NJA]",  accent = Color3.fromRGB(180,  60, 255) },
-        { name = "Dab",      key = "C", keyCode = Enum.KeyCode.C, id = "2445521505", emoji = "[DAB]",  accent = Color3.fromRGB( 50, 255, 150) },
+        { name = "Sit",      key = "Z", keyCode = Enum.KeyCode.Z, id = "2431845940", emoji = "[SIT]",  accent = Color3.fromRGB(255, 200,  80) },
+        { name = "Ninja",    key = "X", keyCode = Enum.KeyCode.X, id = "2431864798", emoji = "[NJA]",  accent = Color3.fromRGB(255, 193,  60) },
+        { name = "Dab",      key = "C", keyCode = Enum.KeyCode.C, id = "2445521505", emoji = "[DAB]",  accent = Color3.fromRGB(255, 190,  50) },
         { name = "Floss",    key = "V", keyCode = Enum.KeyCode.V, id = "2452938820", emoji = "[FLS]",  accent = Color3.fromRGB(255, 200,  50) },
-        { name = "Headless", key = "B", keyCode = Enum.KeyCode.B, id = "2513664073", emoji = "[HDL]",  accent = Color3.fromRGB(255,  60,  80) },
-        { name = "Zombie",   key = "N", keyCode = Enum.KeyCode.N, id = "2513692312", emoji = "[ZMB]",  accent = Color3.fromRGB( 80, 255,  80) },
-        { name = "Zen",      key = "M", keyCode = Enum.KeyCode.M, id = "2431812646", emoji = "[ZEN]",  accent = Color3.fromRGB(255, 150, 200) },
+        { name = "Headless", key = "B", keyCode = Enum.KeyCode.B, id = "2513664073", emoji = "[HDL]",  accent = Color3.fromRGB(255, 193,  60) },
+        { name = "Zombie",   key = "N", keyCode = Enum.KeyCode.N, id = "2513692312", emoji = "[ZMB]",  accent = Color3.fromRGB(255, 200,  80) },
+        { name = "Zen",      key = "M", keyCode = Enum.KeyCode.M, id = "2431812646", emoji = "[ZEN]",  accent = Color3.fromRGB(255, 222, 150) },
     }
 
     for _, emote in ipairs(EMOTES) do
@@ -31939,7 +33831,7 @@ function CreateWorldUI_Emotes()
     local _emoteBanner = Instance.new("Frame", leftColumn)
     _emoteBanner.Name = "EmotesBanner"
     _emoteBanner.Size = UDim2.new(1, -4, 0, 52)
-    _emoteBanner.BackgroundColor3 = Color3.fromRGB(8, 14, 40)
+    _emoteBanner.BackgroundColor3 = Color3.fromRGB(40, 30,  8)
     _emoteBanner.BackgroundTransparency = 0.2
     _emoteBanner.BorderSizePixel = 0
     Instance.new("UICorner", _emoteBanner).CornerRadius = UDim.new(0, 12)
@@ -31949,20 +33841,20 @@ function CreateWorldUI_Emotes()
     _bannerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local _bannerGrad = Instance.new("UIGradient", _bannerStroke)
     _bannerGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB( 80, 200, 255)),
-        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(180,  60, 255)),
-        ColorSequenceKeypoint.new(0.4, Color3.fromRGB( 50, 255, 150)),
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(255, 200,  80)),
+        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 193,  60)),
+        ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 190,  50)),
         ColorSequenceKeypoint.new(0.6, Color3.fromRGB(255, 200,  50)),
-        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(255,  60,  80)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB( 80, 200, 255)),
+        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(255, 193,  60)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(255, 200,  80)),
     })
     RegisterShimmer(_bannerGrad, 70, math.random(0, 359))
     -- Gradiente de fondo del banner
     local _bannerBgGrad = Instance.new("UIGradient", _emoteBanner)
     _bannerBgGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(20,  8, 60)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB( 8, 20, 50)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(25,  5, 45)),
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(60, 44,  8)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(50, 37,  8)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(45, 32,  5)),
     })
     _bannerBgGrad.Rotation = 90
     -- Icono / titulo del banner
@@ -31973,7 +33865,7 @@ function CreateWorldUI_Emotes()
     _bannerTitle.Text = "EMOTES  [Z] [X] [C] [V] [B] [N] [M]"
     _bannerTitle.FontFace = Font.fromEnum(Enum.Font.GothamBold)
     _bannerTitle.TextSize = 13
-    _bannerTitle.TextColor3 = Color3.fromRGB(220, 240, 255)
+    _bannerTitle.TextColor3 = Color3.fromRGB(255, 244, 220)
     _bannerTitle.TextXAlignment = Enum.TextXAlignment.Left
     _bannerTitle.TextYAlignment = Enum.TextYAlignment.Center
     _bannerTitle.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
@@ -31987,23 +33879,23 @@ function CreateWorldUI_Emotes()
     _bannerSub.Text = "Pulsa PLAY o usa teclas para activar"
     _bannerSub.FontFace = Font.fromEnum(Enum.Font.Gotham)
     _bannerSub.TextSize = 10
-    _bannerSub.TextColor3 = Color3.fromRGB(140, 180, 220)
+    _bannerSub.TextColor3 = Color3.fromRGB(220, 195, 140)
     _bannerSub.TextXAlignment = Enum.TextXAlignment.Left
     _bannerSub.ZIndex = 15
     -- Linea separadora decorativa bajo el banner
     local _bannerLine = Instance.new("Frame", leftColumn)
     _bannerLine.Name = "EmotesBannerLine"
     _bannerLine.Size = UDim2.new(1, -8, 0, 2)
-    _bannerLine.BackgroundColor3 = Color3.fromRGB(80, 200, 255)
+    _bannerLine.BackgroundColor3 = Color3.fromRGB(255, 200,  80)
     _bannerLine.BackgroundTransparency = 0.4
     _bannerLine.BorderSizePixel = 0
     Instance.new("UICorner", _bannerLine).CornerRadius = UDim.new(1, 0)
     local _lineGrad = Instance.new("UIGradient", _bannerLine)
     _lineGrad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(80, 200, 255)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(180, 60, 255)),
-        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(80, 200, 255)),
+        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 200,  80)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255,193,  60)),
+        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(255, 200,  80)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0)),
     })
     RegisterShimmer(_lineGrad, 55, 40)
@@ -32049,7 +33941,7 @@ function CreateWorldUI_Emotes()
         local panel = Instance.new("Frame", targetCol)
         panel.Name                   = "EmotePanel_" .. capturedName
         panel.Size                   = UDim2.new(1, -4, 0, 0)
-        panel.BackgroundColor3       = Color3.fromRGB(6, 12, 38)
+        panel.BackgroundColor3       = Color3.fromRGB(38, 28,  6)
         panel.BackgroundTransparency = 0.55
         panel.BorderSizePixel        = 0
         panel.AutomaticSize          = Enum.AutomaticSize.Y
@@ -32062,7 +33954,7 @@ function CreateWorldUI_Emotes()
                 math.floor(emoteAccent.G * 255 * 0.12),
                 math.floor(emoteAccent.B * 255 * 0.12)
             )),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(5, 10, 30)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(30, 22,  5)),
         })
         panelBgGrad.Rotation = 135
         -- Stroke de color del emote con shimmer
@@ -32087,7 +33979,7 @@ function CreateWorldUI_Emotes()
         local titleRow = Instance.new("Frame", panel)
         titleRow.Name                   = "TitleRow"
         titleRow.Size                   = UDim2.new(1, 0, 0, 36)
-        titleRow.BackgroundColor3       = Color3.fromRGB(8, 16, 45)
+        titleRow.BackgroundColor3       = Color3.fromRGB(45, 33,  8)
         titleRow.BackgroundTransparency = 0.4
         titleRow.BorderSizePixel        = 0
         Instance.new("UICorner", titleRow).CornerRadius = UDim.new(0, 8)
@@ -32099,7 +33991,7 @@ function CreateWorldUI_Emotes()
                 math.floor(emoteAccent.G * 255 * 0.25),
                 math.floor(emoteAccent.B * 255 * 0.25)
             )),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(6, 14, 42)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(42, 31,  6)),
         })
         titleBgGrad.Rotation = 90
         -- Borde inferior de la cabecera (linea fina de color)
@@ -32136,7 +34028,7 @@ function CreateWorldUI_Emotes()
         titleLbl.Text                 = capturedName:upper()
         titleLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
         titleLbl.TextSize             = 14
-        titleLbl.TextColor3           = Color3.fromRGB(235, 245, 255)
+        titleLbl.TextColor3           = Color3.fromRGB(255, 249, 235)
         titleLbl.TextXAlignment       = Enum.TextXAlignment.Left
         titleLbl.TextYAlignment       = Enum.TextYAlignment.Center
         titleLbl.TextStrokeColor3     = Color3.fromRGB(0, 0, 0)
@@ -32245,7 +34137,7 @@ function CreateWorldUI_Emotes()
 
         -- Dropdown shape type
         if not bindData.shapeType then bindData.shapeType = "Circle" end
-        CreateNebulaSelector(panel, capturedName .. " Emote Bindable Shape Type", {"Circle","Square","Rounded"}, bindData.shapeType, function(v)
+        CreateZerqonSelector(panel, capturedName .. " Emote Bindable Shape Type", {"Circle","Square","Rounded"}, bindData.shapeType, function(v)
             bindData.shapeType = v
             if bindData.frame then
                 local corner = bindData.frame:FindFirstChildOfClass("UICorner")
@@ -32265,12 +34157,12 @@ function CreateWorldUI_Emotes()
     local _actionRow = Instance.new("Frame", leftColumn)
     _actionRow.Name = "EmoteActionRow"
     _actionRow.Size = UDim2.new(1, -4, 0, 40)
-    _actionRow.BackgroundColor3 = Color3.fromRGB(8, 14, 40)
+    _actionRow.BackgroundColor3 = Color3.fromRGB(40, 30,  8)
     _actionRow.BackgroundTransparency = 0.4
     _actionRow.BorderSizePixel = 0
     Instance.new("UICorner", _actionRow).CornerRadius = UDim.new(0, 10)
     local _actionStroke = Instance.new("UIStroke", _actionRow)
-    _actionStroke.Color = Color3.fromRGB(255, 60, 80)
+    _actionStroke.Color = Color3.fromRGB(255,193, 60)
     _actionStroke.Thickness = 1.2
     _actionStroke.Transparency = 0.5
     local _actionLayout = Instance.new("UIListLayout", _actionRow)
@@ -32279,21 +34171,21 @@ function CreateWorldUI_Emotes()
     _actionLayout.VerticalAlignment = Enum.VerticalAlignment.Center
     _actionLayout.Padding = UDim.new(0, 8)
 
-    -- Boton STOP con estilo rojo/naranja
+    -- Boton STOP con estilo ambar del hub
     local _stopBtn2 = Instance.new("TextButton", _actionRow)
     _stopBtn2.Name = "StopEmoteBtn"
     _stopBtn2.Size = UDim2.new(0, 120, 0, 30)
-    _stopBtn2.BackgroundColor3 = Color3.fromRGB(200, 40, 60)
+    _stopBtn2.BackgroundColor3 = Color3.fromRGB(200,149, 40)
     _stopBtn2.BackgroundTransparency = 0.2
     _stopBtn2.BorderSizePixel = 0
     _stopBtn2.Text = "STOP EMOTE"
     _stopBtn2.FontFace = Font.fromEnum(Enum.Font.GothamBold)
     _stopBtn2.TextSize = 12
-    _stopBtn2.TextColor3 = Color3.fromRGB(255, 220, 220)
+    _stopBtn2.TextColor3 = Color3.fromRGB(255, 244, 220)
     _stopBtn2.AutoButtonColor = false
     Instance.new("UICorner", _stopBtn2).CornerRadius = UDim.new(0, 7)
     local _stopStroke2 = Instance.new("UIStroke", _stopBtn2)
-    _stopStroke2.Color = Color3.fromRGB(255, 100, 120)
+    _stopStroke2.Color = Color3.fromRGB(255, 206, 100)
     _stopStroke2.Thickness = 1
     _stopStroke2.Transparency = 0.4
     _stopBtn2.Activated:Connect(function()
@@ -32301,27 +34193,27 @@ function CreateWorldUI_Emotes()
         CreateCustomNotification("EMOTE", "Emote detenido.", 2)
     end)
     _stopBtn2.MouseEnter:Connect(function()
-        TweenService:Create(_stopBtn2, TweenInfo.new(0.1), {BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(230, 50, 70)}):Play()
+        TweenService:Create(_stopBtn2, TweenInfo.new(0.1), {BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(230,173, 50)}):Play()
     end)
     _stopBtn2.MouseLeave:Connect(function()
-        TweenService:Create(_stopBtn2, TweenInfo.new(0.1), {BackgroundTransparency = 0.2, BackgroundColor3 = Color3.fromRGB(200, 40, 60)}):Play()
+        TweenService:Create(_stopBtn2, TweenInfo.new(0.1), {BackgroundTransparency = 0.2, BackgroundColor3 = Color3.fromRGB(200,149, 40)}):Play()
     end)
 
-    -- Boton DISABLE ALL con estilo gris/purpura
+    -- Boton DISABLE ALL con estilo bronce del hub
     local _disableAllBtn = Instance.new("TextButton", _actionRow)
     _disableAllBtn.Name = "DisableAllEmotesBtn"
     _disableAllBtn.Size = UDim2.new(0, 140, 0, 30)
-    _disableAllBtn.BackgroundColor3 = Color3.fromRGB(60, 30, 100)
+    _disableAllBtn.BackgroundColor3 = Color3.fromRGB(100, 78,  30)
     _disableAllBtn.BackgroundTransparency = 0.2
     _disableAllBtn.BorderSizePixel = 0
     _disableAllBtn.Text = "DISABLE ALL BIND"
     _disableAllBtn.FontFace = Font.fromEnum(Enum.Font.GothamBold)
     _disableAllBtn.TextSize = 11
-    _disableAllBtn.TextColor3 = Color3.fromRGB(220, 200, 255)
+    _disableAllBtn.TextColor3 = Color3.fromRGB(255, 238, 200)
     _disableAllBtn.AutoButtonColor = false
     Instance.new("UICorner", _disableAllBtn).CornerRadius = UDim.new(0, 7)
     local _disableStroke = Instance.new("UIStroke", _disableAllBtn)
-    _disableStroke.Color = Color3.fromRGB(160, 80, 255)
+    _disableStroke.Color = Color3.fromRGB(255,200,  80)
     _disableStroke.Thickness = 1
     _disableStroke.Transparency = 0.4
     _disableAllBtn.Activated:Connect(function()
@@ -32337,10 +34229,10 @@ function CreateWorldUI_Emotes()
         CreateCustomNotification("EMOTES", "Todos los bindable desactivados.", 2)
     end)
     _disableAllBtn.MouseEnter:Connect(function()
-        TweenService:Create(_disableAllBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(80, 40, 130)}):Play()
+        TweenService:Create(_disableAllBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(130,102,  40)}):Play()
     end)
     _disableAllBtn.MouseLeave:Connect(function()
-        TweenService:Create(_disableAllBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0.2, BackgroundColor3 = Color3.fromRGB(60, 30, 100)}):Play()
+        TweenService:Create(_disableAllBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0.2, BackgroundColor3 = Color3.fromRGB(100, 78,  30)}):Play()
     end)
 
     -- Ocultar el viejo _makeTPButton stop (aun se crea pero permanece invisible)
@@ -32363,12 +34255,12 @@ function CreateWorldUI_Emotes()
     -- ============================================================
     -- ANIMATION CHANGER -- Selector de animaciones integrado
     -- ============================================================
-    local _animSec = CreateSection(leftColumn, "", "ANIMATION CHANGER", Color3.fromRGB(80, 20, 120))
+    local _animSec = CreateSection(leftColumn, "", "ANIMATION CHANGER", Color3.fromRGB(120, 88,  20))
 
     local ANIM_CATEGORIES = {
         {
             name  = "Normal",
-            color = Color3.fromRGB(0, 210, 255),
+            color = ThemeColors.Accent,
             anims = {
                 { name = "Ninja",     idle1 = "656117400", idle2 = "656118341", walk = "656121766", run = "656118852", jump = "656117878", climb = "656114359", fall = "656115606" },
                 { name = "Levitation",idle1 = "616006778", idle2 = "616008087", walk = "616013216", run = "616010382", jump = "616008936", climb = "616003713", fall = "616005863" },
@@ -32390,7 +34282,7 @@ function CreateWorldUI_Emotes()
         },
         {
             name  = "Special",
-            color = Color3.fromRGB(255, 100, 200),
+            color = Color3.fromRGB(255, 206, 100),
             anims = {
                 { name = "Popstar",   idle1 = "1212900985",idle2 = "1150842221",walk = "1212980338",run = "1212980348",jump = "1212954642",climb = "1213044953",fall = "1212900995" },
                 { name = "Patrol",    idle1 = "1149612882",idle2 = "1150842221",walk = "1151231493",run = "1150967949",jump = "1148811837",climb = "1148811837",fall = "1148863382" },
@@ -32403,7 +34295,7 @@ function CreateWorldUI_Emotes()
         },
         {
             name  = "Other",
-            color = Color3.fromRGB(100, 255, 150),
+            color = Color3.fromRGB(255, 206, 100),
             anims = {
                 { name = "None",         idle1 = "0", idle2 = "0", walk = "0", run = "0", jump = "0", climb = "0", fall = "0" },
                 { name = "Anthro",       idle1 = "2510196951",idle2 = "2510197257",walk = "2510202577",run = "2510198475",jump = "2510197830",climb = "2510192778",fall = "2510195892" },
@@ -32435,12 +34327,12 @@ function CreateWorldUI_Emotes()
     _animContainer.Name                   = "AnimChangerContainer"
     _animContainer.Size                   = UDim2.new(1, -4, 0, 0)
     _animContainer.AutomaticSize          = Enum.AutomaticSize.Y
-    _animContainer.BackgroundColor3       = Color3.fromRGB(8, 5, 20)
+    _animContainer.BackgroundColor3       = Color3.fromRGB(20,15,  5)
     _animContainer.BackgroundTransparency = 0.6
     _animContainer.BorderSizePixel        = 0
     Instance.new("UICorner", _animContainer).CornerRadius = UDim.new(0, 12)
     local _acStroke = Instance.new("UIStroke", _animContainer)
-    _acStroke.Color = Color3.fromRGB(130, 0, 255); _acStroke.Thickness = 1.5; _acStroke.Transparency = 0.2
+    _acStroke.Color = Color3.fromRGB(255,174,   0); _acStroke.Thickness = 1.5; _acStroke.Transparency = 0.2
     local _acLayout = Instance.new("UIListLayout", _animContainer)
     _acLayout.Padding = UDim.new(0, 6)
     _acLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -32502,9 +34394,9 @@ function CreateWorldUI_Emotes()
 
         -- Colores base derivados del color de la categoria
         local r, g, b = cat.color.R, cat.color.G, cat.color.B
-        local darkBg  = Color3.new(r*0.08 + 0.04, g*0.08 + 0.02, b*0.12 + 0.06)
-        local hoverBg = Color3.new(r*0.18 + 0.06, g*0.12 + 0.03, b*0.22 + 0.08)
-        local activeBg= Color3.new(r*0.30 + 0.06, g*0.18 + 0.04, b*0.35 + 0.10)
+        local darkBg  = Color3.new(r*0.08 + 0.06, g*0.08 + 0.035, b*0.12 + 0.01)
+        local hoverBg = Color3.new(r*0.18 + 0.08, g*0.12 + 0.05, b*0.22 + 0.012)
+        local activeBg= Color3.new(r*0.30 + 0.10, g*0.18 + 0.06, b*0.35 + 0.015)
 
         -- Crear botones de anims
         for order, anim in ipairs(cat.anims) do
@@ -32553,7 +34445,7 @@ function CreateWorldUI_Emotes()
             nameLabel.Text = anim.name
             nameLabel.TextSize = 12
             nameLabel.Font = Enum.Font.GothamBold
-            nameLabel.TextColor3 = Color3.fromRGB(210, 210, 230)
+            nameLabel.TextColor3 = Color3.fromRGB(230, 224, 210)
             nameLabel.TextXAlignment = Enum.TextXAlignment.Center
             nameLabel.TextYAlignment = Enum.TextYAlignment.Center
             nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
@@ -32569,7 +34461,7 @@ function CreateWorldUI_Emotes()
                 if _activeAnimBtn ~= btnWrap then
                     TweenService:Create(btnWrap, TweenInfo.new(0.13), {BackgroundColor3 = darkBg, BackgroundTransparency = 0.15}):Play()
                     TweenService:Create(btnStroke, TweenInfo.new(0.13), {Transparency = 0.5, Thickness = 1.2}):Play()
-                    TweenService:Create(nameLabel, TweenInfo.new(0.13), {TextColor3 = Color3.fromRGB(210,210,230)}):Play()
+                    TweenService:Create(nameLabel, TweenInfo.new(0.13), {TextColor3 = Color3.fromRGB(230,224,210)}):Play()
                 end
             end)
 
@@ -32581,7 +34473,7 @@ function CreateWorldUI_Emotes()
                     local prevStroke = _activeAnimBtn:FindFirstChildOfClass("UIStroke")
                     if prevStroke then TweenService:Create(prevStroke, TweenInfo.new(0.15), {Transparency = 0.5, Thickness = 1.2}):Play() end
                     local prevName = _activeAnimBtn:FindFirstChild("AnimName")
-                    if prevName then TweenService:Create(prevName, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(210,210,230)}):Play() end
+                    if prevName then TweenService:Create(prevName, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(230,224,210)}):Play() end
                 end
                 -- Marcar este como activo
                 _activeAnimBtn = btnWrap
@@ -32916,7 +34808,7 @@ function CreateWorldUI_OrbitPlayer()
         if p ~= LocalPlayer then table.insert(_playerNames, p.Name) end
     end
 
-    CreateNebulaSelector(_opSec, "Select Player", _playerNames, _op.targetName or "N/A", function(name)
+    CreateZerqonSelector(_opSec, "Select Player", _playerNames, _op.targetName or "N/A", function(name)
         _op.targetName = (name == "N/A") and nil or name
         -- Si orbit esta activo, reiniciarlo con el nuevo target
         if _op.active then _startOrbitPlayer() end
@@ -33820,7 +35712,7 @@ function CreateWorldUI_RompGun() -- global to stay under 200-local limit
         if p ~= LocalPlayer then table.insert(_ptPlayerList, p.Name) end
     end
     local _initDef = _ptPlayerList[1]
-    local _ptSelector = CreateNebulaSelector(_ptSection, "Seleccionar Jugador", _ptPlayerList, _initDef, function(name)
+    local _ptSelector = CreateZerqonSelector(_ptSection, "Seleccionar Jugador", _ptPlayerList, _initDef, function(name)
         PT.selectedPlayer = name
     end)
     _G._ptSelectorRef = _ptSelector
@@ -33928,7 +35820,7 @@ function CreateWorldUI_RompGun() -- global to stay under 200-local limit
  CreateCustomNotification("COINS", notifMsg, 6)
         else
             coinResLbl.Text = targetName .. "\n Coins: No accesibles (MM2)"
-            coinResLbl.TextColor3 = Color3.fromRGB(255, 120, 50)
+            coinResLbl.TextColor3 = Color3.fromRGB(255, 190, 50)
  CreateCustomNotification("COINS", targetName .. " -- No accesibles (MM2)", 4)
         end
     end)
@@ -35246,7 +37138,7 @@ function CreateWorldUI_Spectate()
         end
 
         _refreshSpecList()
- CreateNebulaSelector(_specSec, "Seleccionar Jugador", _specPlayerList, _specPlayerList[1], function(name)
+ CreateZerqonSelector(_specSec, "Seleccionar Jugador", _specPlayerList, _specPlayerList[1], function(name)
             _specSelectedPlayer = name
             t = Players:FindFirstChild(name)
             if t then
@@ -35949,7 +37841,7 @@ function CreateWorldUI_GotoPlayers()
         TeleportToRandomPlayer()
     end, leftColumn)
 
-    -- SELECTOR DE JUGADORES (usa CreateNebulaSelector del hub) + BOTON TP
+    -- SELECTOR DE JUGADORES (usa CreateZerqonSelector del hub) + BOTON TP
     do
         local _selSec = CreateSection(leftColumn, "", "TP A JUGADOR", ThemeColors.Aurora3)
 
@@ -35975,7 +37867,7 @@ function CreateWorldUI_GotoPlayers()
         _rebuildOptions()
 
         -- Selector nativo del hub
-        _selectorObj = CreateNebulaSelector(
+        _selectorObj = CreateZerqonSelector(
             _selSec,
             "Jugador",
             _playerNames,
@@ -36370,7 +38262,7 @@ function CreateWorldUI_FakeLag()
         end
     end
 
- CreateNebulaSelector(_flSec, "Modo de Lag", {"Freeze","Stutter","Spike","Ghost"}, "Freeze", function(v)
+ CreateZerqonSelector(_flSec, "Modo de Lag", {"Freeze","Stutter","Spike","Ghost"}, "Freeze", function(v)
         _fl.mode = v
     end)
 
@@ -37301,7 +39193,7 @@ function CreateWorldUI_ProximityPromptSection()
     subLbl2.Text = "UNIVERSAL"
     subLbl2.Font = Enum.Font.Montserrat
     subLbl2.TextSize = 10
-    subLbl2.TextColor3 = Color3.fromRGB( 50, 255, 180)
+    subLbl2.TextColor3 = Color3.fromRGB(255, 190,  50)
     subLbl2.TextXAlignment = Enum.TextXAlignment.Left
 
     _G._proxState = _G._proxState or { instant = false, noLimit = false, hookConn = nil }
@@ -37394,7 +39286,7 @@ function CreateWorldUI_AutoClickTouch()
     subLbl.Text = "UNIVERSAL (PC + MOBILE)"
     subLbl.Font = Enum.Font.Montserrat
     subLbl.TextSize = 10
-    subLbl.TextColor3 = Color3.fromRGB(0, 255, 160)
+    subLbl.TextColor3 = Color3.fromRGB(255, 174,   0)
     subLbl.TextXAlignment = Enum.TextXAlignment.Left
     subLbl.ZIndex = 13
 
@@ -37418,14 +39310,14 @@ function CreateWorldUI_AutoClickTouch()
     delayValLbl.Text                = string.format("Delay: %.2f s", ACT.delay)
     delayValLbl.Font                = Enum.Font.Montserrat
     delayValLbl.TextSize            = 11
-    delayValLbl.TextColor3          = Color3.fromRGB(200, 200, 255)
+    delayValLbl.TextColor3          = Color3.fromRGB(255, 238, 200)
     delayValLbl.TextXAlignment      = Enum.TextXAlignment.Left
     delayValLbl.ZIndex              = 13
 
     -- Frame del slider
     local sliderTrack = Instance.new("Frame", sec)
     sliderTrack.Size                = UDim2.new(1,-12,0,14)
-    sliderTrack.BackgroundColor3    = Color3.fromRGB(40, 40, 60)
+    sliderTrack.BackgroundColor3    = Color3.fromRGB(32, 28, 22)
     sliderTrack.BackgroundTransparency = 0.3
     sliderTrack.BorderSizePixel     = 0
     sliderTrack.ZIndex              = 13
@@ -37433,7 +39325,7 @@ function CreateWorldUI_AutoClickTouch()
 
     local sliderFill = Instance.new("Frame", sliderTrack)
     sliderFill.Size                 = UDim2.new(ACT.delay / 1.0, 0, 1, 0)  -- 0..1 seg
-    sliderFill.BackgroundColor3     = Color3.fromRGB(180, 255, 230)
+    sliderFill.BackgroundColor3     = Color3.fromRGB(255, 231, 180)
     sliderFill.BorderSizePixel      = 0
     sliderFill.ZIndex               = 14
     Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(0, 7)
@@ -37442,7 +39334,7 @@ function CreateWorldUI_AutoClickTouch()
     sliderKnob.Size                 = UDim2.new(0, 14, 0, 14)
     sliderKnob.AnchorPoint          = Vector2.new(0.5, 0)
     sliderKnob.Position             = UDim2.new(ACT.delay / 1.0, 0, 0, 0)
-    sliderKnob.BackgroundColor3     = Color3.fromRGB(200, 200, 255)
+    sliderKnob.BackgroundColor3     = Color3.fromRGB(255, 238, 200)
     sliderKnob.BorderSizePixel      = 0
     sliderKnob.ZIndex               = 15
     Instance.new("UICorner", sliderKnob).CornerRadius = UDim.new(1, 0)
@@ -37582,7 +39474,7 @@ function CreateWorldUI_SpinSection()
     subLbl.Text = "UNIVERSAL"
     subLbl.Font = Enum.Font.Montserrat
     subLbl.TextSize = 10
-    subLbl.TextColor3 = Color3.fromRGB( 50, 255, 180)
+    subLbl.TextColor3 = Color3.fromRGB(255, 190,  50)
     subLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     -- FIX AUTO-ACTIVAR: resetear enabled/bindEnabled al abrir el tab para que
@@ -37878,7 +39770,7 @@ function CreateWorldUI_VoidTeleport()
     subLbl.Text = "MM2 / MMV"
     subLbl.Font = Enum.Font.Montserrat
     subLbl.TextSize = 10
-    subLbl.TextColor3 = Color3.fromRGB( 50, 255, 180)
+    subLbl.TextColor3 = Color3.fromRGB(255, 190,  50)
     subLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     _G._tpVoid = _G._tpVoid or {
@@ -37985,7 +39877,7 @@ function CreateWorldUI_ExposeRoles()
     local subLbl = Instance.new("TextLabel", sec)
     subLbl.Size = UDim2.new(1,-12,0,14); subLbl.BackgroundTransparency = 1
     subLbl.Text = "UNIVERSAL"; subLbl.Font = Enum.Font.Montserrat; subLbl.TextSize = 10
-    subLbl.TextColor3 = Color3.fromRGB( 50, 255, 180); subLbl.TextXAlignment = Enum.TextXAlignment.Left
+    subLbl.TextColor3 = Color3.fromRGB(255, 190,  50); subLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     -- Usa _roleCache (mas confiable) con fallback a busqueda por herramienta
     local function getRoles()
@@ -38171,7 +40063,7 @@ function CreateWorldUI_TeleportLobby()
     local subLbl = Instance.new("TextLabel", sec)
     subLbl.Size = UDim2.new(1,-12,0,14); subLbl.BackgroundTransparency = 1
     subLbl.Text = "MM2 / MMV"; subLbl.Font = Enum.Font.Montserrat; subLbl.TextSize = 10
-    subLbl.TextColor3 = Color3.fromRGB( 50, 255, 180); subLbl.TextXAlignment = Enum.TextXAlignment.Left
+    subLbl.TextColor3 = Color3.fromRGB(255, 190,  50); subLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     _G._tpLobby = _G._tpLobby or { enabled=false, conn=nil, fontSize=10, sizeX=38 }
     _G._tpLobby.enabled = false
@@ -38251,7 +40143,7 @@ function CreateWorldUI_TeleportToMap()
     local subLbl = Instance.new("TextLabel", sec)
     subLbl.Size = UDim2.new(1,-12,0,14); subLbl.BackgroundTransparency = 1
     subLbl.Text = "MM2 / MMV"; subLbl.Font = Enum.Font.Montserrat; subLbl.TextSize = 10
-    subLbl.TextColor3 = Color3.fromRGB( 50, 255, 180); subLbl.TextXAlignment = Enum.TextXAlignment.Left
+    subLbl.TextColor3 = Color3.fromRGB(255, 190,  50); subLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     _G._tpToMap = _G._tpToMap or { enabled=false, conn=nil, fontSize=10, sizeX=38 }
     local M = _G._tpToMap
@@ -38398,7 +40290,7 @@ function CreateWorldUI_BombJump()
             frame.Name                   = "FBSmallFrame"
             frame.Size                   = UDim2.fromOffset(W, H)
             frame.Position               = UDim2.fromOffset(200, 500)
-            frame.BackgroundColor3       = Color3.fromRGB(  3,   8,  18)
+            frame.BackgroundColor3       = Color3.fromRGB( 22,  18,  12)
             frame.BackgroundTransparency = 0.2
             frame.BorderSizePixel        = 0
             frame.Active                 = true
@@ -38406,7 +40298,7 @@ function CreateWorldUI_BombJump()
             Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
             local stroke = Instance.new("UIStroke", frame)
-            stroke.Color        = Color3.fromRGB(255,   0,  40)
+            stroke.Color        = Color3.fromRGB(255, 174,   0)
             stroke.Thickness    = 2
             stroke.Transparency = 0.1
 
@@ -38427,7 +40319,7 @@ function CreateWorldUI_BombJump()
             lbl.Text                 = "?? FAKE BOMB"
             lbl.FontFace             = Font.fromEnum(Enum.Font.GothamBold)
             lbl.TextSize             = 11
-            lbl.TextColor3           = Color3.fromRGB(255, 180, 180)
+            lbl.TextColor3           = Color3.fromRGB(255, 231, 180)
             lbl.TextXAlignment       = Enum.TextXAlignment.Center
             lbl.ZIndex               = 201
 
@@ -38461,9 +40353,9 @@ function CreateWorldUI_BombJump()
                     _dragging = false
                     if not _moved then
                         -- Click: flash + acci?n
-                        TweenService:Create(frame, TweenInfo.new(0.07), {BackgroundColor3=Color3.fromRGB(180,40,40), BackgroundTransparency=0.1}):Play()
+                        TweenService:Create(frame, TweenInfo.new(0.07), {BackgroundColor3=Color3.fromRGB(180,136,40), BackgroundTransparency=0.1}):Play()
                         task.wait(0.1)
-                        TweenService:Create(frame, TweenInfo.new(0.2), {BackgroundColor3=Color3.fromRGB(  3,   8,  18), BackgroundTransparency=0.2}):Play()
+                        TweenService:Create(frame, TweenInfo.new(0.2), {BackgroundColor3=Color3.fromRGB( 22,  18,  12), BackgroundTransparency=0.2}):Play()
                         task.spawn(_equipAndThrowFakeBomb)
                     end
                     task.defer(function() _moved = false end)
@@ -38856,7 +40748,7 @@ end
 -- WORLD: FLING PLAYER ? selector de persona para fling
 -- ===================================================================
 function CreateWorldUI_FlingPlayer()
-    local _sec = CreateSection(leftColumn, "", "FLING PLAYER", Color3.fromRGB(255, 80, 80))
+    local _sec = CreateSection(leftColumn, "", "FLING PLAYER", Color3.fromRGB(255,200, 80))
 
     _G._flingPlayerState = _G._flingPlayerState or {
         targetName = nil,
@@ -38872,7 +40764,7 @@ function CreateWorldUI_FlingPlayer()
     _selectedLabel.Text = "Target: ninguno"
     _selectedLabel.TextSize = 12
     _selectedLabel.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-    _selectedLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+    _selectedLabel.TextColor3 = Color3.fromRGB(255, 212, 120)
     _selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
     _selectedLabel.ZIndex = 15
     local _selPad = Instance.new("UIPadding", _selectedLabel)
@@ -38881,17 +40773,17 @@ function CreateWorldUI_FlingPlayer()
     -- ScrollingFrame para lista de jugadores
     local listFrame = Instance.new("ScrollingFrame", _sec)
     listFrame.Size = UDim2.new(1, -8, 0, 120)
-    listFrame.BackgroundColor3 = Color3.fromRGB(8, 18, 45)
+    listFrame.BackgroundColor3 = Color3.fromRGB(45, 33,  8)
     listFrame.BackgroundTransparency = 0.3
     listFrame.BorderSizePixel = 0
     listFrame.ScrollBarThickness = 3
-    listFrame.ScrollBarImageColor3 = Color3.fromRGB( 50, 255, 180)
+    listFrame.ScrollBarImageColor3 = Color3.fromRGB(255, 190,  50)
     listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
     listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
     listFrame.ZIndex = 15
     Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0, 8)
     local _listStroke = Instance.new("UIStroke", listFrame)
-    _listStroke.Color = Color3.fromRGB(255, 80, 80)
+    _listStroke.Color = Color3.fromRGB(255,200, 80)
     _listStroke.Thickness = 1.2
     _listStroke.Transparency = 0.4
     local _listLayout = Instance.new("UIListLayout", listFrame)
@@ -38914,31 +40806,31 @@ function CreateWorldUI_FlingPlayer()
                 local btn = Instance.new("TextButton", listFrame)
                 btn.Size = UDim2.new(1, -4, 0, 26)
                 btn.BackgroundColor3 = (_fps.targetName == p.Name)
-                    and Color3.fromRGB(140, 30, 30)
-                    or  Color3.fromRGB(  3,   8,  18)
+                    and Color3.fromRGB(140,105, 30)
+                    or  Color3.fromRGB( 22,  18,  12)
                 btn.BackgroundTransparency = 0.2
                 btn.BorderSizePixel = 0
                 btn.AutoButtonColor = false
                 btn.Text = "??  " .. p.Name
                 btn.TextSize = 11
                 btn.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-                btn.TextColor3 = Color3.fromRGB(200, 255, 240)
+                btn.TextColor3 = Color3.fromRGB(255, 238, 200)
                 btn.TextXAlignment = Enum.TextXAlignment.Left
                 btn.ZIndex = 16
                 Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
                 local _btnPad = Instance.new("UIPadding", btn)
                 _btnPad.PaddingLeft = UDim.new(0, 8)
                 local _btnStroke = Instance.new("UIStroke", btn)
-                _btnStroke.Color = Color3.fromRGB(0, 220, 170)
+                _btnStroke.Color = Color3.fromRGB(220, 150,   0)
                 _btnStroke.Thickness = 1
                 _btnStroke.Transparency = 0.45
                 btn.MouseEnter:Connect(function()
-                    TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {BackgroundColor3 = Color3.fromRGB(0, 55, 45), BackgroundTransparency = 0.05}):Play()
+                    TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {BackgroundColor3 = Color3.fromRGB(40, 32, 20), BackgroundTransparency = 0.05}):Play()
                     TweenService:Create(_btnStroke, TweenInfo.new(0.15), {Thickness = 2, Transparency = 0}):Play()
                 end)
                 btn.MouseLeave:Connect(function()
                     local isSelected = (_fps.targetName == p.Name)
-                    TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {BackgroundColor3 = isSelected and Color3.fromRGB(0, 60, 50) or Color3.fromRGB(3, 8, 18), BackgroundTransparency = isSelected and 0.05 or 0.15}):Play()
+                    TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {BackgroundColor3 = isSelected and Color3.fromRGB(45, 36, 22) or Color3.fromRGB(22, 18, 12), BackgroundTransparency = isSelected and 0.05 or 0.15}):Play()
                     TweenService:Create(_btnStroke, TweenInfo.new(0.15), {Thickness = 1, Transparency = 0.45}):Play()
                 end)
                 local _pname = p.Name
@@ -39090,7 +40982,7 @@ function CreateWorldTab()
     -- FIX MAIN TAB ROJO: capturar snapshot de los callbacks YA registrados antes de
     -- que el World Tab agregue los suyos. El bloque de auto-restore al final usara esto
     -- para distinguir toggles de otros tabs (Main, Combat, etc.) y no aplicarles
-    -- ApplyState(false), lo que los pintaria de rojo incorrectamente.
+    -- ApplyState(false), lo que los pintaria en OFF incorrectamente.
     local _worldTabCallbackSnapshot = {}
     if _G._toggleCallbacks then
         for _k in pairs(_G._toggleCallbacks) do
@@ -39335,7 +41227,7 @@ function CreateWorldTab()
                         -- FIX MAIN TAB ROJO: NO llamar ApplyState(false) para toggles de otros tabs.
                         -- Este bloque itera sobre TODOS los toggles; si un toggle del Main Tab
                         -- (Anti Fling, Anti Void, Anti AFK, etc.) tiene su .txt en false, llamar
-                        -- ApplyState(false) lo pinta de rojo aunque ya este visualmente correcto.
+                        -- ApplyState(false) lo pinta en OFF aunque ya este visualmente correcto.
                         -- Solo aplicar el visual si el toggle fue registrado en ESTE build del World Tab.
                         if _worldTabCallbackSnapshot and not _worldTabCallbackSnapshot[nombre] then
                             if _G._toggleApplyStates and _G._toggleApplyStates[nombre] then
@@ -39352,7 +41244,7 @@ function CreateWorldTab()
                         -- y llama _startDetect() en Gold Bomb) sin necesitar el frame visual.
                         pcall(_G._toggleCallbacks[nombre], true)
                         CreateCustomNotification = _origNotif
-                        -- FIX VISUAL KNOB: actualizar el indicador a verde para que el toggle
+                        -- FIX VISUAL KNOB: actualizar el indicador a ON para que el toggle
                         -- muestre ON visualmente, no solo en la logica interna.
                         -- ApplyState es una closure local, pero la exponemos en _toggleApplyStates
                         -- al crear cada toggle para poder llamarla desde aqui.
@@ -40031,12 +41923,12 @@ function CreatePremiumTab()
         local centerFrame = Instance.new("Frame", lockFrame)
         centerFrame.Size = UDim2.new(0, 290, 0, 160)  -- paso 1: compacto (solo link Discord)
         centerFrame.Position = UDim2.new(0.5, -145, 0.5, -80)
-        centerFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 22)
+        centerFrame.BackgroundColor3 = Color3.fromRGB(22, 19, 12)
         centerFrame.BackgroundTransparency = 0.08
         centerFrame.BorderSizePixel = 0
         Instance.new("UICorner", centerFrame).CornerRadius = UDim.new(0, 16)
         local stroke = Instance.new("UIStroke", centerFrame)
-        stroke.Color = Color3.fromRGB(  3,   8,  18)
+        stroke.Color = Color3.fromRGB( 22,  18,  12)
         stroke.Thickness = 1.5
         stroke.Transparency = 0.3
 
@@ -40049,7 +41941,7 @@ function CreatePremiumTab()
         titleLbl.TextSize = 14
         titleLbl.Font = Enum.Font.GothamBold
         titleLbl.TextXAlignment = Enum.TextXAlignment.Center
-        titleLbl.TextColor3 = Color3.fromRGB(200, 200, 210)
+        titleLbl.TextColor3 = Color3.fromRGB(210, 207, 200)
 
         -- Status label (arriba)
         local statusLbl = Instance.new("TextLabel", centerFrame)
@@ -40061,12 +41953,12 @@ function CreatePremiumTab()
         statusLbl.Font = Enum.Font.Gotham
         statusLbl.TextWrapped = true
         statusLbl.TextXAlignment = Enum.TextXAlignment.Center
-        statusLbl.TextColor3 = Color3.fromRGB(100, 100, 120)
+        statusLbl.TextColor3 = Color3.fromRGB(120, 114, 100)
 
         local function setStatus(msg, color)
             if statusLbl and statusLbl.Parent then
                 statusLbl.Text = msg
-                statusLbl.TextColor3 = color or Color3.fromRGB(100, 100, 120)
+                statusLbl.TextColor3 = color or Color3.fromRGB(120, 114, 100)
             end
         end
 
@@ -40075,7 +41967,7 @@ function CreatePremiumTab()
         copyBtn.Name = "CopyBtn"
         copyBtn.Size = UDim2.new(1, -40, 0, 36)
         copyBtn.Position = UDim2.new(0, 20, 0, 82)
-        copyBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75)
+        copyBtn.BackgroundColor3 = Color3.fromRGB(75, 73, 70)
         copyBtn.Text = "??  Copiar link de login Discord"
         copyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
         copyBtn.Font = Enum.Font.GothamBold
@@ -40086,21 +41978,21 @@ function CreatePremiumTab()
         copyBtn.Activated:Connect(function()
             pcall(function() setclipboard(loginUrl) end)
             copyBtn.Text = "?  Link copiado!"
-            copyBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 100)
+            copyBtn.BackgroundColor3 = Color3.fromRGB(180, 142,  60)
             task.wait(2)
             if copyBtn and copyBtn.Parent then
                 copyBtn.Text = "??  Copiar link de login Discord"
-                copyBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75)
+                copyBtn.BackgroundColor3 = Color3.fromRGB(75, 73, 70)
             end
         end)
-        copyBtn.MouseEnter:Connect(function() copyBtn.BackgroundColor3 = Color3.fromRGB(90, 90, 95) end)
-        copyBtn.MouseLeave:Connect(function() copyBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75) end)
+        copyBtn.MouseEnter:Connect(function() copyBtn.BackgroundColor3 = Color3.fromRGB(95, 93, 90) end)
+        copyBtn.MouseLeave:Connect(function() copyBtn.BackgroundColor3 = Color3.fromRGB(75, 73, 70) end)
 
         -- Separador visual (oculto hasta paso 2)
         local sep = Instance.new("Frame", centerFrame)
         sep.Size = UDim2.new(1, -40, 0, 1)
         sep.Position = UDim2.new(0, 20, 0, 132)
-        sep.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        sep.BackgroundColor3 = Color3.fromRGB(70, 67, 60)
         sep.BorderSizePixel = 0
         sep.Visible = false  -- se muestra en paso 2
 
@@ -40115,7 +42007,7 @@ function CreatePremiumTab()
         bioInstr.Font = Enum.Font.Gotham
         bioInstr.TextWrapped = true
         bioInstr.TextXAlignment = Enum.TextXAlignment.Center
-        bioInstr.TextColor3 = Color3.fromRGB(160, 160, 180)
+        bioInstr.TextColor3 = Color3.fromRGB(180, 174, 160)
         bioInstr.Visible = false
 
         -- Label del c?digo de bio
@@ -40123,19 +42015,19 @@ function CreatePremiumTab()
         bioCodeLbl.Name = "BioCodeLbl"
         bioCodeLbl.Size = UDim2.new(1, -40, 0, 34)
         bioCodeLbl.Position = UDim2.new(0, 20, 0, 188)
-        bioCodeLbl.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+        bioCodeLbl.BackgroundColor3 = Color3.fromRGB(35, 30, 20)
         bioCodeLbl.BackgroundTransparency = 0
         bioCodeLbl.BorderSizePixel = 0
         Instance.new("UICorner", bioCodeLbl).CornerRadius = UDim.new(0, 8)
         local bioCodeStroke = Instance.new("UIStroke", bioCodeLbl)
-        bioCodeStroke.Color = Color3.fromRGB(87, 242, 135)
+        bioCodeStroke.Color = Color3.fromRGB(242, 193,  87)
         bioCodeStroke.Thickness = 1
         bioCodeStroke.Transparency = 0.5
         bioCodeLbl.Text = ""
         bioCodeLbl.TextSize = 13
         bioCodeLbl.Font = Enum.Font.RobotoMono
         bioCodeLbl.TextXAlignment = Enum.TextXAlignment.Center
-        bioCodeLbl.TextColor3 = Color3.fromRGB(87, 242, 135)
+        bioCodeLbl.TextColor3 = Color3.fromRGB(242, 193,  87)
         bioCodeLbl.Visible = false
 
         -- Bot?n copiar c?digo de bio
@@ -40143,9 +42035,9 @@ function CreatePremiumTab()
         copyCodeBtn.Name = "CopyCodeBtn"
         copyCodeBtn.Size = UDim2.new(1, -40, 0, 32)
         copyCodeBtn.Position = UDim2.new(0, 20, 0, 230)
-        copyCodeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+        copyCodeBtn.BackgroundColor3 = Color3.fromRGB(65, 62, 55)
         copyCodeBtn.Text = "??  Copiar c?digo"
-        copyCodeBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+        copyCodeBtn.TextColor3 = Color3.fromRGB(210, 207, 200)
         copyCodeBtn.Font = Enum.Font.GothamBold
         copyCodeBtn.TextSize = 12
         copyCodeBtn.BorderSizePixel = 0
@@ -40157,11 +42049,11 @@ function CreatePremiumTab()
         copyCodeBtn.Activated:Connect(function()
             pcall(function() setclipboard(_bioCode) end)
             copyCodeBtn.Text = "?  Copiado!"
-            copyCodeBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 100)
+            copyCodeBtn.BackgroundColor3 = Color3.fromRGB(180, 142,  60)
             task.wait(2)
             if copyCodeBtn and copyCodeBtn.Parent then
                 copyCodeBtn.Text = "??  Copiar c?digo"
-                copyCodeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+                copyCodeBtn.BackgroundColor3 = Color3.fromRGB(65, 62, 55)
             end
         end)
 
@@ -40192,7 +42084,7 @@ function CreatePremiumTab()
                 writefile(_pPath, _dId .. "|" .. _uid3 .. "|" .. _uname .. "|" .. _now .. "|" .. _tok)
                 _log("Sesion guardada en disco (valida 7 dias).")
             end)
-            setStatus("? ?Verificado! Abriendo Premium...", Color3.fromRGB(87, 242, 135))
+            setStatus("? ?Verificado! Abriendo Premium...", Color3.fromRGB(242, 193,  87))
             task.wait(0.8)
             _pollingActive = false
             if not lockFrame or not lockFrame.Parent then return end
@@ -40216,7 +42108,7 @@ function CreatePremiumTab()
                 end)
 
                 if not ok then
-                    setStatus("ERR: " .. tostring(response):sub(1, 55), Color3.fromRGB(237, 66, 69))
+                    setStatus("ERR: " .. tostring(response):sub(1, 55), Color3.fromRGB(237,183, 66))
                 elseif response and response.Body then
                     local dok, data = pcall(function() return HttpService:JSONDecode(response.Body) end)
                     if not dok then
@@ -40230,7 +42122,7 @@ function CreatePremiumTab()
                         elseif data.status == "no_premium" or (data.status == "ok" and not data.hasPremium) then
                             -- Sin premium: mostrar error SIN detener el polling
                             -- El usuario puede comprar el rol y el hub lo detecta solo
-                            setStatus("? No ten?s el rol PREMIUM en el servidor de Discord", Color3.fromRGB(237, 66, 69))
+                            setStatus("? No ten?s el rol PREMIUM en el servidor de Discord", Color3.fromRGB(237,183, 66))
                             -- NO hacer return ni poner _pollingActive = false
                             -- as? puede reintentar cuando consiga el rol
                         elseif data.status == "linked_other" then
@@ -40238,7 +42130,7 @@ function CreatePremiumTab()
                             -- El server ya no borra el c?digo, puede reintentar
                             setStatus("?? " .. (data.error or "Cuenta ya vinculada a otro usuario"), Color3.fromRGB(237, 150, 0))
                         else
-                            setStatus("Esperando login Discord... [" .. tostring(data.status or "?") .. "]", Color3.fromRGB(107, 107, 138))
+                            setStatus("Esperando login Discord... [" .. tostring(data.status or "?") .. "]", Color3.fromRGB(138, 128, 107))
                         end
                     end
                 else
@@ -40280,7 +42172,7 @@ function CreatePremiumTab()
     local function CreateLockedToggle(parent, label, desc)
         local lockFrame = Instance.new("Frame", parent)
         lockFrame.Size = UDim2.new(1, -10, 0, 58)
-        lockFrame.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+        lockFrame.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
         lockFrame.BackgroundTransparency = 0.85
         lockFrame.BorderSizePixel = 0
         Instance.new("UICorner", lockFrame).CornerRadius = UDim.new(0, 10)
@@ -40307,7 +42199,7 @@ function CreatePremiumTab()
  lkLabel.Text = label
         lkLabel.FontFace = Font.fromEnum(Enum.Font.Montserrat)
         lkLabel.TextSize = 13
-        lkLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
+        lkLabel.TextColor3 = Color3.fromRGB(220, 214, 200)
         lkLabel.TextXAlignment = Enum.TextXAlignment.Left
         lkLabel.ZIndex = 13
 
@@ -41450,7 +43342,7 @@ function CreatePremiumTab()
         -- Selector skin Gun
         local _gunNames = {}
         for _, s in ipairs(_SC_GUN_SKINS) do _gunNames[#_gunNames+1] = s.name end
-        CreateNebulaSelector(rightColumn, "Skin -- Gun", _gunNames, _gunNames[1], function(sel)
+        CreateZerqonSelector(rightColumn, "Skin -- Gun", _gunNames, _gunNames[1], function(sel)
             -- Auto-setear modo gun al usar este selector
             if _skinState.mode ~= "gun" then
                 if _skinState.enabled then _scResetAll(); _skinState.enabled = false end
@@ -41713,7 +43605,7 @@ function CreatePremiumTab()
                 end)
             end
 
-            CreateNebulaSelector(rightColumn, "Skin -- Knife ??", _knifeNames, _knifeNames[1], function(sel)
+            CreateZerqonSelector(rightColumn, "Skin -- Knife ??", _knifeNames, _knifeNames[1], function(sel)
                 -- Auto-setear modo knife al usar este selector
                 if _skinState.mode ~= "knife" then
                     if _skinState.enabled then _scResetAll(); _skinState.enabled = false end
@@ -41844,7 +43736,7 @@ function CreatePremiumTab()
         end, Settings.cursor.enabled)
 
         -- Selector de miras
-        CreateNebulaSelector(ccInner, "Select The Crosshair", scopeNames or {
+        CreateZerqonSelector(ccInner, "Select The Crosshair", scopeNames or {
             "CRUZ HOLOGRAFICA","FUEGO ARDIENTE","DIAMANTE DUAL","RAYO ELECTRICO",
             "LUNA OSCURA","PUNTO ROJO","VORTICE MORTAL","OJO VIGILANTE",
             "OBJETIVO PRECISO","EXPLOSION TACTICA","ESTRELLA NEON","DIAMANTE AZUL","PRISMA LETAL",
@@ -41894,13 +43786,13 @@ function CreatePremiumTab()
             local _addCCFrame = Instance.new("Frame", ccInner)
             _addCCFrame.Name = "AddCustomCrosshairFrame"
             _addCCFrame.Size = UDim2.new(1, -12, 0, 80)
-            _addCCFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+            _addCCFrame.BackgroundColor3 = Color3.fromRGB(30, 27, 20)
             _addCCFrame.BackgroundTransparency = 0.3
             _addCCFrame.BorderSizePixel = 0
             _addCCFrame.ZIndex = 20
             Instance.new("UICorner", _addCCFrame).CornerRadius = UDim.new(0, 8)
             local _addCCStroke = Instance.new("UIStroke", _addCCFrame)
-            _addCCStroke.Color = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(90, 120, 255)
+            _addCCStroke.Color = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(255, 203,  90)
             _addCCStroke.Thickness = 1.5
             _addCCStroke.Transparency = 0.4
             local _addCCPad = Instance.new("UIPadding", _addCCFrame)
@@ -41916,7 +43808,7 @@ function CreatePremiumTab()
             _addCCTitle.Text = "Add Custom Crosshair"
             _addCCTitle.Font = Enum.Font.GothamBold
             _addCCTitle.TextSize = 11
-            _addCCTitle.TextColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(160, 180, 255)
+            _addCCTitle.TextColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(255, 225, 160)
             _addCCTitle.TextXAlignment = Enum.TextXAlignment.Left
             _addCCTitle.ZIndex = 21
             -- Input + boton en fila
@@ -41930,13 +43822,13 @@ function CreatePremiumTab()
             _addCCBox.Name = "CustomCrosshairIDBox"
             _addCCBox.Size = UDim2.new(1, -74, 1, 0)
             _addCCBox.Position = UDim2.new(0, 0, 0, 0)
-            _addCCBox.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+            _addCCBox.BackgroundColor3 = Color3.fromRGB(42, 38, 30)
             _addCCBox.BackgroundTransparency = 0.1
             _addCCBox.BorderSizePixel = 0
             _addCCBox.PlaceholderText = "Crosshair ID..."
-            _addCCBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 140)
+            _addCCBox.PlaceholderColor3 = Color3.fromRGB(140, 134, 120)
             _addCCBox.Text = Settings.cursor.customMiraId or ""
-            _addCCBox.TextColor3 = Color3.fromRGB(230, 230, 255)
+            _addCCBox.TextColor3 = Color3.fromRGB(255, 247, 230)
             _addCCBox.Font = Enum.Font.Gotham
             _addCCBox.TextSize = 12
             _addCCBox.ClearTextOnFocus = false
@@ -41944,7 +43836,7 @@ function CreatePremiumTab()
             _addCCBox.ClipsDescendants = true
             Instance.new("UICorner", _addCCBox).CornerRadius = UDim.new(0, 6)
             local _boxStroke = Instance.new("UIStroke", _addCCBox)
-            _boxStroke.Color = Color3.fromRGB(80, 100, 200)
+            _boxStroke.Color = Color3.fromRGB(22, 18, 12)
             _boxStroke.Thickness = 1
             _boxStroke.Transparency = 0.5
             local _boxPad = Instance.new("UIPadding", _addCCBox)
@@ -41954,7 +43846,7 @@ function CreatePremiumTab()
             _addCCBtn.Name = "AddCrosshairBtn"
             _addCCBtn.Size = UDim2.new(0, 68, 1, 0)
             _addCCBtn.Position = UDim2.new(1, -68, 0, 0)
-            _addCCBtn.BackgroundColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(90, 120, 255)
+            _addCCBtn.BackgroundColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(255, 203,  90)
             _addCCBtn.BackgroundTransparency = 0.1
             _addCCBtn.BorderSizePixel = 0
             _addCCBtn.Text = "Add"
@@ -41965,15 +43857,15 @@ function CreatePremiumTab()
             _addCCBtn.ZIndex = 22
             Instance.new("UICorner", _addCCBtn).CornerRadius = UDim.new(0, 6)
             local _btnStroke = Instance.new("UIStroke", _addCCBtn)
-            _btnStroke.Color = Color3.fromRGB(150, 170, 255)
+            _btnStroke.Color = Color3.fromRGB(255, 222, 150)
             _btnStroke.Thickness = 1
             _btnStroke.Transparency = 0.4
             -- Hover
             _addCCBtn.MouseEnter:Connect(function()
-                TweenService:Create(_addCCBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(110, 140, 255), BackgroundTransparency = 0}):Play()
+                TweenService:Create(_addCCBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(255, 209, 110), BackgroundTransparency = 0}):Play()
             end)
             _addCCBtn.MouseLeave:Connect(function()
-                TweenService:Create(_addCCBtn, TweenInfo.new(0.15), {BackgroundColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(90, 120, 255), BackgroundTransparency = 0.1}):Play()
+                TweenService:Create(_addCCBtn, TweenInfo.new(0.15), {BackgroundColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(255, 203,  90), BackgroundTransparency = 0.1}):Play()
             end)
             -- Logica del boton Add
             _addCCBtn.Activated:Connect(function()
@@ -41996,11 +43888,11 @@ function CreatePremiumTab()
                 -- Feedback visual en el boton
                 local _origText = _addCCBtn.Text
                 _addCCBtn.Text = "Added!"
-                _addCCBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 80)
+                _addCCBtn.BackgroundColor3 = Color3.fromRGB(200, 152, 50)
                 task.delay(1.2, function()
                     pcall(function()
                         _addCCBtn.Text = _origText
-                        _addCCBtn.BackgroundColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(90, 120, 255)
+                        _addCCBtn.BackgroundColor3 = ThemeColors and ThemeColors.Aurora1 or Color3.fromRGB(255, 203,  90)
                     end)
                 end)
             end)
@@ -42011,14 +43903,30 @@ function CreatePremiumTab()
 end  -- cierra CreatePremiumTab
 
 
+-- ======================================================================
+-- v50: _zqSafeSection(nombre, fn)
+-- Corre una seccion de una pestania aislada del resto. Si la seccion tira
+-- un error se pierde SOLO esa seccion, en vez de quedarse la pestania
+-- entera vacia (antes: un error en cualquier linea de SETTINGS ->
+-- _buildTabCached hacia rollback completo -> no se veia nada).
+-- Los fallos quedan listados en _G._zqFailedSections para diagnosticar.
+-- ======================================================================
+function _zqSafeSection(name, fn)
+    local ok, err = pcall(fn)
+    if not ok then
+        _G._zqFailedSections = _G._zqFailedSections or {}
+        table.insert(_G._zqFailedSections, tostring(name) .. ": " .. tostring(err))
+        pcall(function()
+            warn("[HIGHGRADE Z] Seccion '" .. tostring(name) .. "' fallo: " .. tostring(err))
+        end)
+    end
+    return ok
+end
 function CreateExclusiveTab()
     ClearContent()
     _makeTwoColumns()
 
-    -- FIX SETTINGS SCROLL: forzar columna unica para que todas las secciones
-    -- (izquierda y derecha) vayan al mismo ScrollingFrame y sean visibles
-    rightColumn = leftColumn
-    -- Asegurar que el scroll este habilitado al entrar a Settings
+    -- FIX v5: usar 2 columnas correctamente, asegurar scroll en ambas
     if leftColumn then
         pcall(function()
             leftColumn.ScrollingEnabled = true
@@ -42027,6 +43935,16 @@ function CreateExclusiveTab()
             leftColumn.AutomaticCanvasSize = Enum.AutomaticSize.Y
             leftColumn.CanvasSize = UDim2.new(0, 0, 0, 0)
             leftColumn.CanvasPosition = Vector2.new(0, 0)
+        end)
+    end
+    if rightColumn and rightColumn ~= leftColumn then
+        pcall(function()
+            rightColumn.ScrollingEnabled = true
+            rightColumn.ScrollingDirection = Enum.ScrollingDirection.Y
+            rightColumn.ElasticBehavior = Enum.ElasticBehavior.Never
+            rightColumn.AutomaticCanvasSize = Enum.AutomaticSize.Y
+            rightColumn.CanvasSize = UDim2.new(0, 0, 0, 0)
+            rightColumn.CanvasPosition = Vector2.new(0, 0)
         end)
     end
 
@@ -42039,8 +43957,8 @@ function CreateExclusiveTab()
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = true,
-        hubOpacity         = 15,   -- 0-95 (porcentaje de opacidad del fondo)
+        allowHubDrag       = false,  -- FIX v39: hub fijo, no movible
+        hubOpacity         = 0,   -- 0-95 (porcentaje de opacidad del fondo)
         hubScale           = 70,   -- 70-130 (escala del hub en %)
         hubLayoutMode      = 1,    -- 1=SidebarIzq 2=BarraTop 3=SidebarDer 4=BarraBot 5=MiniIzq
         notifDuration      = 3,    -- segundos default de notificaciones
@@ -42073,14 +43991,14 @@ function CreateExclusiveTab()
     -- ============================================================
     -- SECCI?N: DISCORD
     -- ============================================================
-    do
+    _zqSafeSection("DISCORD", function()
         local discordSec = CreateBorderedSectionGlobal(leftColumn, "??  DISCORD")
 
         local discordDesc = Instance.new("TextLabel", discordSec)
         discordDesc.Size = UDim2.new(1, -12, 0, 20)
         discordDesc.BackgroundTransparency = 1
         discordDesc.Text = "?nete a la comunidad de Zerqon Hub"
-        discordDesc.TextColor3 = Color3.fromRGB(140, 180, 255)
+        discordDesc.TextColor3 = Color3.fromRGB(180, 155, 100)
         discordDesc.FontFace = Font.fromEnum(Enum.Font.Gotham)
         discordDesc.TextSize = 11
         discordDesc.TextWrapped = true
@@ -42093,7 +44011,7 @@ function CreateExclusiveTab()
         local discordBtn = Instance.new("TextButton", discordSec)
         discordBtn.Name = "DiscordJoinBtn"
         discordBtn.Size = UDim2.new(1, -12, 0, 44)
-        discordBtn.BackgroundColor3 = Color3.fromRGB(88, 101, 242)   -- color Discord
+        discordBtn.BackgroundColor3 = Color3.fromRGB(150, 115, 45)   -- color Discord
         discordBtn.BackgroundTransparency = 0.05
         discordBtn.BorderSizePixel = 0
         discordBtn.Text = "  Join the Discord  ?  discord.gg/Prsa5w5VVA"
@@ -42104,18 +44022,18 @@ function CreateExclusiveTab()
         discordBtn.ZIndex = 13
         Instance.new("UICorner", discordBtn).CornerRadius = UDim.new(0, 10)
         local _dbStroke = Instance.new("UIStroke", discordBtn)
-        _dbStroke.Color = Color3.fromRGB(150, 160, 255)
+        _dbStroke.Color = Color3.fromRGB(220, 185, 100)
         _dbStroke.Thickness = 1.5
         _dbStroke.Transparency = 0.3
         _dbStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
         -- Hover
         discordBtn.MouseEnter:Connect(function()
-            TweenService:Create(discordBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(110, 120, 255), BackgroundTransparency = 0}):Play()
+            TweenService:Create(discordBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(200, 160, 80), BackgroundTransparency = 0}):Play()
             TweenService:Create(_dbStroke, TweenInfo.new(0.12), {Transparency = 0}):Play()
         end)
         discordBtn.MouseLeave:Connect(function()
-            TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(88, 101, 242), BackgroundTransparency = 0.05}):Play()
+            TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(150, 115, 45), BackgroundTransparency = 0.05}):Play()
             TweenService:Create(_dbStroke, TweenInfo.new(0.15), {Transparency = 0.3}):Play()
         end)
 
@@ -42125,11 +44043,11 @@ function CreateExclusiveTab()
             CreateCustomNotification("DISCORD", "Link copiado!  discord.gg/Prsa5w5VVA", 3)
             -- Feedback visual moment?neo
             discordBtn.Text = "  ?  Link copiado al portapapeles!"
-            discordBtn.BackgroundColor3 = Color3.fromRGB(59, 165, 93)
+            discordBtn.BackgroundColor3 = Color3.fromRGB(235, 195, 110)
             task.delay(2, function()
                 pcall(function()
                     discordBtn.Text = "  Join the Discord  ?  discord.gg/Prsa5w5VVA"
-                    TweenService:Create(discordBtn, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(88, 101, 242)}):Play()
+                    TweenService:Create(discordBtn, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(150, 115, 45)}):Play()
                 end)
             end)
         end)
@@ -42141,7 +44059,7 @@ function CreateExclusiveTab()
         linkLbl.Text = "discord.gg/Prsa5w5VVA  ?  click para copiar el link"
         linkLbl.FontFace = Font.fromEnum(Enum.Font.Gotham)
         linkLbl.TextSize = 10
-        linkLbl.TextColor3 = Color3.fromRGB(100, 120, 200)
+        linkLbl.TextColor3 = Color3.fromRGB(170, 140, 85)
         linkLbl.TextXAlignment = Enum.TextXAlignment.Left
         linkLbl.ZIndex = 13
         local _llPad = Instance.new("UIPadding", linkLbl)
@@ -42159,13 +44077,13 @@ function CreateExclusiveTab()
             local profileCard = Instance.new("Frame", discordSec)
             profileCard.Name  = "DiscordProfileCard"
             profileCard.Size  = UDim2.new(1, -12, 0, 54)
-            profileCard.BackgroundColor3 = Color3.fromRGB(14, 16, 30)
+            profileCard.BackgroundColor3 = Color3.fromRGB(22, 18, 12)
             profileCard.BackgroundTransparency = 0.15
             profileCard.BorderSizePixel = 0
             profileCard.ZIndex = 13
             Instance.new("UICorner", profileCard).CornerRadius = UDim.new(0, 10)
             local _pcS = Instance.new("UIStroke", profileCard)
-            _pcS.Color = Color3.fromRGB(88, 101, 242)
+            _pcS.Color = Color3.fromRGB(200, 160, 80)
             _pcS.Thickness = 1.5
             _pcS.Transparency = 0.35
             _pcS.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -42175,13 +44093,13 @@ function CreateExclusiveTab()
             avFrame.Size = UDim2.new(0, 38, 0, 38)
             avFrame.Position = UDim2.new(0, 8, 0.5, 0)
             avFrame.AnchorPoint = Vector2.new(0, 0.5)
-            avFrame.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+            avFrame.BackgroundColor3 = Color3.fromRGB(150, 115, 45)
             avFrame.BackgroundTransparency = 0.6
             avFrame.BorderSizePixel = 0
             avFrame.ZIndex = 14
             Instance.new("UICorner", avFrame).CornerRadius = UDim.new(1, 0)
             local _avS = Instance.new("UIStroke", avFrame)
-            _avS.Color = Color3.fromRGB(150, 160, 255)
+            _avS.Color = Color3.fromRGB(220, 185, 100)
             _avS.Thickness = 1.5
             _avS.Transparency = 0.2
 
@@ -42216,25 +44134,25 @@ function CreateExclusiveTab()
             nameLbl.TextSize = 12
             nameLbl.Font = Enum.Font.GothamBold
             nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-            nameLbl.TextColor3 = Color3.fromRGB(230, 230, 255)
+            nameLbl.TextColor3 = Color3.fromRGB(245, 238, 225)
             nameLbl.ZIndex = 14
 
             -- Badge VIP
             local badgeLbl = Instance.new("TextLabel", profileCard)
             badgeLbl.Size = UDim2.new(0, 80, 0, 15)
             badgeLbl.Position = UDim2.new(0, 54, 0, 31)
-            badgeLbl.BackgroundColor3 = Color3.fromRGB(10, 30, 18)
+            badgeLbl.BackgroundColor3 = Color3.fromRGB(30, 24, 14)
             badgeLbl.BackgroundTransparency = 0
             badgeLbl.BorderSizePixel = 0
             badgeLbl.Text = "?? VIP ACTIVO"
             badgeLbl.TextSize = 9
             badgeLbl.Font = Enum.Font.GothamBold
-            badgeLbl.TextColor3 = Color3.fromRGB(87, 242, 135)
+            badgeLbl.TextColor3 = Color3.fromRGB(235, 195, 110)
             badgeLbl.TextXAlignment = Enum.TextXAlignment.Center
             badgeLbl.ZIndex = 14
             Instance.new("UICorner", badgeLbl).CornerRadius = UDim.new(0, 4)
             local _bdS = Instance.new("UIStroke", badgeLbl)
-            _bdS.Color = Color3.fromRGB(87, 242, 135)
+            _bdS.Color = Color3.fromRGB(200, 160, 80)
             _bdS.Thickness = 1
             _bdS.Transparency = 0.5
 
@@ -42315,7 +44233,7 @@ function CreateExclusiveTab()
                 end
             end)
         end
-    end
+    end)
 
     -- (secci?n "jugadores usando el hub" eliminada)
 
@@ -42323,7 +44241,7 @@ function CreateExclusiveTab()
         onlineDesc.Size = UDim2.new(1, -12, 0, 20)
         onlineDesc.BackgroundTransparency = 1
         onlineDesc.Text = "Jugadores en el servidor usando el hub:"
-        onlineDesc.TextColor3 = Color3.fromRGB(140, 180, 255)
+        onlineDesc.TextColor3 = Color3.fromRGB(180, 155, 100)
         onlineDesc.FontFace = Font.fromEnum(Enum.Font.Gotham)
         onlineDesc.TextSize = 11
         onlineDesc.TextWrapped = true
@@ -42335,7 +44253,7 @@ function CreateExclusiveTab()
         -- Contador grande
         local counterFrame = Instance.new("Frame", onlineSec)
         counterFrame.Size = UDim2.new(1, -16, 0, 52)
-        counterFrame.BackgroundColor3 = Color3.fromRGB(8, 20, 60)
+        counterFrame.BackgroundColor3 = Color3.fromRGB(26, 20, 12)
         counterFrame.BackgroundTransparency = 0.3
         counterFrame.BorderSizePixel = 0
         counterFrame.ZIndex = 13
@@ -42344,7 +44262,7 @@ function CreateExclusiveTab()
         _cfPad.PaddingLeft = UDim.new(0, 8)
         _cfPad.PaddingRight = UDim.new(0, 8)
         local _cfStroke = Instance.new("UIStroke", counterFrame)
-        _cfStroke.Color = Color3.fromRGB(40, 100, 255)
+        _cfStroke.Color = Color3.fromRGB(200, 160, 80)
         _cfStroke.Thickness = 1.5
         _cfStroke.Transparency = 0.4
         _cfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -42369,7 +44287,7 @@ function CreateExclusiveTab()
         countLbl.Text = "..."
         countLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
         countLbl.TextSize = 22
-        countLbl.TextColor3 = Color3.fromRGB(0, 220, 255)
+        countLbl.TextColor3 = ThemeColors.Primary
         countLbl.TextXAlignment = Enum.TextXAlignment.Left
         countLbl.TextYAlignment = Enum.TextYAlignment.Center
         countLbl.ZIndex = 14
@@ -42378,18 +44296,18 @@ function CreateExclusiveTab()
         local listFrame = Instance.new("ScrollingFrame", onlineSec)
         listFrame.Name = "HubUsersList"
         listFrame.Size = UDim2.new(1, -16, 0, 120)
-        listFrame.BackgroundColor3 = Color3.fromRGB(5, 12, 40)
+        listFrame.BackgroundColor3 = Color3.fromRGB(18, 14, 9)
         listFrame.BackgroundTransparency = 0.4
         listFrame.BorderSizePixel = 0
         listFrame.ScrollBarThickness = 3
-        listFrame.ScrollBarImageColor3 = Color3.fromRGB(40, 100, 255)
+        listFrame.ScrollBarImageColor3 = Color3.fromRGB(200, 160, 80)
         listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
         listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
         listFrame.ZIndex = 13
         listFrame.ClipsDescendants = true
         Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0, 6)
         local _lfStroke = Instance.new("UIStroke", listFrame)
-        _lfStroke.Color = Color3.fromRGB(180, 255, 230)
+        _lfStroke.Color = Color3.fromRGB(220, 185, 100)
         _lfStroke.Thickness = 1
         _lfStroke.Transparency = 0.5
         _lfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -42413,7 +44331,7 @@ function CreateExclusiveTab()
         pulseDot.Size = UDim2.new(0, 8, 0, 8)
         pulseDot.AnchorPoint = Vector2.new(0, 0.5)
         pulseDot.Position = UDim2.new(0, 8, 0.5, 0)
-        pulseDot.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
+        pulseDot.BackgroundColor3 = Color3.fromRGB(235, 195, 110)
         pulseDot.BorderSizePixel = 0
         pulseDot.ZIndex = 14
         Instance.new("UICorner", pulseDot).CornerRadius = UDim.new(1, 0)
@@ -42424,7 +44342,7 @@ function CreateExclusiveTab()
         pulseLbl.Text = "Actualizando..."
         pulseLbl.FontFace = Font.fromEnum(Enum.Font.Gotham)
         pulseLbl.TextSize = 10
-        pulseLbl.TextColor3 = Color3.fromRGB(100, 160, 100)
+        pulseLbl.TextColor3 = Color3.fromRGB(180, 155, 100)
         pulseLbl.TextXAlignment = Enum.TextXAlignment.Left
         pulseLbl.TextYAlignment = Enum.TextYAlignment.Center
         pulseLbl.ZIndex = 14
@@ -42441,14 +44359,14 @@ function CreateExclusiveTab()
 
         local _EMOJIS = {"??","??","??","??","??","?????","??","??","??","??"}
         local _COLORS = {
-            Color3.fromRGB(0,   220, 255),
-            Color3.fromRGB(80,  255, 140),
+            Color3.fromRGB(235, 195, 110),
+            Color3.fromRGB(205, 150, 70),
             Color3.fromRGB(255, 180,  40),
-            Color3.fromRGB(200,  80, 255),
-            Color3.fromRGB(255,  80, 120),
-            Color3.fromRGB(40,  200, 255),
+            Color3.fromRGB(180, 130, 60),
+            Color3.fromRGB(230, 170, 90),
+            Color3.fromRGB(160, 120, 50),
             Color3.fromRGB(255, 220,  60),
-            Color3.fromRGB(100, 255, 200),
+            Color3.fromRGB(215, 175, 95),
         }
         local function _getEmoji(uid) return _EMOJIS[(uid or 0) % #_EMOJIS + 1] end
         local function _getColor(uid) return _COLORS[(uid or 0) % #_COLORS + 1] end
@@ -42485,7 +44403,7 @@ function CreateExclusiveTab()
             local dot = Instance.new("Frame", row)
             dot.Name = "StatusDot"
             dot.Size = UDim2.new(0, 7, 0, 7)
-            dot.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+            dot.BackgroundColor3 = Color3.fromRGB(235, 195, 110)
             dot.BorderSizePixel = 0
             dot.ZIndex = 15
             Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
@@ -42740,14 +44658,14 @@ function CreateExclusiveTab()
     -- ================================================================
     -- HUB LAYOUT (5 modos de distribucion de pesta?as)
     -- ================================================================
-    do
+    _zqSafeSection("HUB LAYOUT", function()
         local layoutSec = CreateBorderedSectionGlobal(rightColumn, " HUB LAYOUT")
 
         local layoutDesc = Instance.new("TextLabel", layoutSec)
         layoutDesc.Size = UDim2.new(1, -12, 0, 22)
         layoutDesc.BackgroundTransparency = 1
         layoutDesc.Text = "Choose how the hub tabs are organized"
-        layoutDesc.TextColor3 = Color3.fromRGB(140, 180, 255)
+        layoutDesc.TextColor3 = Color3.fromRGB(180, 155, 100)
         layoutDesc.FontFace = Font.fromEnum(Enum.Font.Gotham)
         layoutDesc.TextSize = 11
         layoutDesc.TextWrapped = true
@@ -42778,8 +44696,8 @@ function CreateExclusiveTab()
                 do
                     dock.Position = UDim2.new(0.65, 0, 0.14, 0)
                     dock.Size = UDim2.new(0.35, 0, 0.86, 0)
-                    contentContainer.Position = UDim2.new(0, 0, 0, 52)
-                    contentContainer.Size = UDim2.new(0.65, 0, 1, -52)
+                    contentContainer.Position = UDim2.new(0, 0, 0, 56)
+                    contentContainer.Size = UDim2.new(1, 0, 1, -56)
                     if dockLayout then
                         dockLayout.FillDirection       = Enum.FillDirection.Vertical
                         dockLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -42946,7 +44864,7 @@ function CreateExclusiveTab()
             local diag = Instance.new("Frame", parent)
             diag.Size     = UDim2.new(1, -10, 0, 42)
             diag.Position = UDim2.new(0, 5, 0, 14)
-            diag.BackgroundColor3 = Color3.fromRGB(12, 12, 22)
+            diag.BackgroundColor3 = Color3.fromRGB(20, 17, 12)
             diag.BackgroundTransparency = 0.2
             diag.BorderSizePixel = 0
             diag.ZIndex = 16
@@ -42964,7 +44882,7 @@ function CreateExclusiveTab()
             end
 
             local acc  = accentColor
-            local grey = Color3.fromRGB(70, 80, 100)
+            local grey = Color3.fromRGB(80, 72, 58)
 
             if mode == 1 then
                 _blk(0,    0,    0.26, 1,    acc,  0.05)
@@ -42988,11 +44906,11 @@ function CreateExclusiveTab()
         -- Definicion de los 5 layouts
         -- ============================================================
         local _layouts = {
-            { label="SIDEBAR IZQ", desc="Tabs verticales izquierda",  color=Color3.fromRGB(20, 35, 80),  accent=Color3.fromRGB(255, 80, 180), mode=1 },
-            { label="BARRA TOP",   desc="Tabs horizontales arriba",   color=Color3.fromRGB(18,  95,  65),  accent=Color3.fromRGB(55, 210, 135), mode=2 },
-            { label="SIDEBAR DER", desc="Tabs verticales derecha",    color=Color3.fromRGB(95,  25, 135),  accent=Color3.fromRGB(175,  75, 255), mode=3 },
-            { label="BARRA BOT",   desc="Tabs horizontales abajo",    color=Color3.fromRGB(135,  60, 15),  accent=Color3.fromRGB(255, 155,  55), mode=4 },
-            { label="MINI IZQ",    desc="Sidebar mini (iconos only)", color=Color3.fromRGB(15,  95, 105),  accent=Color3.fromRGB(55, 215, 225), mode=5 },
+            { label="SIDEBAR IZQ", desc="Tabs verticales izquierda",  color=Color3.fromRGB(34, 26, 16),  accent=Color3.fromRGB(235, 195, 110), mode=1 },
+            { label="BARRA TOP",   desc="Tabs horizontales arriba",   color=Color3.fromRGB(30, 24, 15),  accent=Color3.fromRGB(205, 160, 75), mode=2 },
+            { label="SIDEBAR DER", desc="Tabs verticales derecha",    color=Color3.fromRGB(38, 29, 18),  accent=Color3.fromRGB(190, 140, 65), mode=3 },
+            { label="BARRA BOT",   desc="Tabs horizontales abajo",    color=Color3.fromRGB(135,  97, 15),  accent=Color3.fromRGB(255, 155,  55), mode=4 },
+            { label="MINI IZQ",    desc="Sidebar mini (iconos only)", color=Color3.fromRGB(26, 21, 13),  accent=Color3.fromRGB(220, 180, 95), mode=5 },
         }
         local _layoutBtnRefs = {}
 
@@ -43078,7 +44996,7 @@ function CreateExclusiveTab()
             nameLbl.Position = UDim2.new(0, 2, 1, -32)
             nameLbl.BackgroundTransparency = 1
             nameLbl.Text = layout.label
-            nameLbl.TextColor3 = Color3.fromRGB(235, 240, 255)
+            nameLbl.TextColor3 = Color3.fromRGB(245, 238, 225)
             nameLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
             nameLbl.TextSize = 8
             nameLbl.TextWrapped = false
@@ -43090,7 +45008,7 @@ function CreateExclusiveTab()
             descLbl.Position = UDim2.new(0, 2, 1, -17)
             descLbl.BackgroundTransparency = 1
             descLbl.Text = layout.desc
-            descLbl.TextColor3 = Color3.fromRGB(140, 180, 255)
+            descLbl.TextColor3 = Color3.fromRGB(180, 155, 100)
             descLbl.FontFace = Font.fromEnum(Enum.Font.Gotham)
             descLbl.TextSize = 7
             descLbl.TextWrapped = true
@@ -43135,13 +45053,16 @@ function CreateExclusiveTab()
                 end)
             end
         end)
-    end
+    end)
 
     -- -- OPACIDAD Y VISUAL DEL HUB --------------------------------
     local visualSec = CreateBorderedSectionGlobal(rightColumn, " HUB VISUAL")
 
     -- Opacidad del fondo del hub (slider 0-95)
+    -- FIX: ignorar el disparo inicial del slider (hubOpacity=0 ponia mainFrame en transparency=1)
+    local _opacityReady = false
     CreateSlider(visualSec, "Opacidad Hub (0=invisible, 95=solido)", 0, 95, HS.hubOpacity, function(v)
+        if not _opacityReady then return end
         _hs().hubOpacity = v
         -- v=0 -> totalmente transparente (1.0), v=95 -> casi opaco (0.05)
         local transparency = 1 - (v / 100)
@@ -43149,12 +45070,19 @@ function CreateExclusiveTab()
             if contentContainer and contentContainer.Parent then
                 contentContainer.BackgroundTransparency = transparency
             end
-            -- Aplicar tambien a mainFrame por si contentContainer no tiene fondo
+            -- VIDEO BG v5: mainFrame siempre transparente (VideoFrame actua como fondo)
+            -- El slider de opacidad controla el velo VideoShade en vez del mainFrame
             if mainFrame and mainFrame.Parent then
-                mainFrame.BackgroundTransparency = transparency
+                mainFrame.BackgroundTransparency = 1
+                local _shade = mainFrame:FindFirstChild("VideoShade")
+                if _shade then
+                    -- v=100 (max opacidad) -> velo casi invisible (0.95); v=0 -> velo oscuro (0.40)
+                    _shade.BackgroundTransparency = math.clamp(0.40 + (v / 100) * 0.55, 0.40, 0.95)
+                end
             end
         end)
     end)
+    task.defer(function() _opacityReady = true end)
 
     -- Centrar hub en pantalla
     local centerBtn = Instance.new("TextButton", visualSec)
@@ -43174,7 +45102,7 @@ function CreateExclusiveTab()
     end)
 
     -- Escala del hub (slider 70-130%)
-    do
+    _zqSafeSection("HUB SCALE", function()
         -- FIX ESCALA: el slider llama al callback en el init (applyValue en CreateSlider).
         -- Ese primer disparo pisaba el uiScale correcto ya aplicado al arrancar el hub.
         -- Con _scaleSliderReady lo ignoramos en el init y solo aplicamos en drags reales.
@@ -43189,19 +45117,19 @@ function CreateExclusiveTab()
                 sc.Scale = v / 100
                 -- Mantener el tama?o base correcto segun dispositivo
                 do
-                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
+                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 1100, 0, 640)
                     if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
                 end
             end)
         end)
-    end
+    end)
 
     -- ============================================================
     --  FONT SELECTOR (Hub Labels)
     --  Permite cambiar la fuente de las etiquetas de los botones
     --  de la sidebar entre Normal (Gotham) y Arcade (PressStart2P).
     -- ============================================================
-    do
+    _zqSafeSection("SIDEBAR FONT", function()
         local _FONTS = {
             {
                 label    = "Normal",
@@ -43276,17 +45204,17 @@ function CreateExclusiveTab()
         -- Preview label
         local previewLbl = Instance.new("TextLabel", fontSec)
         previewLbl.Size                 = UDim2.new(1, -8, 0, 28)
-        previewLbl.BackgroundColor3     = Color3.fromRGB(10, 15, 40)
+        previewLbl.BackgroundColor3     = Color3.fromRGB(24, 19, 12)
         previewLbl.BackgroundTransparency = 0.4
         previewLbl.BorderSizePixel      = 0
         previewLbl.Text                 = "PREVIEW"
-        previewLbl.TextColor3           = Color3.fromRGB(180, 220, 255)
+        previewLbl.TextColor3           = Color3.fromRGB(235, 215, 175)
         previewLbl.TextSize             = 13
         previewLbl.FontFace             = Font.fromEnum(Enum.Font.GothamMedium)
         previewLbl.TextXAlignment       = Enum.TextXAlignment.Center
         previewLbl.ZIndex               = 14
         Instance.new("UICorner", previewLbl).CornerRadius = UDim.new(0, 8)
-        Instance.new("UIStroke", previewLbl).Color = Color3.fromRGB( 50, 255, 180)
+        Instance.new("UIStroke", previewLbl).Color = Color3.fromRGB(200, 160, 80)
 
         local function _refreshPreview(modeIdx)
             local fd = _FONTS[modeIdx]
@@ -43314,7 +45242,7 @@ function CreateExclusiveTab()
             for i, btn in ipairs(_fontBtns) do
                 local isActive = (i == activeIdx)
                 TweenService:Create(btn, _tiFont, {
-                    BackgroundColor3     = isActive and Color3.fromRGB( 50, 255, 180) or Color3.fromRGB(20, 30, 70),
+                    BackgroundColor3     = isActive and Color3.fromRGB(220, 185, 100) or Color3.fromRGB(32, 26, 17),
                     BackgroundTransparency = isActive and 0.15 or 0.55,
                 }):Play()
                 local st = btn:FindFirstChildOfClass("UIStroke")
@@ -43327,18 +45255,18 @@ function CreateExclusiveTab()
         for i, fd in ipairs(_FONTS) do
             local btn = Instance.new("TextButton", btnRow)
             btn.Size                   = UDim2.new(0, 88, 1, 0)
-            btn.BackgroundColor3       = Color3.fromRGB(20, 30, 70)
+            btn.BackgroundColor3       = Color3.fromRGB(32, 26, 17)
             btn.BackgroundTransparency = 0.55
             btn.BorderSizePixel        = 0
             btn.Text                   = fd.label
-            btn.TextColor3             = Color3.fromRGB(210, 235, 255)
+            btn.TextColor3             = Color3.fromRGB(235, 215, 175)
             btn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
             btn.TextSize               = 11
             btn.AutoButtonColor        = false
             btn.ZIndex                 = 14
             Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
             local st = Instance.new("UIStroke", btn)
-            st.Color       = Color3.fromRGB( 50, 255, 180)
+            st.Color       = Color3.fromRGB(200, 160, 80)
             st.Thickness   = 1.5
             st.Transparency = 0.5
             st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -43363,16 +45291,21 @@ function CreateExclusiveTab()
         task.defer(function()
             _applyHubFont(_G._hubSettings.fontMode)
         end)
-    end
+    end)
 
     -- ============================================================
-    --  TOGGLE COLOR SELECTOR  v2  (NebulaSelector ? dropdown)
+    --  TOGGLE COLOR SELECTOR  v2  (ZerqonSelector ? dropdown)
     --  Selector de color FONDO del toggle (row) + PILL (switch)
     --  Se cierra automaticamente al seleccionar. Animacion lenta.
     -- ============================================================
-    do
+    _zqSafeSection("TOGGLE COLOR SELECTOR", function()
         -- Paleta compartida: fondo del row + pill del switch
         local _TC_BG = {
+            -- v47 FIX: el indice 1 era "Azul" y se re-aplicaba a TODOS los
+            -- AuroraToggleRow_ cada vez que se construia la pestania, asi que
+            -- los bordes de los toggles salian azules sin que nadie los eligiera.
+            -- Ahora el default es la paleta del hub y el ciclo RGB manda.
+            { label = "> Hub (Gold)", bg = Color3.fromRGB(32, 28, 22), bgT = 0.80, stroke = Color3.fromRGB(200, 160, 80), hub = true },
             { label = "?? Azul",     bg = Color3.fromRGB(20,  40, 120), bgT = 0.72, stroke = Color3.fromRGB(40,  60,  180) },
             { label = "?? Verde",    bg = Color3.fromRGB(80,  200, 120), bgT = 0.78, stroke = Color3.fromRGB(20,  140, 60)  },
             { label = "?? Rojo",     bg = Color3.fromRGB(220, 80,  80),  bgT = 0.80, stroke = Color3.fromRGB(180, 30,  30)  },
@@ -43385,6 +45318,8 @@ function CreateExclusiveTab()
             { label = "?? Indigo",   bg = Color3.fromRGB(60,  40,  180), bgT = 0.72, stroke = Color3.fromRGB(100, 60,  220) },
         }
         local _TC_PILL = {
+            -- v47 FIX: idem _TC_BG, el indice 1 era azul.
+            { label = "> Hub (Gold)", pill = Color3.fromRGB(190, 145, 65), stroke = Color3.fromRGB(200, 160, 80), hub = true },
             { label = "?? Azul Rey",  pill = Color3.fromRGB(60,  80,  190), stroke = Color3.fromRGB(40,  60,  180) },
             { label = "?? Verde",     pill = Color3.fromRGB(30,  130, 70),  stroke = Color3.fromRGB(20,  140, 60)  },
             { label = "?? Rojo",      pill = Color3.fromRGB(160, 40,  40),  stroke = Color3.fromRGB(180, 30,  30)  },
@@ -43404,6 +45339,9 @@ function CreateExclusiveTab()
         local function _applyBgColor(idx)
             _G._hubSettings.toggleColorIdx = idx
             local c = _TC_BG[idx]; if not c then return end
+            -- v47: idx 1 = modo Hub -> el ciclo RGB manda sobre los bordes.
+            -- Cualquier otro indice es eleccion manual del usuario -> RGB off.
+            if _G._ZQRGB then _G._ZQRGB.enabled = (idx == 1) end
             _G._toggleColorCurrent = _G._toggleColorCurrent or {}
             _G._toggleColorCurrent.bg     = c.bg
             _G._toggleColorCurrent.bgT    = c.bgT
@@ -43414,7 +45352,7 @@ function CreateExclusiveTab()
                     if obj:IsA("Frame") and obj.Name and obj.Name:sub(1, 16) == "AuroraToggleRow_" then
                         pcall(function()
                             obj.BackgroundColor3       = c.bg
-                            obj.BackgroundTransparency = c.bgT
+                            obj.BackgroundTransparency = 1
                             local st = obj:FindFirstChildOfClass("UIStroke")
                             if st then st.Color = c.stroke end
                         end)
@@ -43427,6 +45365,10 @@ function CreateExclusiveTab()
         local function _applyPillColor(idx)
             _G._hubSettings.togglePillColorIdx = idx
             local c = _TC_PILL[idx]; if not c then return end
+            -- v47: en modo Hub el relleno del pill lo maneja ApplyState
+            -- (ambar/carbon segun ON-OFF), asi que aca solo se retinta su
+            -- borde. Con un color manual si se pisa el relleno.
+            local _pillFill = not c.hub
             _G._toggleColorCurrent = _G._toggleColorCurrent or {}
             _G._toggleColorCurrent.pill = c.pill
             pcall(function()
@@ -43436,8 +45378,10 @@ function CreateExclusiveTab()
                         pcall(function()
                             local tb = obj:FindFirstChild("ToggleBackground")
                             if tb then
-                                tb.BackgroundColor3       = c.pill
-                                tb.BackgroundTransparency = 0.3
+                                if _pillFill then
+                                    tb.BackgroundColor3       = c.pill
+                                    tb.BackgroundTransparency = 0.3
+                                end
                                 local tbSt = tb:FindFirstChildOfClass("UIStroke")
                                 if tbSt then tbSt.Color = c.stroke end
                             end
@@ -43481,7 +45425,7 @@ function CreateExclusiveTab()
         local prevKnob = Instance.new("Frame", prevPill)
         prevKnob.Size = UDim2.new(0, 18, 0, 18); prevKnob.AnchorPoint = Vector2.new(0, 0.5)
         prevKnob.Position = UDim2.new(0, 4, 0.5, 0)
-        prevKnob.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+        prevKnob.BackgroundColor3 = Color3.fromRGB(255,200, 80)
         prevKnob.BorderSizePixel = 0; prevKnob.ZIndex = 15
         Instance.new("UICorner", prevKnob).CornerRadius = UDim.new(0, 5)
 
@@ -43502,7 +45446,7 @@ function CreateExclusiveTab()
         local _bgNames = {}
         for _, c in ipairs(_TC_BG) do _bgNames[#_bgNames+1] = c.label end
 
-        CreateNebulaSelector(colorSec, "Fondo del Toggle", _bgNames,
+        CreateZerqonSelector(colorSec, "Fondo del Toggle", _bgNames,
             _TC_BG[_G._hubSettings.toggleColorIdx].label,
             function(sel)
                 for i, c in ipairs(_TC_BG) do
@@ -43520,7 +45464,7 @@ function CreateExclusiveTab()
         local _pillNames = {}
         for _, c in ipairs(_TC_PILL) do _pillNames[#_pillNames+1] = c.label end
 
-        CreateNebulaSelector(colorSec, "Pill del Toggle (switch)", _pillNames,
+        CreateZerqonSelector(colorSec, "Pill del Toggle (switch)", _pillNames,
             _TC_PILL[_G._hubSettings.togglePillColorIdx].label,
             function(sel)
                 for i, c in ipairs(_TC_PILL) do
@@ -43539,7 +45483,7 @@ function CreateExclusiveTab()
             _applyBgColor(_G._hubSettings.toggleColorIdx)
             _applyPillColor(_G._hubSettings.togglePillColorIdx)
         end)
-    end
+    end)
 
 
     -- -- NOTIFICACIONES -------------------------------------------
@@ -43582,13 +45526,13 @@ function CreateExclusiveTab()
     _shapeDescLbl.Size = UDim2.new(1, -8, 0, 22)
     _shapeDescLbl.BackgroundTransparency = 1
     _shapeDescLbl.Text = "  " .. (_notifShapeDesc[_curShape] or "")
-    _shapeDescLbl.TextColor3 = Color3.fromRGB(180, 180, 200)
+    _shapeDescLbl.TextColor3 = Color3.fromRGB(180, 155, 100)
     _shapeDescLbl.FontFace = Font.fromEnum(Enum.Font.Gotham)
     _shapeDescLbl.TextSize = 10
     _shapeDescLbl.TextXAlignment = Enum.TextXAlignment.Left
     _shapeDescLbl.ZIndex = 13
 
-    CreateNebulaSelector(notifSec, "Forma de Notificaciones", _notifShapes, _curShape, function(sel)
+    CreateZerqonSelector(notifSec, "Forma de Notificaciones", _notifShapes, _curShape, function(sel)
         _hs().notifShape = sel
         _shapeDescLbl.Text = "  " .. (_notifShapeDesc[sel] or "")
         CreateCustomNotification("PREVIEW", "Asi se ve la forma: " .. sel, 2.5)
@@ -43596,9 +45540,9 @@ function CreateExclusiveTab()
 
     -- Limpiar notificaciones activas
     local clearNotifBtn = Instance.new("TextButton", notifSec)
-    clearNotifBtn.Size = UDim2.new(1, -8, 0, 28); clearNotifBtn.BackgroundColor3 = Color3.fromRGB(80,20,20)
+    clearNotifBtn.Size = UDim2.new(1, -8, 0, 28); clearNotifBtn.BackgroundColor3 = Color3.fromRGB(80,61,20)
     clearNotifBtn.BackgroundTransparency = 0.3; clearNotifBtn.BorderSizePixel = 0
-    clearNotifBtn.Text = " Limpiar notificaciones activas"; clearNotifBtn.TextColor3 = Color3.fromRGB(255,120,120)
+    clearNotifBtn.Text = " Limpiar notificaciones activas"; clearNotifBtn.TextColor3 = Color3.fromRGB(255,212,120)
     clearNotifBtn.FontFace = Font.fromEnum(Enum.Font.Montserrat); clearNotifBtn.TextSize = 11
     clearNotifBtn.AutoButtonColor = false; clearNotifBtn.ZIndex = 13
     Instance.new("UICorner", clearNotifBtn).CornerRadius = UDim.new(0, 8)
@@ -43758,7 +45702,7 @@ function CreateExclusiveTab()
     -- ================================================================
     -- CREDITOS / AGRADECIMIENTOS
     -- ================================================================
-    do
+    _zqSafeSection("CREDITOS", function()
         local creditsSec = CreateBorderedSectionGlobal(leftColumn, "")
 
         local credFrame = Instance.new("Frame", creditsSec)
@@ -43795,7 +45739,7 @@ function CreateExclusiveTab()
         line1.Text = "Gracias por la ayuda Donato por el script"
         line1.TextSize = 12
         line1.Font = Enum.Font.GothamBold
-        line1.TextColor3 = Color3.fromRGB(210, 210, 255)
+        line1.TextColor3 = Color3.fromRGB(245, 238, 225)
         line1.TextXAlignment = Enum.TextXAlignment.Left
         line1.LayoutOrder = 1
 
@@ -43813,7 +45757,7 @@ function CreateExclusiveTab()
         -- Separador
         local sep = Instance.new("Frame", textContainer)
         sep.Size = UDim2.new(1, 0, 0, 1)
-        sep.BackgroundColor3 = Color3.fromRGB(80, 80, 100)
+        sep.BackgroundColor3 = Color3.fromRGB(80, 70, 52)
         sep.BackgroundTransparency = 0.5
         sep.BorderSizePixel = 0
         sep.LayoutOrder = 3
@@ -43825,7 +45769,7 @@ function CreateExclusiveTab()
         line3.Text = "Informacion: ayuda con la pagina, errores, etc."
         line3.TextSize = 11
         line3.Font = Enum.Font.Gotham
-        line3.TextColor3 = Color3.fromRGB(130, 130, 160)
+        line3.TextColor3 = Color3.fromRGB(150, 128, 88)
         line3.TextXAlignment = Enum.TextXAlignment.Left
         line3.LayoutOrder = 4
 
@@ -43834,13 +45778,13 @@ function CreateExclusiveTab()
         credPad.PaddingBottom = UDim.new(0, 8)
         credPad.PaddingLeft = UDim.new(0, 6)
         credPad.PaddingRight = UDim.new(0, 6)
-    end
+    end)
 
     -- ================================================================
     -- OPTIMIZACIONES DEL JUEGO
     -- Reducen carga del cliente sin afectar el gameplay
     -- ================================================================
-    do
+    _zqSafeSection("OPTIMIZACIONES", function()
         local optSec = CreateBorderedSectionGlobal(rightColumn, " OPTIMIZACIONES")
 
         -- Persistir estados en _hubSettings
@@ -44066,18 +46010,18 @@ function CreateExclusiveTab()
         -- Un click elimina todos los emitters existentes en ese momento
         local purgeBtn = Instance.new("TextButton", optSec)
         purgeBtn.Size = UDim2.new(1, -8, 0, 30)
-        purgeBtn.BackgroundColor3 = Color3.fromRGB(40, 20, 80)
+        purgeBtn.BackgroundColor3 = Color3.fromRGB(46, 34, 16)
         purgeBtn.BackgroundTransparency = 0.2
         purgeBtn.BorderSizePixel = 0
         purgeBtn.Text = "  Purge Particles Now"
-        purgeBtn.TextColor3 = Color3.fromRGB(200, 160, 255)
+        purgeBtn.TextColor3 = Color3.fromRGB(235, 205, 140)
         purgeBtn.FontFace = Font.fromEnum(Enum.Font.GothamSemibold)
         purgeBtn.TextSize = 11
         purgeBtn.AutoButtonColor = false
         purgeBtn.ZIndex = 13
         Instance.new("UICorner", purgeBtn).CornerRadius = UDim.new(0, 8)
         local purgeStroke = Instance.new("UIStroke", purgeBtn)
-        purgeStroke.Color = Color3.fromRGB( 50, 255, 180)
+        purgeStroke.Color = Color3.fromRGB(200, 160, 80)
         purgeStroke.Thickness = 1
         purgeStroke.Transparency = 0.3
         purgeBtn.MouseEnter:Connect(function()
@@ -44246,18 +46190,18 @@ function CreateExclusiveTab()
         -- ================================================================
         local purgeScriptsBtn = Instance.new("TextButton", optSec)
         purgeScriptsBtn.Size = UDim2.new(1, -8, 0, 30)
-        purgeScriptsBtn.BackgroundColor3 = Color3.fromRGB(20, 40, 80)
+        purgeScriptsBtn.BackgroundColor3 = Color3.fromRGB(40, 30, 15)
         purgeScriptsBtn.BackgroundTransparency = 0.2
         purgeScriptsBtn.BorderSizePixel = 0
         purgeScriptsBtn.Text = "  Purge Visual Scripts"
-        purgeScriptsBtn.TextColor3 = Color3.fromRGB(140,  60, 220)
+        purgeScriptsBtn.TextColor3 = Color3.fromRGB(225, 190, 120)
         purgeScriptsBtn.FontFace = Font.fromEnum(Enum.Font.GothamSemibold)
         purgeScriptsBtn.TextSize = 11
         purgeScriptsBtn.AutoButtonColor = false
         purgeScriptsBtn.ZIndex = 13
         Instance.new("UICorner", purgeScriptsBtn).CornerRadius = UDim.new(0, 8)
         local pssStroke = Instance.new("UIStroke", purgeScriptsBtn)
-        pssStroke.Color = Color3.fromRGB(40, 100, 200)
+        pssStroke.Color = Color3.fromRGB(190, 150, 75)
         pssStroke.Thickness = 1; pssStroke.Transparency = 0.3
         purgeScriptsBtn.MouseEnter:Connect(function()
             TweenService:Create(purgeScriptsBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0}):Play()
@@ -44307,18 +46251,18 @@ function CreateExclusiveTab()
         -- ================================================================
         local gcBtn = Instance.new("TextButton", optSec)
         gcBtn.Size = UDim2.new(1, -8, 0, 30)
-        gcBtn.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
+        gcBtn.BackgroundColor3 = Color3.fromRGB(38, 30, 16)
         gcBtn.BackgroundTransparency = 0.2
         gcBtn.BorderSizePixel = 0
         gcBtn.Text = "  Force GC (Limpiar Memoria Lua)"
-        gcBtn.TextColor3 = Color3.fromRGB(140, 255, 160)
+        gcBtn.TextColor3 = Color3.fromRGB(230, 200, 135)
         gcBtn.FontFace = Font.fromEnum(Enum.Font.GothamSemibold)
         gcBtn.TextSize = 11
         gcBtn.AutoButtonColor = false
         gcBtn.ZIndex = 13
         Instance.new("UICorner", gcBtn).CornerRadius = UDim.new(0, 8)
         local gcStroke = Instance.new("UIStroke", gcBtn)
-        gcStroke.Color = Color3.fromRGB(60, 180, 80)
+        gcStroke.Color = Color3.fromRGB(190, 150, 75)
         gcStroke.Thickness = 1; gcStroke.Transparency = 0.3
         gcBtn.MouseEnter:Connect(function()
             TweenService:Create(gcBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0}):Play()
@@ -44373,18 +46317,18 @@ function CreateExclusiveTab()
             end
         end, _G._hubSettings.noLights)
 
-    end  -- cierre de OPTIMIZACIONES (anterior "end" fue el del purgeBtn)
+    end)  -- cierre de OPTIMIZACIONES (anterior "end" fue el del purgeBtn)
 
     -- BETA LABEL
-    do
+    _zqSafeSection("BETA LABEL", function()
         local betaFrame = Instance.new("Frame", leftColumn)
         betaFrame.Size = UDim2.new(1, -10, 0, 32)
-        betaFrame.BackgroundColor3 = Color3.fromRGB(180, 80, 255)
+        betaFrame.BackgroundColor3 = Color3.fromRGB(170, 125, 55)
         betaFrame.BackgroundTransparency = 0.75
         betaFrame.BorderSizePixel = 0
         Instance.new("UICorner", betaFrame).CornerRadius = UDim.new(0, 8)
         local betaStroke = Instance.new("UIStroke", betaFrame)
-        betaStroke.Color = Color3.fromRGB(180, 80, 255)
+        betaStroke.Color = Color3.fromRGB(220, 185, 100)
         betaStroke.Thickness = 1.2
         betaStroke.Transparency = 0.4
         local betaLabel = Instance.new("TextLabel", betaFrame)
@@ -44393,17 +46337,22 @@ function CreateExclusiveTab()
         betaLabel.Text = "??  Beta Script"
         betaLabel.TextSize = 13
         betaLabel.Font = Enum.Font.GothamBold
-        betaLabel.TextColor3 = Color3.fromRGB(220, 160, 255)
+        betaLabel.TextColor3 = Color3.fromRGB(245, 225, 180)
         betaLabel.TextXAlignment = Enum.TextXAlignment.Center
-    end
+    end)
 
     -- ================================================================
     -- FULLSCREEN PARA SETTINGS: al abrir este tab el hub ocupa
     -- toda la pantalla; al salir se restaura el tamano original.
     -- ================================================================
-    do
-        local _vp         = workspace.CurrentCamera.ViewportSize
-        local _origSize   = _G._setHubFrameSize and UDim2.new(0, 780, 0, 460) or mainFrame.Size
+    _zqSafeSection("FULLSCREEN", function()
+        -- v50 FIX "SETTINGS VACIA": aqui habia
+        --     local _vp = workspace.CurrentCamera.ViewportSize
+        -- workspace.CurrentCamera puede ser nil al entrar la PRIMERA vez (la camara
+        -- todavia no esta replicada) y el error tiraba el build COMPLETO de Settings:
+        -- _buildTabCached hacia rollback y la pestania se veia vacia. El local no se
+        -- usaba en ninguna parte, asi que se elimina.
+        local _origSize   = _G._setHubFrameSize and UDim2.new(0, 1100, 0, 640) or mainFrame.Size
         local _origPos    = UDim2.new(0.5, 0, 0.5, 0)
         local _origAnchor = Vector2.new(0.5, 0.5)
         local _origScale  = nil
@@ -44476,7 +46425,7 @@ function CreateExclusiveTab()
 
         -- Seguridad: guardar referencia para poder restaurar si el hub se cierra
         _G._exitSettingsFullscreen = _exitFullscreen
-    end
+    end)
 
     -- ================================================================
     -- FIN BACKGROUNDS SELECTOR
@@ -44487,7 +46436,7 @@ function CreateExclusiveTab()
     -- FIX: toggle que activa/desactiva el guardado automatico de toggles.
     -- _G._autoSaveEnabled era siempre false porque este toggle nunca existia.
     -- ================================================================
-    do
+    _zqSafeSection("AUTO SAVE", function()
         local _asSec = CreateBorderedSectionGlobal(leftColumn, "\xF0\x9F\x92\xBE  AUTO SAVE")
 
         -- Descripcion
@@ -44495,7 +46444,7 @@ function CreateExclusiveTab()
         _asDesc.Size = UDim2.new(1, -12, 0, 28)
         _asDesc.BackgroundTransparency = 1
         _asDesc.Text = "Guarda y restaura el estado de tus toggles automaticamente al re-ejecutar."
-        _asDesc.TextColor3 = Color3.fromRGB(140, 200, 255)
+        _asDesc.TextColor3 = ThemeColors.TextSecondary   -- v47: era azul
         _asDesc.FontFace = Font.fromEnum(Enum.Font.Gotham)
         _asDesc.TextSize = 11
         _asDesc.TextWrapped = true
@@ -44520,7 +46469,7 @@ function CreateExclusiveTab()
         local _saveNowBtn = Instance.new("TextButton", _asSec)
         _saveNowBtn.Name = "SaveNowBtn"
         _saveNowBtn.Size = UDim2.new(1, -12, 0, 36)
-        _saveNowBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 80)
+        _saveNowBtn.BackgroundColor3 = Color3.fromRGB(190, 145, 65)
         _saveNowBtn.BackgroundTransparency = 0.15
         _saveNowBtn.BorderSizePixel = 0
         _saveNowBtn.Text = "\xF0\x9F\x92\xBE  Guardar Config Ahora"
@@ -44531,15 +46480,15 @@ function CreateExclusiveTab()
         _saveNowBtn.ZIndex = 13
         Instance.new("UICorner", _saveNowBtn).CornerRadius = UDim.new(0, 8)
         local _snStroke = Instance.new("UIStroke", _saveNowBtn)
-        _snStroke.Color = Color3.fromRGB(50, 255, 130)
+        _snStroke.Color = Color3.fromRGB(220, 185, 100)
         _snStroke.Thickness = 1.5
         _snStroke.Transparency = 0.3
         _snStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         _saveNowBtn.MouseEnter:Connect(function()
-            TweenService:Create(_saveNowBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(0, 200, 100), BackgroundTransparency = 0}):Play()
+            TweenService:Create(_saveNowBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(225, 180, 105), BackgroundTransparency = 0}):Play()
         end)
         _saveNowBtn.MouseLeave:Connect(function()
-            TweenService:Create(_saveNowBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(0, 160, 80), BackgroundTransparency = 0.15}):Play()
+            TweenService:Create(_saveNowBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(190, 145, 65), BackgroundTransparency = 0.15}):Play()
         end)
         _saveNowBtn.Activated:Connect(function()
             -- Guardar forzado aunque auto save este desactivado
@@ -44565,9 +46514,88 @@ function CreateExclusiveTab()
                 CreateCustomNotification("AUTO SAVE", "\xE2\x9D\x8C Error al guardar: " .. tostring(_err), 3)
             end
         end)
-    end
+    end)
     -- ================================================================
     -- FIN AUTO SAVE
+    -- ================================================================
+
+    -- ================================================================
+    -- SECCION: HUB RELEASE  (v47 - solo la ve el owner: lauchafc5)
+    -- Toggle "Resume Hub": ON = hub liberado, cualquiera puede
+    -- ejecutarlo. OFF = modo actualizacion, solo lauchafc5 y
+    -- baneado2003 entran; al resto lo expulsa del juego.
+    -- ================================================================
+    _zqSafeSection("HUB RELEASE", function()
+        local _isOwnerZQ = false
+        pcall(function()
+            _isOwnerZQ = (_G._ZQ_IsOwner and _G._ZQ_IsOwner()) or false
+        end)
+        if _isOwnerZQ then
+            local _rhSec = CreateBorderedSectionGlobal(leftColumn, "  HUB RELEASE")
+
+            local _rhDesc = Instance.new("TextLabel", _rhSec)
+            _rhDesc.Size                   = UDim2.new(1, -12, 0, 32)
+            _rhDesc.BackgroundTransparency = 1
+            _rhDesc.Text                   = "Owner only. ON = hub released, everyone can execute. OFF = update mode, only lauchafc5 / baneado2003."
+            _rhDesc.TextColor3             = ThemeColors.TextSecondary
+            _rhDesc.FontFace               = Font.fromEnum(Enum.Font.Gotham)
+            _rhDesc.TextSize               = 11
+            _rhDesc.TextWrapped            = true
+            _rhDesc.TextXAlignment         = Enum.TextXAlignment.Left
+            _rhDesc.ZIndex                 = 13
+            local _rhPad = Instance.new("UIPadding", _rhDesc)
+            _rhPad.PaddingLeft = UDim.new(0, 6)
+
+            local _rhStatus = Instance.new("TextLabel", _rhSec)
+            _rhStatus.Size                   = UDim2.new(1, -12, 0, 22)
+            _rhStatus.BackgroundTransparency = 1
+            _rhStatus.Text                   = "STATUS: ..."
+            _rhStatus.TextColor3             = ThemeColors.Accent
+            _rhStatus.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+            _rhStatus.TextSize               = 12
+            _rhStatus.TextXAlignment         = Enum.TextXAlignment.Left
+            _rhStatus.ZIndex                 = 13
+            local _rhPad2 = Instance.new("UIPadding", _rhStatus)
+            _rhPad2.PaddingLeft = UDim.new(0, 6)
+
+            local function _rhUpdActive()
+                local ok, res = pcall(function()
+                    return (_G._ZQ_UpdateActive and _G._ZQ_UpdateActive()) or false
+                end)
+                return (ok and res) or false
+            end
+
+            local function _rhRefresh()
+                local upd = _rhUpdActive()
+                _rhStatus.Text = upd
+                    and "STATUS:  UPDATE MODE  -  whitelist only"
+                    or  "STATUS:  RELEASED  -  everyone can execute"
+                _rhStatus.TextColor3 = upd
+                    and Color3.fromRGB(235, 180, 80)
+                    or  Color3.fromRGB(240, 230, 195)
+            end
+
+            -- El visual del toggle siempre refleja el estado real del gate.
+            _G._toggleStates = _G._toggleStates or {}
+            _G._toggleStates["Resume Hub"] = not _rhUpdActive()
+
+            CreateAuroraToggle(_rhSec, "Resume Hub", function(on)
+                pcall(function()
+                    if _G._ZQ_SetUpdateMode then _G._ZQ_SetUpdateMode(not on) end
+                end)
+                _rhRefresh()
+                if on then
+                    CreateCustomNotification("HUB RELEASE", "Hub resumed - everyone can execute the hub now", 3)
+                else
+                    CreateCustomNotification("HUB RELEASE", "Update mode ON - only lauchafc5 / baneado2003 can enter", 3)
+                end
+            end, not _rhUpdActive())
+
+            _rhRefresh()
+        end
+    end)
+    -- ================================================================
+    -- FIN HUB RELEASE
     -- ================================================================
 
 end
@@ -44663,7 +46691,7 @@ function CreateCombatTab()
         -- Wrapper externo con fondo totalmente transparente
         local wrapper = Instance.new("Frame", parent)
         wrapper.Size = UDim2.new(1, -6, 0, 0)
-        wrapper.BackgroundColor3 = Color3.fromRGB(15, 40, 130)
+        wrapper.BackgroundColor3 = Color3.fromRGB(130, 94,  15)
         wrapper.BackgroundTransparency = 1  -- TRANSPARENCIA TOTAL: fondo del juego visible
         wrapper.BorderSizePixel = 0
         wrapper.AutomaticSize = Enum.AutomaticSize.Y
@@ -45490,7 +47518,7 @@ function CreateCombatTab()
             local row = Instance.new("Frame", parent)
             row.Size = UDim2.new(1, -8, 0, 0)
             row.AutomaticSize = Enum.AutomaticSize.Y
-            row.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+            row.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
             row.BackgroundTransparency = 0.5
             row.BorderSizePixel = 0
             row.ZIndex = 13
@@ -45521,7 +47549,7 @@ function CreateCombatTab()
             descLbl.AutomaticSize = Enum.AutomaticSize.Y
             descLbl.BackgroundTransparency = 1
             descLbl.Text = desc
-            descLbl.TextColor3 = Color3.fromRGB(255, 200, 200)
+            descLbl.TextColor3 = Color3.fromRGB(255, 238, 200)
             descLbl.Font = Enum.Font.Montserrat
             descLbl.TextSize = 10
             descLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -45736,10 +47764,10 @@ function CreateCombatTab()
             clickBtn.Size                   = UDim2.new(1, 0, 1, 0)
             clickBtn.Position               = UDim2.new(0, 0, 0, 0)
             clickBtn.AnchorPoint            = Vector2.new(0.5, 0.5)
-            clickBtn.BackgroundColor3       = Color3.fromRGB(4, 10, 28)
+            clickBtn.BackgroundColor3       = Color3.fromRGB(28, 20,  4)
             clickBtn.BackgroundTransparency = 0.15
             clickBtn.Text                   = "Shoot"
-            clickBtn.TextColor3             = Color3.fromRGB(0, 210, 240)
+            clickBtn.TextColor3             = Color3.fromRGB(200, 160, 80)
             clickBtn.TextSize               = 15
             clickBtn.Font                   = Enum.Font.GothamMedium
             clickBtn.AutoButtonColor        = false
@@ -45748,9 +47776,9 @@ function CreateCombatTab()
             -- Gradiente interno glassmorphism (igual que los botones del hub)
             local _btnGrad = Instance.new("UIGradient", clickBtn)
             _btnGrad.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0,   Color3.fromRGB( 5, 20, 60)),
-                ColorSequenceKeypoint.new(0.5, Color3.fromRGB( 2, 10, 35)),
-                ColorSequenceKeypoint.new(1,   Color3.fromRGB( 5, 20, 60)),
+                ColorSequenceKeypoint.new(0,   Color3.fromRGB(60, 43,  5)),
+                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(35, 25,  2)),
+                ColorSequenceKeypoint.new(1,   Color3.fromRGB(60, 43,  5)),
             })
             _btnGrad.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0,   0.30),
@@ -45761,7 +47789,7 @@ function CreateCombatTab()
 
             -- Glow en el texto
             local _txtStroke = Instance.new("UIStroke", clickBtn)
-            _txtStroke.Color       = Color3.fromRGB(0, 210, 240)
+            _txtStroke.Color       = Color3.fromRGB(200, 160, 80)
             _txtStroke.Thickness   = 0.9
             _txtStroke.Transparency = 0.50
             _txtStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
@@ -45771,15 +47799,15 @@ function CreateCombatTab()
 
             -- Borde neon cian (igual que el hub)
             local uiStroke = Instance.new("UIStroke", clickBtn)
-            uiStroke.Color           = Color3.fromRGB(0, 200, 240)
+            uiStroke.Color           = Color3.fromRGB(200, 160, 80)
             uiStroke.Thickness       = 2.5
             uiStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
             uiStroke.Transparency    = 0.10
             local _strokeGrad = Instance.new("UIGradient", uiStroke)
             _strokeGrad.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 220, 255)),
-                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(60, 100, 255)),
-                ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 220, 255)),
+                ColorSequenceKeypoint.new(0,   ThemeColors.Primary),
+                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 193,  60)),
+                ColorSequenceKeypoint.new(1,   ThemeColors.Primary),
             })
             _strokeGrad.Rotation = 90
 
@@ -45855,14 +47883,14 @@ function CreateCombatTab()
 
             -- Hover
             clickBtn.MouseEnter:Connect(function()
-                TweenService:Create(uiStroke, TweenInfo.new(0.12), {Color = Color3.fromRGB(120, 240, 255), Thickness = 3.0, Transparency = 0}):Play()
+                TweenService:Create(uiStroke, TweenInfo.new(0.12), {Color = Color3.fromRGB(255, 212, 120), Thickness = 3.0, Transparency = 0}):Play()
                 TweenService:Create(clickBtn, TweenInfo.new(0.12), {BackgroundTransparency = 0.05}):Play()
-                TweenService:Create(clickBtn, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(180, 255, 255)}):Play()
+                TweenService:Create(clickBtn, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 231, 180)}):Play()
             end)
             clickBtn.MouseLeave:Connect(function()
-                TweenService:Create(uiStroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(0, 200, 240), Thickness = 2.5, Transparency = 0.10}):Play()
+                TweenService:Create(uiStroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(200, 160, 80), Thickness = 2.5, Transparency = 0.10}):Play()
                 TweenService:Create(clickBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.15}):Play()
-                TweenService:Create(clickBtn, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(0, 210, 240)}):Play()
+                TweenService:Create(clickBtn, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(200, 160, 80)}):Play()
             end)
 
             -- Press / Release
@@ -45870,14 +47898,14 @@ function CreateCombatTab()
             clickBtn.MouseButton1Down:Connect(function()
                 if _moved then return end
                 TweenService:Create(sc, TweenInfo.new(0.07), {Scale=0.94}):Play()
-                TweenService:Create(uiStroke, TweenInfo.new(0.07), {Thickness=1.5, Color=Color3.fromRGB(0,255,255)}):Play()
-                TweenService:Create(clickBtn, TweenInfo.new(0.07), {BackgroundColor3=Color3.fromRGB(0,30,60)}):Play()
+                TweenService:Create(uiStroke, TweenInfo.new(0.07), {Thickness=1.5, Color=Color3.fromRGB(255,174,  0)}):Play()
+                TweenService:Create(clickBtn, TweenInfo.new(0.07), {BackgroundColor3=Color3.fromRGB(60,41, 0)}):Play()
             end)
             clickBtn.MouseButton1Up:Connect(function()
                 if _moved then return end
                 TweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale=1}):Play()
-                TweenService:Create(uiStroke, TweenInfo.new(0.18), {Thickness=2.5, Color=Color3.fromRGB(0,200,240)}):Play()
-                TweenService:Create(clickBtn, TweenInfo.new(0.18), {BackgroundColor3=Color3.fromRGB(4,10,28)}):Play()
+                TweenService:Create(uiStroke, TweenInfo.new(0.18), {Thickness=2.5, Color=Color3.fromRGB(240,164,  0)}):Play()
+                TweenService:Create(clickBtn, TweenInfo.new(0.18), {BackgroundColor3=Color3.fromRGB(28,20, 4)}):Play()
             end)
             clickBtn.Activated:Connect(function()
                 if _moved then return end
@@ -46236,7 +48264,7 @@ function CreateCombatTab()
     do
         local sizeSec = Instance.new("Frame", silentAimSection)
         sizeSec.Size = UDim2.new(1, 0, 0, 50)
-        sizeSec.BackgroundColor3 = Color3.fromRGB(55, 55, 60)
+        sizeSec.BackgroundColor3 = Color3.fromRGB(60, 58, 55)
         sizeSec.BackgroundTransparency = 0.75
         sizeSec.BorderSizePixel = 0
         Instance.new("UICorner", sizeSec).CornerRadius = UDim.new(0, 8)
@@ -46251,7 +48279,7 @@ function CreateCombatTab()
 
         local ssBg = Instance.new("Frame", sizeSec)
         ssBg.Size = UDim2.new(1, -20, 0, 6); ssBg.Position = UDim2.new(0, 10, 0, 34)
-        ssBg.BackgroundColor3 = Color3.fromRGB(40, 40, 55); ssBg.BorderSizePixel = 0
+        ssBg.BackgroundColor3 = Color3.fromRGB(55, 50, 40); ssBg.BorderSizePixel = 0
         ssBg.BackgroundTransparency = 0.75
         Instance.new("UICorner", ssBg).CornerRadius = UDim.new(1, 0)
 
@@ -46403,11 +48431,11 @@ function CreateCombatTab()
 
     -- (Tianca Prediction movido a seccin propia: PREDICCIN  TIANCA)
 
-    -- -- Body Part selector (CreateNebulaSelector nativo del hub) ---------------
+    -- -- Body Part selector (CreateZerqonSelector nativo del hub) ---------------
     do
         local bodyParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso",
             "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg"}
-        CreateNebulaSelector(silentAimSection, "Parte del cuerpo", bodyParts,
+        CreateZerqonSelector(silentAimSection, "Parte del cuerpo", bodyParts,
             CombatState.saTargetPart or "Head",
             function(selected)
                 CombatState.saTargetPart    = selected
@@ -46769,7 +48797,7 @@ function CreateCombatTab()
                 if shouldFire ~= _msBright then
                     _msBright = shouldFire
                     local targetColor = shouldFire
-                        and Color3.fromRGB(50, 255, 120)   -- verde = apuntando al murder
+                        and Color3.fromRGB(255, 190,  50)   -- oro fuerte = apuntando al murder
                         or  Color3.fromRGB(255, 255, 255)  -- blanco = sin target
                     local targetAlpha = shouldFire and 0.0 or 0.25
                     TweenService:Create(_msCircleFrame, TweenInfo.new(0.08), {
@@ -46779,7 +48807,7 @@ function CreateCombatTab()
                     local str = _msCircleFrame:FindFirstChildOfClass("UIStroke")
                     if str then
                         TweenService:Create(str, TweenInfo.new(0.08), {
-                            Color = shouldFire and Color3.fromRGB(50, 255, 120) or ThemeColors.Primary
+                            Color = shouldFire and Color3.fromRGB(255, 190,  50) or ThemeColors.Primary
                         }):Play()
                     end
                 end
@@ -47080,7 +49108,7 @@ function CreateCombatTab()
         _ctLabel.Size = UDim2.new(1, -8, 0, 18)
         _ctLabel.BackgroundTransparency = 1
         _ctLabel.Text = "Target: " .. (CombatTabState.customTargetPlayer and CombatTabState.customTargetPlayer.Name or "ninguno")
-        _ctLabel.TextColor3 = Color3.fromRGB(140, 200, 255)
+        _ctLabel.TextColor3 = Color3.fromRGB(255, 219, 140)
         _ctLabel.Font = Enum.Font.Montserrat
         _ctLabel.TextSize = 10
         _ctLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -47126,7 +49154,7 @@ function CreateCombatTab()
             panel.AutomaticSize = Enum.AutomaticSize.Y
             panel.AnchorPoint = Vector2.new(0.5, 0.5)
             panel.Position = UDim2.new(0.5, 0, 0.5, 0)
-            panel.BackgroundColor3 = Color3.fromRGB(10, 50, 44)
+            panel.BackgroundColor3 = Color3.fromRGB(50, 37, 10)
             panel.BackgroundTransparency = 0.08
             panel.BorderSizePixel = 0
             panel.ZIndex = 2
@@ -47144,7 +49172,7 @@ function CreateCombatTab()
             titleRow.Size = UDim2.new(1, 0, 0, 22)
             titleRow.BackgroundTransparency = 1
             titleRow.Text = " Seleccionar Target del Silent Aim"
-            titleRow.TextColor3 = Color3.fromRGB(0, 220, 190)
+            titleRow.TextColor3 = Color3.fromRGB(220, 150,   0)
             titleRow.Font = Enum.Font.GothamBold
             titleRow.TextSize = 12
             titleRow.TextXAlignment = Enum.TextXAlignment.Left
@@ -47154,11 +49182,11 @@ function CreateCombatTab()
             -- Bot?n para quitar custom target
             local clearBtn = Instance.new("TextButton", panel)
             clearBtn.Size = UDim2.new(1, 0, 0, 28)
-            clearBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
+            clearBtn.BackgroundColor3 = Color3.fromRGB(60, 47, 20)
             clearBtn.BackgroundTransparency = 0.3
             clearBtn.BorderSizePixel = 0
             clearBtn.Text = "  Usar Murder (sin custom)"
-            clearBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
+            clearBtn.TextColor3 = Color3.fromRGB(255, 231, 180)
             clearBtn.Font = Enum.Font.GothamSemibold
             clearBtn.TextSize = 11
             clearBtn.ZIndex = 3
@@ -47180,11 +49208,11 @@ function CreateCombatTab()
                     local plrBtn = Instance.new("TextButton", panel)
                     plrBtn.Size = UDim2.new(1, 0, 0, 28)
                     plrBtn.BackgroundColor3 = (CombatTabState.customTargetPlayer == plr)
-                        and Color3.fromRGB(0, 140, 120) or Color3.fromRGB(15, 40, 55)
+                        and Color3.fromRGB(190, 145, 65) or Color3.fromRGB(28, 24, 20)
                     plrBtn.BackgroundTransparency = 0.3
                     plrBtn.BorderSizePixel = 0
                     plrBtn.Text = "  " .. plr.Name
-                    plrBtn.TextColor3 = Color3.fromRGB(210, 240, 255)
+                    plrBtn.TextColor3 = Color3.fromRGB(255, 241, 210)
                     plrBtn.Font = Enum.Font.GothamSemibold
                     plrBtn.TextSize = 11
                     plrBtn.ZIndex = 3
@@ -47216,7 +49244,7 @@ function CreateCombatTab()
         _ctDesc.AutomaticSize = Enum.AutomaticSize.Y
         _ctDesc.BackgroundTransparency = 1
         _ctDesc.Text = "Usa Custom Target para apuntar a otro jugador en vez del Murder. Select Target abre el selector. Use Custom Target activa el sistema."
-        _ctDesc.TextColor3 = Color3.fromRGB(130, 170, 220)
+        _ctDesc.TextColor3 = Color3.fromRGB(220, 192, 130)
         _ctDesc.Font = Enum.Font.Montserrat
         _ctDesc.TextSize = 10
         _ctDesc.TextWrapped = true
@@ -47765,7 +49793,7 @@ function CreateCombatTab()
         _spDesc.AutomaticSize = Enum.AutomaticSize.Y
         _spDesc.BackgroundTransparency = 1
         _spDesc.Text = "Shoot Pick: dispara al Murder cuando agarra el GunDrop. SHOOT MURDER: TP detras del murder y dispara. KILL SHERIFF: lanza el cuchillo al sheriff. Bindables: _G._ShootMurderBindable:Fire() / _G._KillSheriffBindable:Fire()"
-        _spDesc.TextColor3 = Color3.fromRGB(130, 170, 220)
+        _spDesc.TextColor3 = Color3.fromRGB(220, 192, 130)
         _spDesc.Font = Enum.Font.Montserrat
         _spDesc.TextSize = 10
         _spDesc.TextWrapped = true
@@ -48515,7 +50543,7 @@ function CreateCombatTab()
             panel.Size          = UDim2.fromOffset(380, 340)
             panel.Position      = UDim2.fromScale(0.5, 0.5)
             panel.AnchorPoint   = Vector2.new(0.5, 0.5)
-            panel.BackgroundColor3 = Color3.fromRGB(12, 12, 22)
+            panel.BackgroundColor3 = Color3.fromRGB(22, 19, 12)
             panel.BackgroundTransparency = 0.75
             panel.BorderSizePixel = 0
             panel.ZIndex          = 11
@@ -48557,7 +50585,7 @@ function CreateCombatTab()
             infoLbl.Position             = UDim2.fromOffset(10, 116)
             infoLbl.BackgroundTransparency = 1
             infoLbl.Text                 = "Analizando sistema..."
-            infoLbl.TextColor3           = Color3.fromRGB(210, 240, 255)
+            infoLbl.TextColor3           = Color3.fromRGB(255, 241, 210)
             infoLbl.Font                 = Enum.Font.Montserrat
             infoLbl.TextSize             = 12
             infoLbl.TextWrapped          = true
@@ -48579,7 +50607,7 @@ function CreateCombatTab()
             local closeBtn = Instance.new("TextButton", panel)
             closeBtn.Size             = UDim2.fromOffset(28, 28)
             closeBtn.Position         = UDim2.new(1, -32, 0, 4)
-            closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+            closeBtn.BackgroundColor3 = Color3.fromRGB(180,136, 40)
             closeBtn.BackgroundTransparency = 0.2
             closeBtn.Text             = ""
             closeBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
@@ -48720,7 +50748,7 @@ function CreateCombatTab()
                         avgPing, avgFps, hM, vM, dMin, dMax, mDist, lC, sS, aB, jL, tO
                     )
                     spinLbl.Text       = ""
-                    spinLbl.TextColor3 = Color3.fromRGB(130, 130, 135)
+                    spinLbl.TextColor3 = Color3.fromRGB(135, 133, 130)
                     spinLbl.Rotation   = 0
 
                     CreateCustomNotification("GUN CONFIG", "Config ptima aplicada  Ping: " .. avgPing .. "ms FPS: " .. avgFps, 4)
@@ -48761,7 +50789,7 @@ function CreateCombatTab()
         -- Contenedor principal con altura generosa
         local _knifeHeader = Instance.new("Frame", leftColumn)
         _knifeHeader.Size                   = UDim2.new(1, -10, 0, 48)
-        _knifeHeader.BackgroundColor3       = Color3.fromRGB(8, 14, 38)
+        _knifeHeader.BackgroundColor3       = Color3.fromRGB(38, 28,  8)
         _knifeHeader.BackgroundTransparency = 0.25
         _knifeHeader.BorderSizePixel        = 0
         _knifeHeader.ZIndex                 = 12
@@ -48771,10 +50799,10 @@ function CreateCombatTab()
         -- Gradiente de fondo: aurora oscuro de izquierda a derecha
         local _khBgGrad = Instance.new("UIGradient", _knifeHeader)
         _khBgGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,    Color3.fromRGB(10,  60,  80)),
-            ColorSequenceKeypoint.new(0.35, Color3.fromRGB(8,   14,  38)),
-            ColorSequenceKeypoint.new(0.65, Color3.fromRGB(8,   14,  38)),
-            ColorSequenceKeypoint.new(1,    Color3.fromRGB(30,  10,  70)),
+            ColorSequenceKeypoint.new(0,    Color3.fromRGB(80,  58,  10)),
+            ColorSequenceKeypoint.new(0.35, Color3.fromRGB(38,   28,   8)),
+            ColorSequenceKeypoint.new(0.65, Color3.fromRGB(38,   28,   8)),
+            ColorSequenceKeypoint.new(1,    Color3.fromRGB(70,  51,  10)),
         })
         _khBgGrad.Rotation = 0
 
@@ -48833,7 +50861,7 @@ function CreateCombatTab()
         _khBadge.Size                   = UDim2.new(0, 82, 0, 22)
         _khBadge.AnchorPoint            = Vector2.new(1, 0.5)
         _khBadge.Position               = UDim2.new(1, -10, 0.5, 0)
-        _khBadge.BackgroundColor3       = Color3.fromRGB(8, 30, 55)
+        _khBadge.BackgroundColor3       = Color3.fromRGB(55, 40,  8)
         _khBadge.BackgroundTransparency = 0.2
         _khBadge.BorderSizePixel        = 0
         _khBadge.ZIndex                 = 14
@@ -48978,14 +51006,8 @@ function CreateCombatTab()
  CreateCustomNotification("CONFLICT", "Simulate Knife Throw desactivado (conflicto con Knife SA)", 3)
             end
 
-            -- 3. Instant Kill Aura (hookea RMB + workspace.ChildAdded = double-fire)
-            if _ika and _ika.enabled then
-                _ika.enabled = false
-                pcall(_ikaStop)
- CreateCustomNotification("CONFLICT", "Instant Kill Aura desactivado (conflicto con Knife SA)", 3)
-            end
 
-            -- 4. Knife Aura / Auto Click (disparan KnifeThrown en loop = colisi?n)
+            -- 3. Knife Aura / Auto Click (disparan KnifeThrown en loop = colisi?n)
             if Settings.premium.knifeAura.enabled then
                 Settings.premium.knifeAura.enabled = false
                 if Settings.premium.knifeAura.connection then
@@ -49000,13 +51022,6 @@ function CreateCombatTab()
                     Settings.premium.knifeAura.autoClickConn:Disconnect()
                     Settings.premium.knifeAura.autoClickConn = nil
                 end
-            end
-
-            -- 5. Quit Throw Animation (bloquea las anims que Knife SA ejecuta)
-            if QA and QA.enabled then
-                QA.enabled = false
-                pcall(stopQA)
- CreateCustomNotification("CONFLICT", "Quit Throw Animation desactivado (conflicto con Knife SA)", 3)
             end
 
             _KnifeSA_activate()
@@ -49612,7 +51627,7 @@ function CreateCombatTab()
 
     -- Target ? ahora con todas las opciones
     KnifeSAState.specificTarget = KnifeSAState.specificTarget or nil
- CreateNebulaSelector(knifeSASection, "Knife Silent Aim Target",
+ CreateZerqonSelector(knifeSASection, "Knife Silent Aim Target",
         {"Closest", "From Mouse", "Murderer", "Sheriff", "All Players", "Select Player"},
         KnifeSAState.target,
         function(s)
@@ -49722,7 +51737,7 @@ function CreateCombatTab()
     end
 
     -- Body Part Target selector
- CreateNebulaSelector(knifeSASection, "Knife SA Body Part",
+ CreateZerqonSelector(knifeSASection, "Knife SA Body Part",
         _knifeSA_bodyParts,
         KnifeSAState.targetPart,
         function(s)
@@ -49739,7 +51754,7 @@ function CreateCombatTab()
 
 
     -- -------------------------------------------------------------------
-    -- KILL ONE ? Selector estilo NebulaSelector + bot?n CreateButton con shimmer/glitch
+    -- KILL ONE ? Selector estilo ZerqonSelector + bot?n CreateButton con shimmer/glitch
     -- -------------------------------------------------------------------
     do
         local koSection = CreateBorderedSection(leftColumn, " KILL ONE ? SELECTOR")
@@ -49761,8 +51776,8 @@ function CreateCombatTab()
         local _koInitial = #_koNames > 0 and _koNames[1] or "Sin jugadores"
         if #_koNames > 0 then _koTarget = Players:FindFirstChild(_koInitial) end
 
-        -- Selector con el estilo exacto del hub (NebulaSelector glassmorphism)
-        local _koSel = CreateNebulaSelector(koSection, "Objetivo", _koNames, _koInitial, function(nombre)
+        -- Selector con el estilo exacto del hub (ZerqonSelector glassmorphism)
+        local _koSel = CreateZerqonSelector(koSection, "Objetivo", _koNames, _koInitial, function(nombre)
             _koTarget = Players:FindFirstChild(nombre)
         end)
         _koSel.LayoutOrder = 1
@@ -49891,7 +51906,7 @@ function CreateCombatTab()
         _kaBtn.BackgroundTransparency = 0.35
         _kaBtn.BorderSizePixel        = 0
         _kaBtn.Text                   = "?  KILL ALL  ?"
-        _kaBtn.TextColor3             = Color3.fromRGB(255, 100, 100)
+        _kaBtn.TextColor3             = Color3.fromRGB(255, 206, 100)
         _kaBtn.Font                   = Enum.Font.GothamBold
         _kaBtn.TextSize               = 14
         _kaBtn.ZIndex                 = 14
@@ -49899,7 +51914,7 @@ function CreateCombatTab()
         _kaBtn.LayoutOrder            = 3
         Instance.new("UICorner", _kaBtn).CornerRadius = UDim.new(0, 8)
         local _kaBtnStroke = Instance.new("UIStroke", _kaBtn)
-        _kaBtnStroke.Color        = Color3.fromRGB(220, 60, 60)
+        _kaBtnStroke.Color        = Color3.fromRGB(220,169, 60)
         _kaBtnStroke.Thickness    = 1.5
         _kaBtnStroke.Transparency = 0.1
         _kaBtn.MouseEnter:Connect(function()
@@ -50786,7 +52801,7 @@ function CreateCombatTab()
             panel.Size          = UDim2.fromOffset(360, 320)
             panel.Position      = UDim2.fromScale(0.5, 0.5)
             panel.AnchorPoint   = Vector2.new(0.5, 0.5)
-            panel.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+            panel.BackgroundColor3 = Color3.fromRGB(25, 22, 15)
             panel.BackgroundTransparency = 0.75
             panel.BorderSizePixel = 0
             panel.ZIndex          = 11
@@ -50829,7 +52844,7 @@ function CreateCombatTab()
             infoLbl.Position = UDim2.fromOffset(10, 118)
             infoLbl.BackgroundTransparency = 1
             infoLbl.Text = "Analizando sistema..."
-            infoLbl.TextColor3 = Color3.fromRGB(210, 240, 255)
+            infoLbl.TextColor3 = Color3.fromRGB(255, 241, 210)
             infoLbl.Font = Enum.Font.Montserrat
             infoLbl.TextSize = 12
             infoLbl.TextWrapped = true
@@ -50851,7 +52866,7 @@ function CreateCombatTab()
             local closeBtn = Instance.new("TextButton", panel)
             closeBtn.Size = UDim2.fromOffset(28, 28)
             closeBtn.Position = UDim2.new(1, -32, 0, 4)
-            closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+            closeBtn.BackgroundColor3 = Color3.fromRGB(180,136, 40)
             closeBtn.BackgroundTransparency = 0.2
             closeBtn.Text = ""
             closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -50956,7 +52971,7 @@ function CreateCombatTab()
                         avgPing, avgFps, hMin, hMax, dHMin, dHMax, vMin, vMax
                     )
                     spinLbl.Text = ""
-                    spinLbl.TextColor3 = Color3.fromRGB(130, 130, 135)
+                    spinLbl.TextColor3 = Color3.fromRGB(135, 133, 130)
                     spinLbl.Rotation = 0
 
                     CreateCustomNotification("KNIFE CONFIG", "Config ptima aplicada  Ping: " .. avgPing .. "ms FPS: " .. avgFps, 4)
@@ -51203,7 +53218,7 @@ function CreateCombatTab()
         local _hbBoxes    = {}
         local _hbBoxConns = {}  -- [player] = CharacterAdded conn
 
-        local _HB_LINE_COLOR = Color3.fromRGB(255, 0, 0)   -- borde rojo igual a la imagen
+        local _HB_LINE_COLOR = Color3.fromRGB(255,174, 0)   -- borde del color del hub
         local _HB_LINE_THICK = 0.08                         -- grosor del borde
         local _HB_SURF_TRANSP = 1.0                         -- interior transparente (controlado por slider)
 
@@ -51224,7 +53239,7 @@ function CreateCombatTab()
             sb.Color3            = _HB_LINE_COLOR
             sb.LineThickness     = _HB_LINE_THICK
             sb.SurfaceTransparency = _HB_SURF_TRANSP
-            sb.SurfaceColor3     = Color3.fromRGB(255, 50, 50)
+            sb.SurfaceColor3     = Color3.fromRGB(255,190, 50)
             sb.Adornee           = hrp
             sb.Parent            = workspace
             _hbBoxes[player]     = sb
@@ -51652,7 +53667,7 @@ function CreateCombatTab()
             local _hbSizeTrack = Instance.new("Frame", _hbSizeContainer)
             _hbSizeTrack.Size = UDim2.new(1, -16, 0, 6)
             _hbSizeTrack.Position = UDim2.new(0, 8, 0, 58)
-            _hbSizeTrack.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
+            _hbSizeTrack.BackgroundColor3 = Color3.fromRGB(32, 28, 18)
             _hbSizeTrack.BackgroundTransparency = 0.20
             _hbSizeTrack.BorderSizePixel = 0
             _hbSizeTrack.ZIndex = 12
@@ -51776,7 +53791,7 @@ function CreateCombatTab()
             local _hbTranspTrack = Instance.new("Frame", _hbTranspContainer)
             _hbTranspTrack.Size = UDim2.new(1, -16, 0, 6)
             _hbTranspTrack.Position = UDim2.new(0, 8, 0, 58)
-            _hbTranspTrack.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
+            _hbTranspTrack.BackgroundColor3 = Color3.fromRGB(32, 28, 18)
             _hbTranspTrack.BackgroundTransparency = 0.20
             _hbTranspTrack.BorderSizePixel = 0
             _hbTranspTrack.ZIndex = 12
@@ -51890,7 +53905,7 @@ function CreateCombatTab()
             local _hbSurfTrack = Instance.new("Frame", _hbSurfContainer)
             _hbSurfTrack.Size = UDim2.new(1, -16, 0, 6)
             _hbSurfTrack.Position = UDim2.new(0, 8, 0, 58)
-            _hbSurfTrack.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
+            _hbSurfTrack.BackgroundColor3 = Color3.fromRGB(32, 28, 18)
             _hbSurfTrack.BackgroundTransparency = 0.20
             _hbSurfTrack.BorderSizePixel = 0
             _hbSurfTrack.ZIndex = 12
@@ -53056,7 +55071,7 @@ function CreateCombatTab()
             _itDesc.AutomaticSize = Enum.AutomaticSize.Y
             _itDesc.BackgroundTransparency = 1
             _itDesc.Text = "Elimina la animacin de carga. El cuchillo sale en el mismo frame del input."
-            _itDesc.TextColor3 = Color3.fromRGB(60, 190, 240)
+            _itDesc.TextColor3 = Color3.fromRGB(240, 183,  60)
             _itDesc.Font = Enum.Font.Montserrat
             _itDesc.TextSize = 10
             _itDesc.TextWrapped = true
@@ -53209,7 +55224,7 @@ function CreateCombatTab()
                 _asDesc.AutomaticSize = Enum.AutomaticSize.Y
                 _asDesc.BackgroundTransparency = 1
                 _asDesc.Text = "Apunala automaticamente a cualquier jugador en rango melee. Usa Kill + KnifeStabbed."
-                _asDesc.TextColor3 = Color3.fromRGB(60, 190, 240)
+                _asDesc.TextColor3 = Color3.fromRGB(240, 183,  60)
                 _asDesc.Font = Enum.Font.Montserrat
                 _asDesc.TextSize = 10
                 _asDesc.TextWrapped = true
@@ -53248,7 +55263,7 @@ function CreateCombatTab()
             _fsDesc.AutomaticSize = Enum.AutomaticSize.Y
             _fsDesc.BackgroundTransparency = 1
             _fsDesc.Text = "Rompe el cooldown entre cuchilladas. 10 = maximo. Usalo con Auto Slash."
-            _fsDesc.TextColor3 = Color3.fromRGB(60, 190, 240)
+            _fsDesc.TextColor3 = Color3.fromRGB(240, 183,  60)
             _fsDesc.Font = Enum.Font.Montserrat
             _fsDesc.TextSize = 10
             _fsDesc.TextWrapped = true
@@ -53284,7 +55299,7 @@ function CreateCombatTab()
             _ftDesc.AutomaticSize = Enum.AutomaticSize.Y
             _ftDesc.BackgroundTransparency = 1
             _ftDesc.Text = "Impulsa el TrailPart del cuchillo a velocidad de bala. Menos % = ms rpido. Casi imposible de esquivar."
-            _ftDesc.TextColor3 = Color3.fromRGB(60, 190, 240)
+            _ftDesc.TextColor3 = Color3.fromRGB(240, 183,  60)
             _ftDesc.Font = Enum.Font.Montserrat
             _ftDesc.TextSize = 10
             _ftDesc.TextWrapped = true
@@ -53310,7 +55325,7 @@ function CreateCombatTab()
             _kpDesc.AutomaticSize = Enum.AutomaticSize.Y
             _kpDesc.BackgroundTransparency = 1
             _kpDesc.Text = "Ajusta la prediccin del cuchillo. Us 'Auto Config' para valores recomendados segn tu ping."
-            _kpDesc.TextColor3 = Color3.fromRGB(60, 190, 240)
+            _kpDesc.TextColor3 = Color3.fromRGB(240, 183,  60)
             _kpDesc.Font = Enum.Font.Montserrat
             _kpDesc.TextSize = 10
             _kpDesc.TextWrapped = true
@@ -53448,7 +55463,7 @@ function CreateCombatTab()
             _gpDesc.AutomaticSize = Enum.AutomaticSize.Y
             _gpDesc.BackgroundTransparency = 1
             _gpDesc.Text = "Ajusta la prediccin de la gun. Us 'Auto Config' para valores recomendados segn tu ping."
-            _gpDesc.TextColor3 = Color3.fromRGB(60, 190, 240)
+            _gpDesc.TextColor3 = Color3.fromRGB(240, 183,  60)
             _gpDesc.Font = Enum.Font.Montserrat
             _gpDesc.TextSize = 10
             _gpDesc.TextWrapped = true
@@ -53751,7 +55766,7 @@ function CreateCombatTab()
             _ssInfo.Text = UserInputService.TouchEnabled
                 and "MOBILE: un solo toque en pantalla dispara al Murder automaticamente."
                 or  "PC: cada LMB se redirige al Murder/target mas cercano automaticamente."
-            _ssInfo.TextColor3 = Color3.fromRGB(140,200,255); _ssInfo.Font = Enum.Font.Montserrat
+            _ssInfo.TextColor3 = Color3.fromRGB(255,219,140); _ssInfo.Font = Enum.Font.Montserrat
             _ssInfo.TextSize = 10; _ssInfo.TextWrapped = true; _ssInfo.TextXAlignment = Enum.TextXAlignment.Left; _ssInfo.ZIndex = 13
             local _p=Instance.new("UIPadding",_ssInfo); _p.PaddingLeft=UDim.new(0,6); _p.PaddingRight=UDim.new(0,6); _p.PaddingTop=UDim.new(0,2); _p.PaddingBottom=UDim.new(0,4)
         end
@@ -53838,44 +55853,24 @@ function CreateCombatTab()
             if not tHRP then return end
             local hitParts = {tHRP, tHead or tHRP, tTors or tHRP}
 
-            -- PIERCE v4 WALL-BYPASS: teletransportarse junto al murder para que el servidor
-            -- no rechace el disparo por pared/distancia. La bala conecta desde cualquier
-            -- distancia atravesando TODAS las paredes del mapa. Volvemos instantaneamente.
-            local originalCF    = myHRP.CFrame
-            local savedAnchored = myHRP.Anchored
-            local tPos = tHRP.Position
-            local offset = (originalCF.Position - tPos)
-            local offsetMag = offset.Magnitude
-            local nearPos
-            if offsetMag < 0.01 then
-                nearPos = tPos + Vector3.new(0, 0, 1.5)
-            else
-                nearPos = tPos + (offset.Unit * 1.5)
-            end
-            -- Teletransportar junto al target silenciosamente
-            pcall(function()
-                myHRP.Anchored = true
-                myHRP.CFrame = CFrame.new(nearPos, tPos)
-            end)
-            -- Disparar desde ahi: el servidor ve HRP al lado del target -> sin wall check
-            local baseOrigin = nearPos + Vector3.new(0, 1.5, 0)
+            -- PIERCE BULLET v2 (logica del hub v2 docknight): NO hay teleport.
+            -- El origen del disparo se pone DENTRO del target (aimPos + 0.1 en Y), asi
+            -- el servidor ve origen y destino pegados y no puede aplicar wall check ni
+            -- chequeo de distancia. El personaje nunca se mueve: cero desync, cero
+            -- Anchored, cero riesgo de quedar trabado si el disparo falla a mitad.
             if CombatTabState then CombatTabState._saBypassHook = true end
             for i = 1, _pPens do
                 local hp = hitParts[(i-1) % #hitParts + 1]
                 if hp then
+                    -- PIERCE v2: origen desde dentro del target -> bypasea wall check
                     local aimPos    = hp.Position
-                    local originPos = baseOrigin
+                    local originPos = aimPos + Vector3.new(0, 0.1, 0)
                     local graCF, targetCF = _pBuildCF(originPos, aimPos)
                     if graCF then pcall(function() shootR:FireServer(graCF, targetCF) end) end
                 end
                 if i < _pPens then _w(0.016) end
             end
             if CombatTabState then CombatTabState._saBypassHook = false end
-            -- Volver instantaneamente a la posicion original
-            pcall(function()
-                myHRP.CFrame    = originalCF
-                myHRP.Anchored  = savedAnchored
-            end)
         end
 
         -- Boton SHOOT flotante -- misma estructura y animaciones que createBindableButton
@@ -54150,7 +56145,7 @@ function CreateCombatTab()
                             if desc.Name == "AuroraToggleRow_Pierce Bullet (Premium)" then
                                 local bg = desc:FindFirstChild("ToggleBackground")
                                 local knob = bg and bg:FindFirstChild("Knob")
-                                if knob then knob.BackgroundColor3 = Color3.fromRGB(255,0,0) end
+                                if knob then knob.BackgroundColor3 = Color3.fromRGB(255,174,0) end
                             end
                         end
                     end)
@@ -54177,7 +56172,7 @@ function CreateCombatTab()
             end
         end, false)
 
-        CreateNebulaSelector(pierceSec, "Target", {"Murder", "Nearest Player"}, "Murder", function(sel)
+        CreateZerqonSelector(pierceSec, "Target", {"Murder", "Nearest Player"}, "Murder", function(sel)
             local name = type(sel)=="table" and sel[1] or sel
             _pTargetMode = name=="Murder" and "murder" or "nearest"
             CreateCustomNotification("PIERCE BULLET", "Target -> " .. name, 1.5)
@@ -54205,7 +56200,7 @@ function CreateCombatTab()
                             if desc.Name == "AuroraToggleRow_Shoot Camuflado (Premium)" then
                                 local bg = desc:FindFirstChild("ToggleBackground")
                                 local knob = bg and bg:FindFirstChild("Knob")
-                                if knob then knob.BackgroundColor3 = Color3.fromRGB(255,0,0) end
+                                if knob then knob.BackgroundColor3 = Color3.fromRGB(255,174,0) end
                             end
                         end
                     end)
@@ -54358,11 +56353,11 @@ function CreateCombatTab()
         do
             local plb = Instance.new("TextLabel", apcSec)
             plb.Size = UDim2.new(1,-8,0,24)
-            plb.BackgroundColor3 = Color3.fromRGB(11,16,42)
+            plb.BackgroundColor3 = Color3.fromRGB(42,32,11)
             plb.BackgroundTransparency = 0.4
             plb.BorderSizePixel = 0; plb.ZIndex = 13
             plb.Text = "Ping: -- ms"
-            plb.TextColor3 = Color3.fromRGB( 50, 255, 180)
+            plb.TextColor3 = Color3.fromRGB(255, 190,  50)
             plb.FontFace = Font.fromEnum(Enum.Font.GothamBold)
             plb.TextSize = 13; plb.TextXAlignment = Enum.TextXAlignment.Center
             Instance.new("UICorner", plb).CornerRadius = UDim.new(0,6)
@@ -54374,9 +56369,11 @@ function CreateCombatTab()
                     pcall(function()
                         local ping = math.floor(statsService.Network.ServerStatsItem["Data Ping"]:GetValue())
                         _apcLastPing = ping
-                        local color = ping < 80 and Color3.fromRGB( 50, 255, 180)
+                        -- 3 tonos de oro (claro / ambar / bronce) para que el
+                        -- ping se siga leyendo de un vistazo sin salir del color del hub.
+                        local color = ping < 80 and Color3.fromRGB(255, 236, 170)
                                    or ping < 150 and Color3.fromRGB(255,200,0)
-                                   or Color3.fromRGB(255,60,60)
+                                   or Color3.fromRGB(205,124,10)
                         plb.TextColor3 = color
                         plb.Text = " Ping: " .. ping .. " ms"
                     end)
@@ -54386,7 +56383,7 @@ function CreateCombatTab()
             _apcGunLabel.Size = UDim2.new(1,-8,0,18)
             _apcGunLabel.BackgroundTransparency = 1; _apcGunLabel.ZIndex = 13
             _apcGunLabel.Text = "Gun comp: --"
-            _apcGunLabel.TextColor3 = Color3.fromRGB(140,200,255)
+            _apcGunLabel.TextColor3 = Color3.fromRGB(255,219,140)
             _apcGunLabel.FontFace = Font.fromEnum(Enum.Font.Code)
             _apcGunLabel.TextSize = 11; _apcGunLabel.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -54462,7 +56459,7 @@ function CreateCombatTab()
             infoLbl.Size = UDim2.new(1,-8,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
             infoLbl.BackgroundTransparency = 1; infoLbl.ZIndex = 13
             infoLbl.Text = "Ajusta automticamente:\n Gun: Latency Comp\n Knife: Ping Comp\n Tianca Pred (si est activa)"
-            infoLbl.TextColor3 = Color3.fromRGB(130,150,180)
+            infoLbl.TextColor3 = Color3.fromRGB(180,164,130)
             infoLbl.FontFace = Font.fromEnum(Enum.Font.Code)
             infoLbl.TextSize = 10; infoLbl.TextWrapped = true
             infoLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -54531,13 +56528,13 @@ function CreateCombatTab()
         do
             local keyFrame = Instance.new("Frame", skbSection)
             keyFrame.Size = UDim2.new(1, -8, 0, 40)
-            keyFrame.BackgroundColor3 = Color3.fromRGB(11, 16, 42)
+            keyFrame.BackgroundColor3 = Color3.fromRGB(42, 32, 11)
             keyFrame.BackgroundTransparency = 0.3
             keyFrame.BorderSizePixel = 0
             keyFrame.ZIndex = 13
             Instance.new("UICorner", keyFrame).CornerRadius = UDim.new(0, 8)
             local kfStroke = Instance.new("UIStroke", keyFrame)
-            kfStroke.Color = Color3.fromRGB(55, 70, 105)
+            kfStroke.Color = Color3.fromRGB(105, 89,  55)
             kfStroke.Thickness = 1.5
             kfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
@@ -54546,7 +56543,7 @@ function CreateCombatTab()
             kfLabel.Position = UDim2.new(0, 8, 0, 0)
             kfLabel.BackgroundTransparency = 1
             kfLabel.Text = "Tecla:"
-            kfLabel.TextColor3 = Color3.fromRGB(160, 175, 200)
+            kfLabel.TextColor3 = Color3.fromRGB(200, 187, 160)
             kfLabel.FontFace = Font.fromEnum(Enum.Font.GothamBold)
             kfLabel.TextSize = 12
             kfLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -54555,7 +56552,7 @@ function CreateCombatTab()
             local kfBtn = Instance.new("TextButton", keyFrame)
             kfBtn.Size = UDim2.new(0, 60, 0, 26)
             kfBtn.Position = UDim2.new(1, -68, 0.5, -13)
-            kfBtn.BackgroundColor3 = Color3.fromRGB(160, 20, 35)
+            kfBtn.BackgroundColor3 = Color3.fromRGB(160,116, 20)
             kfBtn.BackgroundTransparency = 0.3
             kfBtn.BorderSizePixel = 0
             kfBtn.Text = "Q"
@@ -54566,7 +56563,7 @@ function CreateCombatTab()
             kfBtn.ZIndex = 14
             Instance.new("UICorner", kfBtn).CornerRadius = UDim.new(0, 6)
             local kbStroke = Instance.new("UIStroke", kfBtn)
-            kbStroke.Color = Color3.fromRGB( 50, 255, 180)
+            kbStroke.Color = Color3.fromRGB(255, 190,  50)
             kbStroke.Thickness = 1.5
             kbStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
@@ -54590,15 +56587,15 @@ function CreateCombatTab()
                         if keyName == "Escape" or keyName == "Return" or keyName == "Tab" then
                             _listening = false
                             kfBtn.Text = tostring(_skbKey):gsub("Enum.KeyCode.", "")
-                            kfBtn.BackgroundColor3 = Color3.fromRGB(160, 20, 35)
-                            kbStroke.Color = Color3.fromRGB( 50, 255, 180)
+                            kfBtn.BackgroundColor3 = Color3.fromRGB(160,116, 20)
+                            kbStroke.Color = Color3.fromRGB(255, 190,  50)
                             pcall(function() _listenConn:Disconnect() end)
                             return
                         end
                         _skbKey = inp.KeyCode
                         kfBtn.Text = keyName
-                        kfBtn.BackgroundColor3 = Color3.fromRGB(160, 20, 35)
-                        kbStroke.Color = Color3.fromRGB( 50, 255, 180)
+                        kfBtn.BackgroundColor3 = Color3.fromRGB(160,116, 20)
+                        kbStroke.Color = Color3.fromRGB(255, 190,  50)
                         _listening = false
                         pcall(function() _listenConn:Disconnect() end)
                         if not UserInputService.TouchEnabled then CreateCustomNotification("SHOOT KEYBIND", "Tecla -> " .. keyName, 2) end
@@ -54808,7 +56805,7 @@ function CreateCombatTab()
         end, false)
 
         -- Selector: al cambiar condicin, reiniciar watchers si est activo
-        CreateNebulaSelector(scSection, "Shoot Condition", {
+        CreateZerqonSelector(scSection, "Shoot Condition", {
             "Shoot Wall Check",
             "View Knife Shoot",
             "Pick Gun Shoot"
@@ -54824,7 +56821,7 @@ function CreateCombatTab()
         do
             local descBox = Instance.new("Frame", scSection)
             descBox.Size = UDim2.new(1,-8,0,0); descBox.AutomaticSize = Enum.AutomaticSize.Y
-            descBox.BackgroundColor3 = Color3.fromRGB(11,16,42); descBox.BackgroundTransparency = 0.4
+            descBox.BackgroundColor3 = Color3.fromRGB(24, 19, 12); descBox.BackgroundTransparency = 0.4
             descBox.BorderSizePixel = 0; descBox.ZIndex = 13
             Instance.new("UICorner", descBox).CornerRadius = UDim.new(0,8)
             local pad = Instance.new("UIPadding", descBox)
@@ -54834,7 +56831,7 @@ function CreateCombatTab()
             dTxt.Size = UDim2.new(1,0,0,0); dTxt.AutomaticSize = Enum.AutomaticSize.Y
             dTxt.BackgroundTransparency = 1; dTxt.ZIndex = 14
             dTxt.Text = "Wall Check: dispara cuando el murder sale de cobertura\nKnife Shoot: dispara cuando equipa el knife\nGun Pick: dispara cuando agarras el GunDrop"
-            dTxt.TextColor3 = Color3.fromRGB(160,180,210); dTxt.FontFace = Font.fromEnum(Enum.Font.Code)
+            dTxt.TextColor3 = Color3.fromRGB(200, 178, 140); dTxt.FontFace = Font.fromEnum(Enum.Font.Code)
             dTxt.TextSize = 10; dTxt.TextWrapped = true; dTxt.TextXAlignment = Enum.TextXAlignment.Left
         end
     end
@@ -54977,7 +56974,7 @@ function CreateCombatTab()
         local _currentLabelSel = (CombatTabState.gunPredMode == "Default" or not CombatTabState.gunPredMode)
             and "Predeterminado"
             or ("? " .. CombatTabState.gunPredMode)
-        local _predSel = CreateNebulaSelector(predSection, "GunClient Mode", predModesLabeled,
+        local _predSel = CreateZerqonSelector(predSection, "GunClient Mode", predModesLabeled,
             _currentLabelSel,
             function(sel)
                 local raw  = type(sel) == "table" and sel[1] or sel
@@ -55081,7 +57078,9 @@ function CreateCombatTab()
                 _w(0.5)
                 pcall(function()
                     local ping = math.floor(statsService.Network.ServerStatsItem["Data Ping"]:GetValue())
-                    local color = ping < 80 and Color3.fromRGB(215, 118, 24) or ping < 150 and Color3.fromRGB(255,200,0) or Color3.fromRGB(255,60,60)
+                    -- mismos 3 tonos de oro que el otro label de ping:
+                    -- claro = bien, ambar = medio, bronce = mal.
+                    local color = ping < 80 and Color3.fromRGB(255,236,170) or ping < 150 and Color3.fromRGB(255,200,0) or Color3.fromRGB(205,124,10)
                     pingLabel.TextColor3 = color
  pingLabel.Text = " Ping en tiempo real: " .. ping .. " ms"
                 end)
@@ -55362,7 +57361,7 @@ function CreateCombatTab()
             if not LT.line then
                 local ln = Drawing.new("Line")
                 ln.Thickness = 2
-                ln.Color     = Color3.fromRGB(255, 50, 50)
+                ln.Color     = Color3.fromRGB(255,190, 50)
                 ln.Transparency = 0.15
                 ln.Visible   = false
                 LT.line = ln
@@ -55623,7 +57622,7 @@ function CreateCombatTab()
                 if not GU._btLiveLine then
                     local ln = Drawing.new("Line")
                     ln.Visible      = false
-                    ln.Color        = Color3.fromRGB(255, 40, 40)
+                    ln.Color        = Color3.fromRGB(255,187, 40)
                     ln.Thickness    = 2
                     ln.Transparency = 0.15
                     ln.ZIndex       = 5
@@ -55679,7 +57678,7 @@ function CreateCombatTab()
                 d.Size = UDim2.new(1, -8, 0, 0); d.AutomaticSize = Enum.AutomaticSize.Y
                 d.BackgroundTransparency = 1
                 d.Text = "Draws a red line in real time from your weapon to the Murder. Always visible while you have the gun equipped."
-                d.TextColor3 = Color3.fromRGB(255, 100, 100)
+                d.TextColor3 = Color3.fromRGB(255, 206, 100)
                 d.Font = Enum.Font.Montserrat; d.TextSize = 10
                 d.TextWrapped = true; d.TextXAlignment = Enum.TextXAlignment.Left; d.ZIndex = 13
                 local p = Instance.new("UIPadding", d)
@@ -55717,7 +57716,7 @@ function CreateCombatTab()
                 fr.Position            = UDim2.new(0.5, 0, 0.08, 0)
                 fr.Size                = UDim2.new(0, 260, 0, 0)
                 fr.AutomaticSize       = Enum.AutomaticSize.Y
-                fr.BackgroundColor3    = Color3.fromRGB(10, 10, 18)
+                fr.BackgroundColor3    = Color3.fromRGB(18, 15, 10)
                 fr.BackgroundTransparency = 0.12
                 fr.BorderSizePixel     = 0
                 fr.ZIndex              = 9801
@@ -55791,7 +57790,7 @@ function CreateCombatTab()
                 lbl.Size = UDim2.new(1, 0, 0, 0); lbl.AutomaticSize = Enum.AutomaticSize.Y
                 lbl.BackgroundTransparency = 1
                 lbl.Text = "Calculando..."
-                lbl.TextColor3 = Color3.fromRGB(200, 230, 255)
+                lbl.TextColor3 = Color3.fromRGB(255, 238, 200)
                 lbl.Font = Enum.Font.Montserrat; lbl.TextSize = 11
                 lbl.TextWrapped = true; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 9802
                 GU._trajLabel = lbl
@@ -55846,7 +57845,7 @@ function CreateCombatTab()
                 d.Size = UDim2.new(1, -8, 0, 0); d.AutomaticSize = Enum.AutomaticSize.Y
                 d.BackgroundTransparency = 1
                 d.Text = "Displays on screen: distance, target speed, estimated flight time and camera?target angle."
-                d.TextColor3 = Color3.fromRGB(130, 170, 220)
+                d.TextColor3 = Color3.fromRGB(220, 192, 130)
                 d.Font = Enum.Font.Montserrat; d.TextSize = 10
                 d.TextWrapped = true; d.TextXAlignment = Enum.TextXAlignment.Left; d.ZIndex = 13
                 local p = Instance.new("UIPadding", d)
@@ -55946,7 +57945,7 @@ function CreateCombatTab()
                 d.Size = UDim2.new(1, -8, 0, 0); d.AutomaticSize = Enum.AutomaticSize.Y
                 d.BackgroundTransparency = 1
                 d.Text = "Automatically equips the gun when the Murder enters the configured range. Requires gun in backpack."
-                d.TextColor3 = Color3.fromRGB(130, 170, 220)
+                d.TextColor3 = Color3.fromRGB(220, 192, 130)
                 d.Font = Enum.Font.Montserrat; d.TextSize = 10
                 d.TextWrapped = true; d.TextXAlignment = Enum.TextXAlignment.Left; d.ZIndex = 13
                 local p = Instance.new("UIPadding", d)
@@ -56132,7 +58131,7 @@ function CreateCombatTab()
             local _ssCont = Instance.new("Frame", _csSection)
             _ssCont.Name = "StudsRangeSlider"
             _ssCont.Size = UDim2.new(1, -4, 0, _ssSliderH)
-            _ssCont.BackgroundColor3 = Color3.fromRGB(30, 36, 105)
+            _ssCont.BackgroundColor3 = Color3.fromRGB(105, 81,  30)
             _ssCont.BackgroundTransparency = 0.75
             _ssCont.BorderSizePixel = 0
             _ssCont.ZIndex = 12
@@ -56147,7 +58146,7 @@ function CreateCombatTab()
             _ssLabel.Position = UDim2.new(0, 8, 0, 4)
             _ssLabel.BackgroundTransparency = 1
             _ssLabel.Text = " Rango Studs (studs)"
-            _ssLabel.TextColor3 = Color3.fromRGB(210, 240, 255)
+            _ssLabel.TextColor3 = Color3.fromRGB(255, 241, 210)
             _ssLabel.Font = Enum.Font.Montserrat
             _ssLabel.TextSize = 11
             _ssLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -56156,7 +58155,7 @@ function CreateCombatTab()
             local _ssValBox = Instance.new("TextLabel", _ssCont)
             _ssValBox.Size = UDim2.new(0, 46, 0, 18)
             _ssValBox.Position = UDim2.new(1, -52, 0, 2)
-            _ssValBox.BackgroundColor3 = Color3.fromRGB(10, 40, 28)
+            _ssValBox.BackgroundColor3 = Color3.fromRGB(40, 30, 10)
             _ssValBox.BackgroundTransparency = 0.75
             _ssValBox.BorderSizePixel = 0
             _ssValBox.Text = tostring(_ssVal)
@@ -56433,12 +58432,12 @@ function CreateCombatTab()
         -- -- Panel visual del keybind ---------------------------------------
         local _skPanel = Instance.new("Frame", _skSection)
         _skPanel.Size = UDim2.new(1, -8, 0, 38)
-        _skPanel.BackgroundColor3 = Color3.fromRGB(8, 30, 22)
+        _skPanel.BackgroundColor3 = Color3.fromRGB(30, 23,  8)
         _skPanel.BackgroundTransparency = 0.5
         _skPanel.BorderSizePixel = 0
         Instance.new("UICorner", _skPanel).CornerRadius = UDim.new(0, 8)
         local _skStroke = Instance.new("UIStroke", _skPanel)
-        _skStroke.Color = Color3.fromRGB( 50, 255, 180)
+        _skStroke.Color = Color3.fromRGB(255, 190,  50)
         _skStroke.Thickness = 1.5
         _skStroke.Transparency = 0.3
 
@@ -56447,7 +58446,7 @@ function CreateCombatTab()
         _skTitle.Position = UDim2.new(0, 10, 0, 0)
         _skTitle.BackgroundTransparency = 1
         _skTitle.Text = " Tecla de disparo SA"
-        _skTitle.TextColor3 = Color3.fromRGB(210, 240, 255)
+        _skTitle.TextColor3 = Color3.fromRGB(255, 241, 210)
         _skTitle.Font = Enum.Font.Montserrat
         _skTitle.TextSize = 12
         _skTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -56504,7 +58503,7 @@ function CreateCombatTab()
             else
                 SK.listening = true
                 _skKeyBtn.Text = "..."
-                _skKeyBtn.BackgroundColor3 = Color3.fromRGB(90, 35, 10)
+                _skKeyBtn.BackgroundColor3 = Color3.fromRGB(90, 65, 10)
                 _skKeyStroke.Color = Color3.fromRGB(255, 160, 60)
                 if not UserInputService.TouchEnabled then CreateCustomNotification(" SHOOT KEYBIND", "Presion una tecla para asignar", 2) end
             end
@@ -56516,7 +58515,7 @@ function CreateCombatTab()
         _skInfo.AutomaticSize = Enum.AutomaticSize.Y
         _skInfo.BackgroundTransparency = 1
         _skInfo.Text = "Presion la tecla asignada para disparar el Silent Aim manualmente."
-        _skInfo.TextColor3 = Color3.fromRGB(171, 15, 11)
+        _skInfo.TextColor3 = Color3.fromRGB(171,120, 11)
         _skInfo.Font = Enum.Font.Montserrat
         _skInfo.TextSize = 10
         _skInfo.TextWrapped = true
@@ -56747,7 +58746,7 @@ function CreateCombatTab()
             CreateCustomNotification(" SHOOT CONDITION", " Pick Gun Shoot ON  Esperando GunDrop", 2.5)
         end
 
-        -- -- Selector de condicin (NebulaSelector) -------------------------
+        -- -- Selector de condicin (ZerqonSelector) -------------------------
         local _scOptions = {"Desactivado", "Shoot Wall Check", "View Knife Shoot", "Pick Gun Shoot"}
         local _scSavedOpt = (_G._toggleStates and _G._toggleStates["__scCondition__"]) or "Desactivado"
         if type(_scSavedOpt) ~= "string" then _scSavedOpt = "Desactivado" end
@@ -56770,7 +58769,7 @@ function CreateCombatTab()
         _scHdr.Size = UDim2.new(1, -8, 0, 16)
         _scHdr.BackgroundTransparency = 1
         _scHdr.Text = " SHOOT CONDITION"
-        _scHdr.TextColor3 = Color3.fromRGB( 50, 255, 180)
+        _scHdr.TextColor3 = Color3.fromRGB(200, 160, 80)
         _scHdr.Font = Enum.Font.GothamBold
         _scHdr.TextSize = 10
         _scHdr.TextXAlignment = Enum.TextXAlignment.Left
@@ -56781,13 +58780,13 @@ function CreateCombatTab()
         -- -- Row prev/next -------------------------------------------------
         local _scRow = Instance.new("Frame", _scSection)
         _scRow.Size = UDim2.new(1, -8, 0, 34)
-        _scRow.BackgroundColor3 = Color3.fromRGB(8, 28, 20)
+        _scRow.BackgroundColor3 = Color3.fromRGB(26, 21, 13)
         _scRow.BackgroundTransparency = 0.5
         _scRow.BorderSizePixel = 0
         _scRow.ZIndex = 13
         Instance.new("UICorner", _scRow).CornerRadius = UDim.new(0, 8)
         local _scRowStroke = Instance.new("UIStroke", _scRow)
-        _scRowStroke.Color = Color3.fromRGB( 50, 255, 180)
+        _scRowStroke.Color = Color3.fromRGB(200, 160, 80)
         _scRowStroke.Thickness = 1.2
         _scRowStroke.Transparency = 0.4
 
@@ -56798,7 +58797,7 @@ function CreateCombatTab()
         _scPrev.BackgroundTransparency = 0.4
         _scPrev.BorderSizePixel = 0
         _scPrev.Text = ""
-        _scPrev.TextColor3 = Color3.fromRGB( 50, 255, 180)
+        _scPrev.TextColor3 = Color3.fromRGB(220, 185, 100)
         _scPrev.Font = Enum.Font.GothamBold
         _scPrev.TextSize = 18
         _scPrev.ZIndex = 14
@@ -56812,7 +58811,7 @@ function CreateCombatTab()
         _scNext.BackgroundTransparency = 0.4
         _scNext.BorderSizePixel = 0
         _scNext.Text = ""
-        _scNext.TextColor3 = Color3.fromRGB( 50, 255, 180)
+        _scNext.TextColor3 = Color3.fromRGB(220, 185, 100)
         _scNext.Font = Enum.Font.GothamBold
         _scNext.TextSize = 18
         _scNext.ZIndex = 14
@@ -56835,7 +58834,7 @@ function CreateCombatTab()
         local _scDescLabel = Instance.new("TextLabel", _scSection)
         _scDescLabel.Size = UDim2.new(1, -8, 0, 0)
         _scDescLabel.AutomaticSize = Enum.AutomaticSize.Y
-        _scDescLabel.BackgroundColor3 = Color3.fromRGB(8, 30, 22)
+        _scDescLabel.BackgroundColor3 = Color3.fromRGB(24, 19, 12)
         _scDescLabel.BackgroundTransparency = 0.5
         _scDescLabel.BorderSizePixel = 0
         _scDescLabel.ZIndex = 13
@@ -56845,7 +58844,7 @@ function CreateCombatTab()
         _scDescLabel.TextSize = 10
         Instance.new("UICorner", _scDescLabel).CornerRadius = UDim.new(0, 6)
         local _scDescStroke = Instance.new("UIStroke", _scDescLabel)
-        _scDescStroke.Color = Color3.fromRGB( 50, 255, 180)
+        _scDescStroke.Color = Color3.fromRGB(200, 160, 80)
         _scDescStroke.Thickness = 1
         _scDescStroke.Transparency = 0.5
         local _scDescPad = Instance.new("UIPadding", _scDescLabel)
@@ -56856,8 +58855,8 @@ function CreateCombatTab()
             _scLbl.Text = opt
             _scDescLabel.Text = _scDescTexts[opt] or ""
             _scDescLabel.TextColor3 = (opt == "Desactivado")
-                and Color3.fromRGB(160, 160, 160)
-                or Color3.fromRGB(210, 240, 255)
+                and Color3.fromRGB(170, 158, 138)
+                or Color3.fromRGB(235, 215, 175)
             if _G._toggleStates then _G._toggleStates["__scCondition__"] = opt end
             if opt == "Desactivado" then
                 _scStopAll()
@@ -56874,7 +58873,7 @@ function CreateCombatTab()
 
         -- Init visual
         _scDescLabel.Text = _scDescTexts[_scSavedOpt] or ""
-        _scDescLabel.TextColor3 = (_scSavedOpt == "Desactivado") and Color3.fromRGB(160,160,160) or Color3.fromRGB(210, 20, 15)
+        _scDescLabel.TextColor3 = (_scSavedOpt == "Desactivado") and Color3.fromRGB(160,160,160) or Color3.fromRGB(210,148, 15)
 
         -- FIX MOBILE: Activated funciona en touch y PC
         _scPrev.Activated:Connect(function()
@@ -56963,427 +58962,6 @@ function CreateDiscordFloatingBtn(hubGui, arrowToggleBtn, arrowLabel)
 -- (circulo y glow eliminados -- el boton de reapertura es ahora la calavera)
 end
 
-function CreateMinimizeButton(header, mainFrame, hubGui)
-minimizeBtn = Instance.new("TextButton", header)
-minimizeBtn.Size = UDim2.new(0, 38, 0, 38)
-minimizeBtn.Position = UDim2.new(1, -52, 0.5, -19)
-minimizeBtn.AnchorPoint = Vector2.new(0, 0.5)
-minimizeBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-minimizeBtn.BackgroundTransparency = 1
-minimizeBtn.Text = ""
-minimizeBtn.FontFace = Font.fromEnum(Enum.Font.Arimo)
-minimizeBtn.TextSize = 18
-minimizeBtn.TextColor3 = Color3.fromRGB(255,255,255)
-minimizeBtn.AutoButtonColor = false
-minimizeBtn.BorderSizePixel = 0
-minimizeBtn.ZIndex = 999
-Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0, 8)
-
-minStroke = Instance.new("UIStroke", minimizeBtn)
-minStroke.Color = Color3.fromRGB(255, 255, 255)
-minStroke.Thickness = 2.5
-minStroke.Transparency = 0.3
-
-minGlow = Instance.new("Frame", header); minGlow.Size=UDim2.new(0,0,0,0); minGlow.BackgroundTransparency=1
-arrowIcon = Instance.new("ImageLabel", minimizeBtn); arrowIcon.Size=UDim2.new(0,0,0,0); arrowIcon.BackgroundTransparency=1
-
-expandPanel = Instance.new("Frame", header); expandPanel.Size=UDim2.new(0,0,0,0); expandPanel.BackgroundTransparency=1; expandPanel.Visible=false
-infoBtn = Instance.new("TextButton", expandPanel); infoBtn.Size=UDim2.new(0,0,0,0); infoBtn.BackgroundTransparency=1; infoBtn.Text=""
-closeBtn = Instance.new("TextButton", expandPanel); closeBtn.Size=UDim2.new(0,0,0,0); closeBtn.BackgroundTransparency=1; closeBtn.Text=""
-
-minimizeBtn.MouseEnter:Connect(function()
-    TweenService:Create(minimizeBtn, TweenInfo.new(0.15), {BackgroundTransparency=0.75, BackgroundColor3=Color3.fromRGB(0,180,140)}):Play()
-end)
-minimizeBtn.MouseLeave:Connect(function()
-    TweenService:Create(minimizeBtn, TweenInfo.new(0.18), {BackgroundTransparency=1, BackgroundColor3=Color3.fromRGB(255,255,255)}):Play()
-end)
-
-minimizeBtn.Activated:Connect(function()
-    -- Cierre instant?neo (animaci?n eliminada)
-    hubGui.Enabled = false
-    _G._hubHidden  = true
-    -- BINDABLES: se mantienen visibles al cerrar (son ScreenGuis independientes)
-
-    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if not pg then return end
-    -- -- SKULL REOPENER ------------------------------------------------
-    local rGui = Instance.new("ScreenGui")
-    rGui.Name = "BypasHubReopener"
-    rGui.ResetOnSpawn = false
-    rGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    rGui.DisplayOrder = 9998
-    rGui.Parent = pg
-
-    local SKULL_COLOR = Color3.fromRGB(80, 80, 85)
-    local SKULL_SIZE  = 80
-
-    local skullMainFrame = Instance.new("Frame", rGui)
-    skullMainFrame.Name = "MainFrame"
-    skullMainFrame.BackgroundTransparency = 1
-    skullMainFrame.AnchorPoint = Vector2.new(0.5, 0)
-    skullMainFrame.Size = UDim2.new(0, SKULL_SIZE, 0, SKULL_SIZE)
-    skullMainFrame.Position = UDim2.new(0.5, 0, 0, 10)
-
-    local rBtn = Instance.new("ImageButton", skullMainFrame)
-    rBtn.Name = "SkullButton"
-    rBtn.AnchorPoint = Vector2.new(0.5, 0.5)
-    rBtn.Position = UDim2.new(0.5, 0, 0.5, 0)
-    rBtn.Size = UDim2.new(0, 0, 0, 0)  -- empieza en 0, aparece con tween
-    rBtn.BackgroundTransparency = 1
-    rBtn.BorderSizePixel = 0
-    rBtn.Image = "rbxassetid://100287275990702"
-    rBtn.ImageColor3 = Color3.fromRGB(210, 215, 220)
-    rBtn.ScaleType = Enum.ScaleType.Fit
-    rBtn.AutoButtonColor = false
-    rBtn.ZIndex = 100
-
-    -- Aparecer con animacion (igual que el otro reopener)
-    TweenService:Create(rBtn, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, SKULL_SIZE * 0.9, 0, SKULL_SIZE * 0.9)
-    }):Play()
-
-    local _rBtnStroke = Instance.new("UIStroke", rBtn)
-    _rBtnStroke.Color = Color3.fromRGB(180, 80, 255)
-    _rBtnStroke.Thickness = 2
-    _rBtnStroke.Transparency = 0.3
-
-    rBtn.MouseEnter:Connect(function()
-        TweenService:Create(rBtn, TweenInfo.new(0.2), {ImageTransparency = 0.3}):Play()
-        TweenService:Create(_rBtnStroke, TweenInfo.new(0.15), {Transparency = 0}):Play()
-    end)
-    rBtn.MouseLeave:Connect(function()
-        TweenService:Create(rBtn, TweenInfo.new(0.2), {ImageTransparency = 0}):Play()
-        TweenService:Create(_rBtnStroke, TweenInfo.new(0.18), {Transparency = 0.3}):Play()
-    end)
-
-    rBtn.Activated:Connect(function()
-        for i = 1, 12 do
-            local dot = Instance.new("Frame", skullMainFrame)
-            dot.Size = UDim2.new(0, 5, 0, 5)
-            dot.BackgroundColor3 = SKULL_COLOR
-            dot.BorderSizePixel = 0
-            dot.AnchorPoint = Vector2.new(0.5, 0.5)
-            dot.ZIndex = 101
-            Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-            local angle = math.rad(i * (360 / 12))
-            local dist = 50
-            dot.Position = UDim2.new(0.5, math.cos(angle) * dist, 0.5, math.sin(angle) * dist)
-            TweenService:Create(dot, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
-                Position = UDim2.new(0.5, 0, 0.5, 0),
-                BackgroundTransparency = 1
-            }):Play()
-            game:GetService("Debris"):AddItem(dot, 0.5)
-        end
-        local shrink = TweenService:Create(rBtn, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
-            Size = UDim2.new(0, 0, 0, 0),
-            ImageTransparency = 1
-        })
-        shrink:Play()
-        shrink.Completed:Connect(function()
-            rGui:Destroy()
-            -- FIX NOMBRE: hubGui se llama "f", no "BypasHubMM2"
-            -- FIX: buscar hub en PlayerGui, CoreGui Y gethui() para no llamar abrirHub() innecesariamente
-            local existingHub = LocalPlayer.PlayerGui:FindFirstChild("f")
-                             or game:GetService("CoreGui"):FindFirstChild("f")
-                             or (gethui and gethui():FindFirstChild("f"))
-            if existingHub and _G._hubHidden then
-                -- FIX TAMA?O REOPEN MOBILE: ajustar escala ANTES de Enabled=true
-                -- para que el hub nunca aparezca un solo frame al tama?o incorrecto.
-                if mainFrame then
-                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
-                    if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
-                    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-                    mainFrame.BackgroundTransparency = 1
-                    pcall(function() local bg = mainFrame:FindFirstChild("HubBackground"); if bg then bg.ImageTransparency = 0 end end)
-                    local _uiSc = mainFrame:FindFirstChildOfClass("UIScale")
-                    if _uiSc then _uiSc.Scale = (_getTargetScale and _getTargetScale() or 0.70) end
-                end
-                existingHub.Enabled = true
-                _G._hubHidden = false
-                -- FIX BINDABLES: restaurar con delay para no chocar con la animacion de cierre
-                task.spawn(function()
-                    task.wait(0.45)
-                    pcall(function() if _G._setAllBindablesVisible then _G._setAllBindablesVisible(true) end end)
-                end)
-            else
-                abrirHub()
-            end
-        end)
-    end)
-end)
-
-infoBtn.Activated:Connect(function()
-
-    CloseExpandPanel()
-    local infoGui = Instance.new("ScreenGui")
-    infoGui.Name = "BypasHubQuickInfo"
-    infoGui.ResetOnSpawn = false
-    infoGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    infoGui.DisplayOrder = 10000
-    infoGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-    local infoFrame = Instance.new("Frame", infoGui)
-    infoFrame.Size = UDim2.new(0, 380, 0, 0)
-    infoFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    infoFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    infoFrame.BackgroundColor3 = Color3.fromRGB(103, 103, 103)
-    infoFrame.BackgroundTransparency = 0.85
-    infoFrame.BorderSizePixel = 0
-    infoFrame.ZIndex = 100
-    Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0, 14)
-    local iStroke = Instance.new("UIStroke", infoFrame)
-    iStroke.Color = Color3.fromRGB(255, 50, 50)
-    iStroke.Thickness = 2
-    iStroke.Transparency = 0
-
-    local iLayout = Instance.new("UIListLayout", infoFrame)
-    iLayout.Padding = UDim.new(0, 6)
-    iLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    local iPad = Instance.new("UIPadding", infoFrame)
-    iPad.PaddingTop = UDim.new(0, 10)
-    iPad.PaddingBottom = UDim.new(0, 10)
-    iPad.PaddingLeft = UDim.new(0, 12)
-    iPad.PaddingRight = UDim.new(0, 12)
-
-    local function addRow(icon, key, value)
-        local row = Instance.new("Frame", infoFrame)
-        row.Size = UDim2.new(1, 0, 0, 32)
-        row.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
-        row.BackgroundTransparency = 0.9
-        row.BorderSizePixel = 0
-        row.ZIndex = 101
-        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 7)
-        local kLbl = Instance.new("TextLabel", row)
-        kLbl.Size = UDim2.new(0.45, 0, 1, 0)
-        kLbl.Position = UDim2.new(0, 8, 0, 0)
-        kLbl.BackgroundTransparency = 1
- kLbl.Text = icon .. " " .. key
-        kLbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
-        kLbl.TextSize = 11
-        kLbl.TextColor3 = ThemeColors.Primary
-        kLbl.TextXAlignment = Enum.TextXAlignment.Left
-        kLbl.ZIndex = 102
-        local vLbl = Instance.new("TextLabel", row)
-        vLbl.Size = UDim2.new(0.55, -8, 1, 0)
-        vLbl.Position = UDim2.new(0.45, 0, 0, 0)
-        vLbl.BackgroundTransparency = 1
- vLbl.Text = tostring(value)
-        vLbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
-        vLbl.TextSize = 11
-        vLbl.TextColor3 = Color3.fromRGB(230, 230, 235)
-        vLbl.TextXAlignment = Enum.TextXAlignment.Right
-        vLbl.TextTruncate = Enum.TextTruncate.AtEnd
-        vLbl.ZIndex = 102
-    end
-
-    local role = GetPlayerRole(LocalPlayer)
-    if false then -- placeholder
-        role = role
-    end
-    local region = "N/A"
-    pcall(function() region = game:GetService("LocalizationService").RobloxLocaleId end)
-    local ping = 0
-    pcall(function() ping = math.round(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()) end)
-
-    local titleRow = Instance.new("TextLabel", infoFrame)
-    titleRow.Size = UDim2.new(1, 0, 0, 28)
-    titleRow.BackgroundTransparency = 1
- titleRow.Text = " SERVER INFORMATION"
-    titleRow.FontFace = Font.fromEnum(Enum.Font.Arimo)
-    titleRow.TextSize = 14
-    titleRow.TextColor3 = Color3.fromRGB(255, 50, 50)
-    titleRow.TextXAlignment = Enum.TextXAlignment.Left
-    titleRow.ZIndex = 101
-
-    addRow("", "Server ID", tostring(game.JobId):sub(1, 18) .. "...")
-    addRow("", "Place ID", tostring(game.PlaceId))
-    addRow("", "Players", tostring(#_cachedPlayers) .. "/" .. tostring(Players.MaxPlayers))
-    addRow("", "Region", region)
-    addRow("", "Ping", tostring(ping) .. " ms")
-    addRow("", "Your Role", role)
-    addRow("", "Game Version", tostring(game.PlaceVersion))
-    addRow("", "HP", LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and math.floor(LocalPlayer.Character.Humanoid.Health) or "N/A")
-
-    local closeBtnRow = Instance.new("TextButton", infoFrame)
-    closeBtnRow.Size = UDim2.new(1, 0, 0, 34)
-    closeBtnRow.BackgroundColor3 = Color3.fromRGB(20, 5, 45)
-    closeBtnRow.BackgroundTransparency = 0.9
- closeBtnRow.Text = " Cerrar"
-    closeBtnRow.FontFace = Font.fromEnum(Enum.Font.Arimo)
-    closeBtnRow.TextSize = 12
-    closeBtnRow.TextColor3 = Color3.fromRGB(255, 120, 120)
-    closeBtnRow.AutoButtonColor = false
-    closeBtnRow.BorderSizePixel = 0
-    closeBtnRow.ZIndex = 101
-    Instance.new("UICorner", closeBtnRow).CornerRadius = UDim.new(0, 8)
-    closeBtnRow.Activated:Connect(function()
-        TweenService:Create(infoFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-            Size = UDim2.new(0, 380, 0, 0), BackgroundTransparency = 1
-        }):Play()
-        task.wait(0.25)
-        infoGui:Destroy()
-    end)
-
-    infoFrame.Size = UDim2.new(0, 380, 0, 0)
-    TweenService:Create(infoFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 380, 0, 420)
-    }):Play()
-end)
-
-closeBtn.Activated:Connect(function()
-
-    CloseExpandPanel()
-    -- FIX v12: detener weapons/knife al cerrar el hub para que los loops
-    -- Stepped no sigan corriendo con el selector en estado roto.
-    -- stopWeapon y stopKnife son locales dentro de CreateWeaponsTab,
-    -- se exponen en _G para poder llamarlos desde aqui.
-    pcall(function() if _G._stopWeapon then _G._stopWeapon() end end)
-    pcall(function() if _G._stopKnife  then _G._stopKnife()  end end)
-
-    local particleGui = Instance.new("ScreenGui")
-    particleGui.Name = "HubMinimizeParticles"
-    particleGui.ResetOnSpawn = false
-    particleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    particleGui.DisplayOrder = 99999
-    particleGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-    local centerX = mainFrame.AbsolutePosition.X + mainFrame.AbsoluteSize.X / 2
-    local centerY = mainFrame.AbsolutePosition.Y + mainFrame.AbsoluteSize.Y / 2
-
-    for i = 1, 40 do
-        local particle = Instance.new("Frame", particleGui)
-        local size = math.random(6, 18)
-        particle.Size = UDim2.new(0, size, 0, size)
-        particle.Position = UDim2.new(0, centerX - size/2, 0, centerY - size/2)
-        particle.BackgroundTransparency = 0
-        particle.BorderSizePixel = 0
-        particle.ZIndex = 100000
-        local colorOptions = {ThemeColors.Primary, ThemeColors.Aurora2, Color3.fromRGB(255,255,255)}
-        particle.BackgroundColor3 = colorOptions[math.random(1, #colorOptions)]
-        if math.random(1, 2) == 1 then
-            Instance.new("UICorner", particle).CornerRadius = UDim.new(1, 0)
-        else
-            Instance.new("UICorner", particle).CornerRadius = UDim.new(0, 3)
-        end
-        local angle = math.rad(math.random(0, 360))
-        local speed = math.random(150, 500)
-        local duration = math.random(5, 10) / 10
-        task.spawn(function()
-            TweenService:Create(particle, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Position = UDim2.new(0, centerX + math.cos(angle)*speed, 0, centerY + math.sin(angle)*speed),
-                BackgroundTransparency = 1, Size = UDim2.new(0, size * 0.2, 0, size * 0.2),
-                Rotation = math.random(0, 720)
-            }):Play()
-            task.wait(duration)
-            particle:Destroy()
-        end)
-    end
-
-    TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0), BackgroundTransparency = 1
-    }):Play()
-    task.wait(0.45)
-    -- FIX OPTIMIZACION: ocultar hub en vez de destruirlo
-    hubGui.Enabled = false
-    _G._hubHidden  = true
-    task.wait(0.6)
-    particleGui:Destroy()
-
-    -- -- SKULL REOPENER ------------------------------------------------
-    local skullReopenGui = Instance.new("ScreenGui")
-    skullReopenGui.Name = "BypasHubReopener"
-    skullReopenGui.ResetOnSpawn = false
-    skullReopenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    skullReopenGui.DisplayOrder = 9998
-    skullReopenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-    local SKULL_COLOR = Color3.fromRGB(80, 80, 85)
-    local SKULL_SIZE  = 80
-
-    local skullMainFrame = Instance.new("Frame", skullReopenGui)
-    skullMainFrame.Name = "MainFrame"
-    skullMainFrame.BackgroundTransparency = 1
-    skullMainFrame.AnchorPoint = Vector2.new(0.5, 0)
-    skullMainFrame.Size = UDim2.new(0, SKULL_SIZE, 0, SKULL_SIZE)
-    skullMainFrame.Position = UDim2.new(0.5, 0, 0, 10)  -- centro arriba, 10px del borde
-
-    local skullBtn = Instance.new("ImageButton", skullMainFrame)
-    skullBtn.Name = "SkullButton"
-    skullBtn.AnchorPoint = Vector2.new(0.5, 0.5)
-    skullBtn.Position = UDim2.new(0.5, 0, 0.5, 0)
-    skullBtn.Size = UDim2.new(0, 0, 0, 0)  -- empieza en 0, aparece con tween
-    skullBtn.BackgroundTransparency = 1
-    skullBtn.Image = "rbxassetid://100287275990702"
-    skullBtn.ImageColor3 = Color3.fromRGB(210, 215, 220)
-    skullBtn.ScaleType = Enum.ScaleType.Fit
-    skullBtn.ZIndex = 100
-
-    -- Aparecer con animacion
-    TweenService:Create(skullBtn, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, SKULL_SIZE * 0.9, 0, SKULL_SIZE * 0.9)
-    }):Play()
-
-    -- Hover
-    skullBtn.MouseEnter:Connect(function()
-        TweenService:Create(skullBtn, TweenInfo.new(0.2), {ImageTransparency = 0.3}):Play()
-    end)
-    skullBtn.MouseLeave:Connect(function()
-        TweenService:Create(skullBtn, TweenInfo.new(0.2), {ImageTransparency = 0}):Play()
-    end)
-
-    -- Click: animacion de puntitos + abrir hub
-    skullBtn.Activated:Connect(function()
-        -- Puntitos hacia el centro
-        for i = 1, 12 do
-            local dot = Instance.new("Frame", skullMainFrame)
-            dot.Size = UDim2.new(0, 5, 0, 5)
-            dot.BackgroundColor3 = SKULL_COLOR
-            dot.BorderSizePixel = 0
-            dot.AnchorPoint = Vector2.new(0.5, 0.5)
-            Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-            local angle = math.rad(i * (360 / 12))
-            local dist = 50
-            dot.Position = UDim2.new(0.5, math.cos(angle) * dist, 0.5, math.sin(angle) * dist)
-            dot.ZIndex = 101
-            TweenService:Create(dot, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
-                Position = UDim2.new(0.5, 0, 0.5, 0),
-                BackgroundTransparency = 1
-            }):Play()
-            game:GetService("Debris"):AddItem(dot, 0.5)
-        end
-        -- Encoger calavera
-        local shrink = TweenService:Create(skullBtn, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
-            Size = UDim2.new(0, 0, 0, 0),
-            ImageTransparency = 1
-        })
-        shrink:Play()
-        shrink.Completed:Connect(function()
-            skullReopenGui:Destroy()
-            -- FIX NOMBRE: hubGui se llama "f", no "BypasHubMM2"
-            -- FIX: buscar hub en PlayerGui, CoreGui Y gethui() para no llamar abrirHub() innecesariamente
-            local existingHub = LocalPlayer.PlayerGui:FindFirstChild("f")
-                             or game:GetService("CoreGui"):FindFirstChild("f")
-                             or (gethui and gethui():FindFirstChild("f"))
-            if existingHub and _G._hubHidden then
-                -- FIX TAMA?O REOPEN MOBILE: ajustar escala ANTES de Enabled=true
-                if mainFrame then
-                    local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
-                    if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
-                    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-                    mainFrame.BackgroundTransparency = 1
-                    pcall(function() local bg = mainFrame:FindFirstChild("HubBackground"); if bg then bg.ImageTransparency = 0 end end)
-                    local _uiSc = mainFrame:FindFirstChildOfClass("UIScale")
-                    if _uiSc then _uiSc.Scale = (_getTargetScale and _getTargetScale() or 0.70) end
-                end
-                existingHub.Enabled = true
-                _G._hubHidden = false
-            else
-                abrirHub()
-            end
-        end)
-    end)
-end)
-end
 
 function CreateServerPanel(mainFrame)
 serverPanel = Instance.new("Frame", mainFrame)
@@ -57408,7 +58986,7 @@ Instance.new("UICorner", spinGlow).CornerRadius = UDim.new(0, 16)
 spinIconFrame = Instance.new("Frame", serverPanel)
 spinIconFrame.Size = UDim2.new(0, 60, 0, 60)
 spinIconFrame.Position = UDim2.new(0, 0, 0, 0)
-spinIconFrame.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+spinIconFrame.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
 spinIconFrame.BackgroundTransparency = 1
 spinIconFrame.BorderSizePixel = 0
 spinIconFrame.ZIndex = 21
@@ -57422,7 +59000,7 @@ spinStroke.Transparency = 0
 spinStrokeGrad = Instance.new("UIGradient", spinStroke)
 spinStrokeGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0,   ThemeColors.Primary),
-    ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 50, 50)),
+    ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255,190, 50)),
     ColorSequenceKeypoint.new(0.66, Color3.fromRGB(255, 255, 255)),
     ColorSequenceKeypoint.new(1,   ThemeColors.Primary),
 })
@@ -57433,7 +59011,7 @@ spinImage.Size = UDim2.new(1, -8, 1, -8)
 spinImage.Position = UDim2.new(0, 4, 0, 4)
 spinImage.BackgroundTransparency = 1
 spinImage.Image = "rbxassetid://100287275990702"
-spinImage.ImageColor3 = Color3.fromRGB(210, 215, 220)
+spinImage.ImageColor3 = Color3.fromRGB(220, 217, 210)
 spinImage.ScaleType = Enum.ScaleType.Fit
 spinImage.ZIndex = 22
 
@@ -57592,13 +59170,13 @@ do
     wlFrame.Name = "WhitelistFrame"
     wlFrame.Size = UDim2.new(0, 195, 0, 38)
     wlFrame.Position = UDim2.new(0, 75, 0, 118)
-    wlFrame.BackgroundColor3 = Color3.fromRGB(28, 32, 95)
+    wlFrame.BackgroundColor3 = Color3.fromRGB(95, 74, 28)
     wlFrame.BackgroundTransparency = 0.45
     wlFrame.BorderSizePixel = 0
     wlFrame.ZIndex = 22
     Instance.new("UICorner", wlFrame).CornerRadius = UDim.new(0, 8)
     local wlStroke = Instance.new("UIStroke", wlFrame)
-    wlStroke.Color = Color3.fromRGB( 50, 255, 180)
+    wlStroke.Color = Color3.fromRGB(255, 190,  50)
     wlStroke.Thickness = 1
     wlStroke.Transparency = 0.5
 
@@ -57610,7 +59188,7 @@ do
     wlTitleLbl.Text = "Whitelist Duration:"
     wlTitleLbl.FontFace = Font.fromEnum(Enum.Font.Montserrat)
     wlTitleLbl.TextSize = 10
-    wlTitleLbl.TextColor3 = Color3.fromRGB(140, 155, 200)
+    wlTitleLbl.TextColor3 = Color3.fromRGB(200, 181, 140)
     wlTitleLbl.TextXAlignment = Enum.TextXAlignment.Left
     wlTitleLbl.ZIndex = 23
 
@@ -57622,7 +59200,7 @@ do
     wlTimeLbl.BackgroundTransparency = 1
     wlTimeLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
     wlTimeLbl.TextSize = 10
-    wlTimeLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
+    wlTimeLbl.TextColor3 = Color3.fromRGB(255, 200,  80)
     wlTimeLbl.TextXAlignment = Enum.TextXAlignment.Right
     wlTimeLbl.ZIndex = 23
 
@@ -57630,7 +59208,7 @@ do
     local wlTrack = Instance.new("Frame", wlFrame)
     wlTrack.Size = UDim2.new(1, -16, 0, 6)
     wlTrack.Position = UDim2.new(0, 8, 1, -12)
-    wlTrack.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+    wlTrack.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
     wlTrack.BackgroundTransparency = 0.3
     wlTrack.BorderSizePixel = 0
     wlTrack.ZIndex = 23
@@ -57640,16 +59218,16 @@ do
     local wlFill = Instance.new("Frame", wlTrack)
     wlFill.Name = "WLFill"
     wlFill.Size = UDim2.new(1, 0, 1, 0)
-    wlFill.BackgroundColor3 = Color3.fromRGB(80, 255, 140)
+    wlFill.BackgroundColor3 = Color3.fromRGB(255, 200,  80)
     wlFill.BackgroundTransparency = 0
     wlFill.BorderSizePixel = 0
     wlFill.ZIndex = 24
     Instance.new("UICorner", wlFill).CornerRadius = UDim.new(1, 0)
     local wlFillGrad = Instance.new("UIGradient", wlFill)
     wlFillGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(80, 100, 240)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 255, 140)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB( 50, 255, 180)),
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(240, 189,  80)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 200,  80)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(255, 190,  50)),
     })
 
     -- Actualizar la barra y el tiempo
@@ -57676,14 +59254,14 @@ do
             TweenService:Create(wlFill, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
                 Size = UDim2.new(pct, 0, 1, 0)
             }):Play()
-            -- Color de la barra: verde si >50%, amarillo si >20%, rojo si <20%
+            -- Color de la barra: claro si >50%, ambar si >20%, bronce si <20%
             local barColor
             if pct > 0.5 then
-                barColor = Color3.fromRGB(80, 255, 140)
+                barColor = Color3.fromRGB(255,236,170)   -- queda mucho
             elseif pct > 0.2 then
-                barColor = Color3.fromRGB(255, 200, 60)
+                barColor = Color3.fromRGB(255,200,0)   -- queda medio
             else
-                barColor = Color3.fromRGB(255,   0,  40)
+                barColor = Color3.fromRGB(205,124,10)   -- se esta acabando
             end
             wlFill.BackgroundColor3 = barColor
             wlTimeLbl.TextColor3 = barColor
@@ -57722,7 +59300,7 @@ end)
 serverInfoBox = Instance.new("Frame", serverPanel)
 serverInfoBox.Size = UDim2.new(1, -80, 0, 115)
 serverInfoBox.Position = UDim2.new(0, 75, 0, 0)
-serverInfoBox.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+serverInfoBox.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
 serverInfoBox.BackgroundTransparency = 0.75
 serverInfoBox.BorderSizePixel = 0
 serverInfoBox.ZIndex = 21
@@ -57805,7 +59383,7 @@ for idx, info in ipairs(siData) do
     local cell = Instance.new("Frame", siGrid)
     cell.Size = UDim2.new(0.5, -6, 0, 34)
     cell.Position = UDim2.new(col * 0.5, col == 0 and 0 or 6, 0, row * 38)
-    cell.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+    cell.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
     cell.BackgroundTransparency = 1
     cell.BorderSizePixel = 0
     cell.ZIndex = 23
@@ -57829,7 +59407,7 @@ for idx, info in ipairs(siData) do
  cellVal.Text = info[3]
     cellVal.FontFace = Font.fromEnum(Enum.Font.Montserrat)
     cellVal.TextSize = 10
-    cellVal.TextColor3 = Color3.fromRGB(230, 230, 255)
+    cellVal.TextColor3 = Color3.fromRGB(255, 247, 230)
     cellVal.TextTruncate = Enum.TextTruncate.AtEnd
     cellVal.TextXAlignment = Enum.TextXAlignment.Left
     cellVal.ZIndex = 24
@@ -57890,7 +59468,7 @@ rolesLayout.SortOrder = Enum.SortOrder.LayoutOrder
 statsBar = Instance.new("Frame", serverPanel)
 statsBar.Size = UDim2.new(1, 0, 0, 36)
 statsBar.Position = UDim2.new(0, 0, 0, 270)
-statsBar.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+statsBar.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
 statsBar.BackgroundTransparency = 0.75
 statsBar.BorderSizePixel = 0
 statsBar.ZIndex = 21
@@ -58015,7 +59593,7 @@ function RefreshRoles()
 
         local card = Instance.new("Frame", rolesScroll)
         card.Size = UDim2.new(0, 90, 0, 84)
-        card.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+        card.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
         card.BackgroundTransparency = 1
         card.BorderSizePixel = 0
         card.ZIndex = 23
@@ -58037,7 +59615,7 @@ function RefreshRoles()
         local avatarFrame = Instance.new("Frame", card)
         avatarFrame.Size = UDim2.new(0, 44, 0, 44)
         avatarFrame.Position = UDim2.new(0.5, -22, 0, 7)
-        avatarFrame.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+        avatarFrame.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
         avatarFrame.BackgroundTransparency = 1
         avatarFrame.BorderSizePixel = 0
         avatarFrame.ZIndex = 24
@@ -58065,7 +59643,7 @@ function RefreshRoles()
  nameLabel.Text = player.Name
         nameLabel.FontFace = Font.fromEnum(Enum.Font.Montserrat)
         nameLabel.TextSize = 9
-        nameLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
+        nameLabel.TextColor3 = Color3.fromRGB(255, 250, 240)
         nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
         nameLabel.TextXAlignment = Enum.TextXAlignment.Center
         nameLabel.ZIndex = 24
@@ -58108,14 +59686,14 @@ restoreBtn.ZIndex = 21
 Instance.new("UICorner", restoreBtn).CornerRadius = UDim.new(0, 10)
 
 restoreBtnStroke = Instance.new("UIStroke", restoreBtn)
-restoreBtnStroke.Color = Color3.fromRGB(255, 50, 50)
+restoreBtnStroke.Color = Color3.fromRGB(255,190, 50)
 restoreBtnStroke.Thickness = 2.5
 restoreBtnStroke.Transparency = 0.35
 
 restoreBtnGrad = Instance.new("UIGradient", restoreBtn)
 restoreBtnGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0,   ThemeColors.Primary),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 50, 50)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255,190, 50)),
     ColorSequenceKeypoint.new(1,   ThemeColors.Primary),
 })
 restoreBtnGrad.Rotation = 90
@@ -58483,17 +60061,17 @@ function _IKS_startMonitor()
     if not char then return end
 
     local wspConn = workspace.DescendantAdded:Connect(function(obj)
-        if not InvisibleKnifeSystem.enabled then return end
+        -- FIX v24: guard completo para sobrevivir re-ejecuciones y estados invalidos
+        if not InvisibleKnifeSystem or not InvisibleKnifeSystem.enabled then return end
+        if not obj or not obj.Parent then return end
         if obj.Name ~= "ThrowingKnife" then return end
         if not (obj:IsA("Model") or obj:IsA("BasePart")) then return end
 
         -- Si Knife SA esta activo, no tocar nada
         if KnifeSAState and KnifeSAState.enabled then return end
 
-        -- Si el sistema Throwing Knife esta activo, el ThrowingKnife que aparece
-        -- en workspace ES del jugador local (vos sos el murderer que lo lanzo)
-        -- No ocultarlo nunca en ese caso
-        if _TK_ENABLED then return end
+        -- Si el sistema Throwing Knife esta activo
+        if (_TK_ENABLED or _G._TK_ENABLED) then return end
 
         -- Identificar si es del propio jugador por posicion
         local isOwn = false
@@ -58506,17 +60084,21 @@ function _IKS_startMonitor()
                 local part = kv or (obj:IsA("BasePart") and obj)
                 if part and (part.Position - myHRP.Position).Magnitude < 15 then isOwn = true; return end
             end
-            local dt = tick() - InvisibleKnifeSystem.lastThrowTime
+            local dt = tick() - (InvisibleKnifeSystem and InvisibleKnifeSystem.lastThrowTime or 0)
             if dt < 2.0 then isOwn = true end
         end)
         if isOwn then return end
 
-        task.wait(0.016)
-        local dt2 = tick() - InvisibleKnifeSystem.lastThrowTime
+        -- FIX v24: proteger el yield y re-verificar estado despues
+        pcall(function() task.wait(0.016) end)
+        if not InvisibleKnifeSystem or not InvisibleKnifeSystem.enabled then return end
+
+        local dt2 = tick() - (InvisibleKnifeSystem.lastThrowTime or 0)
         if dt2 < 2.0 then return end
 
-        _IKS_hide(obj)
-        _IKS_monitorLife(obj)
+        -- FIX v24: verificar que las funciones existen antes de llamarlas
+        if type(_IKS_hide) == "function" then pcall(_IKS_hide, obj) end
+        if type(_IKS_monitorLife) == "function" then pcall(_IKS_monitorLife, obj) end
     end)
     table.insert(InvisibleKnifeSystem.connections, wspConn)
 
@@ -58617,6 +60199,33 @@ function ToggleInvisibleKnife(enabled)
 end
 
 _logOK("Nuevos sistemas cargados: Visual Danger Knife + Invisible Knife")
+-- ZERQON SHAPE HELPER GLOBAL
+-- Must exist before abrirHub() because tabs are built inside that function.
+local _ZQ_SHAPE_ID_GLOBAL = "rbxassetid://118465446710889"
+local function _zqShapeGlobal(parent, name, zIndex)
+    if not parent or not parent.Parent then return nil end
+    local img = parent:FindFirstChild(name)
+    if not img then
+        img = Instance.new("ImageLabel")
+        img.Name = name
+        img.Parent = parent
+        img.Position = UDim2.fromScale(0, 0)
+        img.Size = UDim2.fromScale(1, 1)
+        img.BackgroundTransparency = 1
+        img.BorderSizePixel = 0
+        img.ScaleType = Enum.ScaleType.Stretch
+        img.Active = false
+    end
+    img.Image = _ZQ_SHAPE_ID_GLOBAL
+    img.ImageTransparency = 0
+    img.Visible = true
+    img.ZIndex = zIndex or (parent.ZIndex or 1)
+    return img
+end
+
+-- Alias visible to abrirHub(). The skin block later has its own local helper.
+_zqShape = _zqShapeGlobal
+
 function abrirHub()
     -- ================================================================
     -- == GUARD DE DOBLE EJECUCION
@@ -58661,6 +60270,11 @@ function abrirHub()
     local playerGui = LocalPlayer:WaitForChild("PlayerGui")
     local existingHub = playerGui:FindFirstChild("f") or game:GetService("CoreGui"):FindFirstChild("f")
     if existingHub and _G._hubHidden then
+        -- FIX v56: devolver el texto que apago la animacion de cierre. Sin
+        -- esto el hub reaparece entero pero sin un solo caracter visible.
+        pcall(function()
+            if _G._ZQ_RestoreFade then _G._ZQ_RestoreFade() end
+        end)
         -- FIX Z-LOGO: destruir cualquier reopener GUI que haya quedado flotando
         for _, child in ipairs(playerGui:GetChildren()) do
             if child:IsA("ScreenGui") and (
@@ -58673,9 +60287,12 @@ function abrirHub()
         end
         -- FIX TAMA?O REOPEN MOBILE: ajustar tama?o y escala ANTES de Enabled=true
         -- para que el hub nunca aparezca ni un frame al tama?o incorrecto.
-        local _targetSc = (_getTargetScale and _getTargetScale() or 0.70)
+        local _scaleFn2  = (type(_getTargetScale) == "function" and _getTargetScale)
+                        or (type(_G._getTargetScale) == "function" and _G._getTargetScale)
+        local _targetSc  = (_scaleFn2 and _scaleFn2()) or 0.70
         if mainFrame then
-            local _ns = (_getHubSize and _getHubSize()) or UDim2.new(0, 780, 0, 460)
+            local _getHubSizeFn = (type(_getHubSize) == "function" and _getHubSize) or nil
+            local _ns = (_getHubSizeFn and _getHubSizeFn()) or UDim2.new(0, 1100, 0, 640)
             if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
             mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
             mainFrame.BackgroundTransparency = 1
@@ -58697,12 +60314,8 @@ function abrirHub()
             task.wait(0.45)
             pcall(function() if _G._setAllBindablesVisible then _G._setAllBindablesVisible(true) end end)
         end)
-        -- FIX: recargar el tab activo para restaurar bindables y botones
-        task.defer(function()
-            if _G._reloadActiveTab then
-                pcall(_G._reloadActiveTab)
-            end
-        end)
+        -- FIX v25: no reconstruir el tab activo al reabrir.
+        -- Los tabs se mantienen cacheados y SetActiveTab controla su visibilidad.
         return
     end
     _G._hubReady   = false  -- resetear al (re)abrir
@@ -58710,6 +60323,13 @@ function abrirHub()
     _G._hubRunning = true   -- bloquear nuevas llamadas mientras se construye este hub
     -- FIX LAG: resetear el flag del loop homePanel para que el nuevo hub pueda iniciarlo
     _G._homePanelLoopActive = false
+    -- FIX v24: limpiar conexiones IKS colgantes de ejecuciones anteriores
+    -- Evita que callbacks de workspace.DescendantAdded del run anterior crasheen
+    pcall(function()
+        if type(cleanupInvisibleKnife) == "function" then
+            cleanupInvisibleKnife()
+        end
+    end)
 
     -- FIX Z-LOGO: destruir reopener GUIs antes de abrir el hub
     -- (si no se destruyen, quedan flotando visibles mientras el hub esta abierto)
@@ -58798,428 +60418,24 @@ print("3: mainFrame creado")
 -- Layout relativo: hub 900x480, UIScale 80%, centrado en pantalla
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
--- mainFrame con fondo transparente para ver el juego detras
-mainFrame.BackgroundColor3 = Color3.fromRGB(24, 54, 122)
-mainFrame.BackgroundTransparency = 0.22
+-- ZERQON THEME: fondo transparente para que el VideoFrame sea visible
+-- El color se conserva como fallback por si el video no carga
+mainFrame.BackgroundColor3 = Color3.fromRGB(10, 8, 6)
+mainFrame.BackgroundTransparency = 1   -- transparente: el VideoFrame (ZIndex=1) actua como fondo
 mainFrame.BorderSizePixel = 0
 mainFrame.ClipsDescendants = true
 -- FIX MOBILE CRITICO: Active=false hace que el frame NO absorba los toques del juego
 -- Sin esto, el frame bloquea el joystick y el boton de salto en Delta/mobile
 mainFrame.Active = false
-Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 18)
 
 -- ================================================================
--- == FONDO HUB v3 ? Aurora Liquida + Particulas + Color Cycle
--- Capas:
---   1. Imagen de fondo original (dock nocturno) con transparencia leve
---   2. Aurora: 3 franjas de color que rotan y cambian de tono en ciclo
---   3. Particulas: puntos de luz que suben y se desvanecen
---   4. Vi?eta perimetral con pulso suave
---   5. Shimmer diagonal que barre cada 8s
+-- == ZERQON VIDEO BACKGROUND v4
+-- Video: rbxassetid://5670799859 (SurfaceGui + VideoFrame en Part 3D)
 -- ================================================================
-do
-    mainFrame.BackgroundTransparency = 1
-
-    -- -- CAPA 1: imagen de fondo con transparencia leve --------------
-    local hubBgImage = Instance.new("ImageLabel", mainFrame)
-    hubBgImage.Name            = "HubBackground"
-    hubBgImage.Size            = UDim2.new(1, 0, 1, 0)
-    hubBgImage.Position        = UDim2.new(0, 0, 0, 0)
-    hubBgImage.ZIndex          = 1
-    hubBgImage.Image           = ""
-    hubBgImage.ImageTransparency = 1   -- sin imagen de fondo
-    hubBgImage.BackgroundTransparency = 1
-    hubBgImage.ScaleType       = Enum.ScaleType.Stretch
-    hubBgImage.ImageRectSize   = Vector2.new(780, 460)
-    hubBgImage.ImageRectOffset = Vector2.new(0, 0)
-    Instance.new("UICorner", hubBgImage).CornerRadius = UDim.new(0, 8)
-    _G._hubBgMainImageRef = hubBgImage
-
-    local _bgAnimRunning = false   -- MODIFICADO: animaciones del fondo desactivadas
-    _G._hubBgAnimStop = function() _bgAnimRunning = false end
-
-    -- ================================================================
-    -- ANIMACION DE FONDO v5 - NEBULA CINEMATICA CON ORBS PULSANTES
-    -- Capas de animacion:
-    --   Loop A: parallax suave con zoom cinematico (keyframes)
-    --   Loop B: micro-deriva organica frame-a-frame
-    --   Loop C: orbs de luz pulsantes que flotan (glassmorphism)
-    --   Loop D: aurora de 4 franjas con ciclo de color vivo
-    --   Loop E: particulas triple con fade-in/out suave
-    -- ================================================================
-
-    -- Estado compartido entre loops A y B
-    local _bgOx, _bgOy = 0, 0
-    local _bgSx, _bgSy = 900, 480
-
-    -- LOOP A: Tween de keyframes (parallax cinematico)
-    task.spawn(function()
-        local _kf = {
-            {ox =   0, oy =   0, sx = 900, sy = 480, t =  0, e = Enum.EasingStyle.Sine},
-            {ox =  15, oy =   8, sx = 855, sy = 456, t = 12, e = Enum.EasingStyle.Cubic},
-            {ox =  45, oy =  20, sx = 815, sy = 435, t = 10, e = Enum.EasingStyle.Sine},
-            {ox =  85, oy =  35, sx = 788, sy = 420, t =  9, e = Enum.EasingStyle.Quad},
-            {ox = 105, oy =  55, sx = 778, sy = 415, t =  8, e = Enum.EasingStyle.Sine},
-            {ox =  72, oy =  42, sx = 808, sy = 430, t = 10, e = Enum.EasingStyle.Cubic},
-            {ox =  32, oy =  18, sx = 848, sy = 452, t = 11, e = Enum.EasingStyle.Sine},
-            {ox =   4, oy =   4, sx = 888, sy = 475, t = 12, e = Enum.EasingStyle.Quart},
-        }
-        local _idx = 1
-        while _bgAnimRunning and hubBgImage and hubBgImage.Parent do
-            local _nxt = (_idx % (#_kf - 1)) + 2
-            if _idx == 1 then _nxt = 2 end
-            local _to = _kf[_nxt]
-            _bgOx = _to.ox; _bgOy = _to.oy
-            _bgSx = _to.sx; _bgSy = _to.sy
-            local _ti = TweenInfo.new(_to.t, _to.e, Enum.EasingDirection.InOut)
-            TweenService:Create(hubBgImage, _ti, {
-                ImageRectOffset = Vector2.new(_to.ox, _to.oy),
-                ImageRectSize   = Vector2.new(_to.sx, _to.sy),
-            }):Play()
-            -- El fondo respira con el movimiento (transparencia fija, sin pulso)
-            task.wait(_to.t)
-            _idx = _nxt
-            if _nxt == #_kf then _idx = 1 end
-        end
-    end)
-
-    -- LOOP B: Micro-deriva organica con doble seno
-    task.spawn(function()
-        local _t = 0
-        local _SPEED_X = 0.22
-        local _SPEED_Y = 0.17
-        local _AMP_X   = 5
-        local _AMP_Y   = 3.5
-        while _bgAnimRunning and hubBgImage and hubBgImage.Parent do
-            task.wait(0.05)
-            _t = _t + 0.05
-            local _driftX = math.sin(_t * _SPEED_X * math.pi * 2) * _AMP_X
-                          + math.sin(_t * _SPEED_X * 1.618 * math.pi * 2) * (_AMP_X * 0.35)
-            local _driftY = math.cos(_t * _SPEED_Y * math.pi * 2) * _AMP_Y
-                          + math.cos(_t * _SPEED_Y * 1.414 * math.pi * 2) * (_AMP_Y * 0.30)
-            local _newOx = math.clamp(_bgOx + _driftX, 0, 120)
-            local _newOy = math.clamp(_bgOy + _driftY, 0, 60)
-            pcall(function()
-                hubBgImage.ImageRectOffset = Vector2.new(_newOx, _newOy)
-                -- Tinte HSV muy sutil (no cambia el color principal, solo tono calido/frio)
-                local _hue = (_t * 0.012) % 1
-                hubBgImage.ImageColor3 = Color3.fromHSV(_hue, 0.12, 0.96)
-            end)
-        end
-    end)
-
-    -- ================================================================
-    -- LOOP C: ORBS DE LUZ PULSANTES (glassmorphism flotante)
-    -- 5 esferas de luz difusa que flotan, escalan y cambian de color
-    -- dando el efecto "nebula/space" que no se nota el fondo solido
-    -- ================================================================
-    local _orbDefs = {
-        -- {xPos, yPos, size, colorHue, speed, phaseOffset}
-        {x=0.08, y=0.15, sz=200, hue=0.68, spd=0.07,  ph=0.0 },  -- violeta esquina TL
-        {x=0.75, y=0.05, sz=170, hue=0.58, spd=0.055, ph=1.2 },  -- azul esquina TR
-        {x=0.50, y=0.55, sz=230, hue=0.72, spd=0.045, ph=2.5 },  -- purpura centro
-        {x=0.20, y=0.75, sz=150, hue=0.62, spd=0.065, ph=0.8 },  -- cian BL
-        {x=0.85, y=0.65, sz=180, hue=0.80, spd=0.05,  ph=3.1 },  -- magenta BR
-    }
-    local _orbFrames = {}
-    for _, od in ipairs(_orbDefs) do
-        local orbF = Instance.new("Frame", mainFrame)
-        orbF.AnchorPoint  = Vector2.new(0.5, 0.5)
-        orbF.Position     = UDim2.new(od.x, 0, od.y, 0)
-        orbF.Size         = UDim2.new(0, od.sz, 0, od.sz)
-        orbF.BorderSizePixel = 0
-        orbF.ZIndex       = 2
-        orbF.BackgroundColor3 = Color3.fromHSV(od.hue, 0.9, 0.8)
-        orbF.BackgroundTransparency = 1
-        Instance.new("UICorner", orbF).CornerRadius = UDim.new(1, 0)
-        -- Gradiente radial simulado: UIGradient de 0% a 100% transparente
-        local og = Instance.new("UIGradient", orbF)
-        og.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0,   0.30),
-            NumberSequenceKeypoint.new(0.55, 0.68),
-            NumberSequenceKeypoint.new(1,   1.0),
-        })
-        table.insert(_orbFrames, {frame=orbF, grad=og, def=od, t=od.ph})
-    end
-
-    task.spawn(function()
-        local _ot = 0
-        while _bgAnimRunning do
-            task.wait(0.05)
-            _ot = _ot + 0.05
-            for _, orb in ipairs(_orbFrames) do
-                orb.t = orb.t + 0.05
-                local od = orb.def
-                -- Flotacion: posicion oscila suavemente
-                local floatX = od.x + math.sin(orb.t * od.spd * math.pi * 2) * 0.06
-                local floatY = od.y + math.cos(orb.t * od.spd * 0.7 * math.pi * 2) * 0.055
-                -- Pulso de escala: el orb "respira" (90%-115%)
-                local pulse = 1.0 + math.sin(orb.t * od.spd * 1.3 * math.pi * 2) * 0.13
-                local newSz = math.floor(od.sz * pulse)
-                -- Ciclo de color HSV lento
-                local newHue = (od.hue + orb.t * 0.004) % 1
-                -- Transparencia pulsante (mas visible en pico, casi invisible en valle)
-                local transPulse = 0.72 - math.sin(orb.t * od.spd * 2 * math.pi * 2) * 0.18
-                pcall(function()
-                    orb.frame.Position = UDim2.new(floatX, 0, floatY, 0)
-                    orb.frame.Size = UDim2.new(0, newSz, 0, newSz)
-                    orb.frame.BackgroundColor3 = Color3.fromHSV(newHue, 0.88, 0.82)
-                    orb.frame.BackgroundTransparency = math.clamp(transPulse, 0.55, 0.90)
-                end)
-            end
-        end
-    end)
-
-    -- -- CAPA 2: AURORA - 4 franjas de luz mas vivas y amplias --
-    local _auroraPalette = {
-        { Color3.fromRGB(40,  0, 110), Color3.fromRGB(100,  0, 200), Color3.fromRGB(  0, 80, 230), Color3.fromRGB(20, 0, 140) },
-        { Color3.fromRGB( 0, 30, 140), Color3.fromRGB(  0,100, 240), Color3.fromRGB( 30,  0, 180), Color3.fromRGB( 0, 60, 200) },
-        { Color3.fromRGB( 0,100, 190), Color3.fromRGB(  0,200, 240), Color3.fromRGB( 30, 80, 220), Color3.fromRGB( 0,140, 210) },
-        { Color3.fromRGB(80,  0, 190), Color3.fromRGB(160,  0, 255), Color3.fromRGB(100,  0, 220), Color3.fromRGB(50,  0, 170) },
-        { Color3.fromRGB(10,  0, 100), Color3.fromRGB( 80, 30, 200), Color3.fromRGB(  0, 50, 180), Color3.fromRGB(30, 10, 150) },
-        { Color3.fromRGB( 0, 60, 170), Color3.fromRGB( 30,160, 255), Color3.fromRGB( 70,  0, 220), Color3.fromRGB( 0, 80, 190) },
-    }
-    local _auroraPaletteIdx = 1
-
-    local function _makeAuroraStrip(yScale, heightScale, zidx, initRot)
-        local f = Instance.new("Frame", mainFrame)
-        f.Size = UDim2.new(1.4, 0, heightScale, 0)
-        f.Position = UDim2.new(-0.20, 0, yScale, 0)
-        f.BackgroundTransparency = 1
-        f.BorderSizePixel = 0
-        f.ZIndex = zidx
-        f.ClipsDescendants = false
-        Instance.new("UICorner", f).CornerRadius = UDim.new(0.5, 0)
-        local g = Instance.new("UIGradient", f)
-        g.Rotation = initRot or 0
-        return f, g
-    end
-
-    local _auroraA, _gradA = _makeAuroraStrip(0.02, 0.60, 2,  10)
-    local _auroraB, _gradB = _makeAuroraStrip(0.28, 0.55, 2, -10)
-    local _auroraC, _gradC = _makeAuroraStrip(0.52, 0.50, 2,  16)
-    local _auroraD, _gradD = _makeAuroraStrip(0.72, 0.40, 2,  -5)
-    _auroraA.Visible = false; _auroraB.Visible = false; _auroraC.Visible = false; _auroraD.Visible = false
-
-    local function _applyAuroraPalette(pal)
-        local c0, c1, c2, c3 = pal[1], pal[2], pal[3], pal[4]
-        local function makeGrad(cA, cB)
-            return ColorSequence.new({
-                ColorSequenceKeypoint.new(0,    Color3.fromRGB(0,0,0)),
-                ColorSequenceKeypoint.new(0.18, cA),
-                ColorSequenceKeypoint.new(0.50, cB),
-                ColorSequenceKeypoint.new(0.82, cA),
-                ColorSequenceKeypoint.new(1,    Color3.fromRGB(0,0,0)),
-            })
-        end
-        local makeTr = NumberSequence.new({
-            NumberSequenceKeypoint.new(0,    1),
-            NumberSequenceKeypoint.new(0.18, 0.50),
-            NumberSequenceKeypoint.new(0.50, 0.28),
-            NumberSequenceKeypoint.new(0.82, 0.50),
-            NumberSequenceKeypoint.new(1,    1),
-        })
-        _gradA.Color = makeGrad(c0, c1); _gradA.Transparency = makeTr
-        _gradB.Color = makeGrad(c1, c2); _gradB.Transparency = makeTr
-        _gradC.Color = makeGrad(c2, c3); _gradC.Transparency = makeTr
-        _gradD.Color = makeGrad(c3, c0); _gradD.Transparency = makeTr
-    end
-    _applyAuroraPalette(_auroraPalette[1])
-
-    task.spawn(function()
-        local _tA, _tB, _tC, _tD = 0, 0.6, 1.3, 2.1
-        local _rotA, _rotB, _rotC, _rotD = 10, -10, 16, -5
-        local _palTimer = 0
-        local _PAL_DUR  = 10
-        while _bgAnimRunning and _auroraA and _auroraA.Parent do
-            local dt = 0.05
-            task.wait(dt)
-            _tA = _tA+dt; _tB = _tB+dt; _tC = _tC+dt; _tD = _tD+dt
-
-            local yA = 0.02 + math.sin(_tA * 0.16) * 0.10
-            local yB = 0.28 + math.sin(_tB * 0.11) * 0.12
-            local yC = 0.52 + math.sin(_tC * 0.14) * 0.09
-            local yD = 0.72 + math.sin(_tD * 0.18) * 0.07
-
-            _rotA = 10  + math.sin(_tA * 0.08) * 24
-            _rotB = -10 + math.sin(_tB * 0.10) * 20
-            _rotC = 16  + math.sin(_tC * 0.07) * 26
-            _rotD = -5  + math.sin(_tD * 0.12) * 18
-
-            pcall(function()
-                _auroraA.Position = UDim2.new(-0.20, 0, yA, 0)
-                _auroraB.Position = UDim2.new(-0.20, 0, yB, 0)
-                _auroraC.Position = UDim2.new(-0.20, 0, yC, 0)
-                _auroraD.Position = UDim2.new(-0.20, 0, yD, 0)
-                _gradA.Rotation = _rotA
-                _gradB.Rotation = _rotB
-                _gradC.Rotation = _rotC
-                _gradD.Rotation = _rotD
-            end)
-
-            _palTimer = _palTimer + dt
-            if _palTimer >= _PAL_DUR then
-                _palTimer = 0
-                _auroraPaletteIdx = (_auroraPaletteIdx % #_auroraPalette) + 1
-                pcall(function() _applyAuroraPalette(_auroraPalette[_auroraPaletteIdx]) end)
-            end
-        end
-    end)
-
-    -- -- CAPA 3: PARTICULAS mejoradas (30 puntos, 3 tamanos, mas visibles) --
-    local _PARTICLE_COUNT = 30
-    local _particles = {}
-
-    local function _makeParticle()
-        local p = Instance.new("Frame", mainFrame)
-        -- 3 tamanios: pequeno, medio, grande (estrella)
-        local tier = math.random(1, 3)
-        local sz = tier == 1 and math.random(1, 3) or tier == 2 and math.random(3, 6) or math.random(6, 10)
-        p.Size = UDim2.new(0, sz, 0, sz)
-        p.BackgroundTransparency = 1
-        p.Visible = false
-        p.BorderSizePixel = 0
-        p.ZIndex = 3
-        Instance.new("UICorner", p).CornerRadius = UDim.new(1, 0)
-        local palIdx = math.random(1, #_auroraPalette)
-        local cIdx   = math.random(1, 4)
-        p.BackgroundColor3 = _auroraPalette[palIdx][cIdx]
-        return p, tier
-    end
-
-    local function _resetParticle(entry)
-        local p = entry.frame
-        local startX = math.random(1, 99) / 100
-        local startY = math.random(72, 100) / 100
-        p.Position = UDim2.new(startX, 0, startY, 0)
-        p.BackgroundTransparency = 1
-        local palIdx = math.random(1, #_auroraPalette)
-        local cIdx   = math.random(1, 4)
-        pcall(function() p.BackgroundColor3 = _auroraPalette[palIdx][cIdx] end)
-        entry.x       = startX
-        entry.y       = startY
-        -- Particulas grandes suben mas lento pero brillan mas
-        entry.speed   = entry.tier == 3 and math.random(2, 5)/100 or math.random(4, 14)/100
-        entry.drift   = (math.random(-20, 20)) / 1000
-        entry.life    = 0
-        entry.maxLife = entry.tier == 3 and math.random(60, 130) or math.random(35, 90)
-        entry.phase   = math.random(0, 62) / 10
-        -- Particulas grandes brillan mas (menor transparencia en pico)
-        entry.maxAlpha = entry.tier == 3 and 0.95 or entry.tier == 2 and 0.85 or 0.70
-    end
-
-    for i = 1, _PARTICLE_COUNT do
-        local p, tier = _makeParticle()
-        local entry = { frame=p, tier=tier, x=0, y=0, speed=0, drift=0, life=0, maxLife=60, phase=0, maxAlpha=0.80 }
-        _resetParticle(entry)
-        entry.y = math.random(0, 100) / 100
-        p.Position = UDim2.new(entry.x, 0, entry.y, 0)
-        entry.life = math.random(0, entry.maxLife)
-        _particles[i] = entry
-    end
-
-    task.spawn(function()
-        while _bgAnimRunning do
-            task.wait(0.05)
-            for _, e in ipairs(_particles) do
-                if not (e.frame and e.frame.Parent) then continue end
-                e.life = e.life + 1
-                e.y = e.y - e.speed * 0.01
-                e.x = e.x + e.drift + math.sin(e.life * 0.12 + e.phase) * 0.0018
-                local lifeRatio = e.life / e.maxLife
-                local alpha
-                if lifeRatio < 0.18 then
-                    alpha = lifeRatio / 0.18
-                elseif lifeRatio > 0.72 then
-                    alpha = 1 - (lifeRatio - 0.72) / 0.28
-                else
-                    alpha = 1
-                end
-                pcall(function()
-                    e.frame.BackgroundTransparency = 1 - (alpha * e.maxAlpha)
-                    e.frame.Position = UDim2.new(e.x, 0, e.y, 0)
-                end)
-                if e.life >= e.maxLife or e.y < -0.06 then
-                    _resetParticle(e)
-                end
-            end
-        end
-    end)
-
-    -- -- CAPA 4: VI?ETA perimetral con pulso de color suave -----------
-    local _vigFrame = Instance.new("Frame", mainFrame)
-    _vigFrame.Name = "HubVignette"
-    _vigFrame.Size = UDim2.new(1, 0, 1, 0)
-    _vigFrame.Position = UDim2.new(0, 0, 0, 0)
-    _vigFrame.BackgroundTransparency = 1
-    _vigFrame.BorderSizePixel = 0
-    _vigFrame.ZIndex = 4
-    _vigFrame.Visible = false
-    Instance.new("UICorner", _vigFrame).CornerRadius = UDim.new(0, 8)
-    local _vigGrad = Instance.new("UIGradient", _vigFrame)
-    _vigGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,  0, 20)),
-        ColorSequenceKeypoint.new(0.28, Color3.fromRGB(2,  2, 10)),
-        ColorSequenceKeypoint.new(0.72, Color3.fromRGB(2,  2, 10)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(10, 0, 30)),
-    })
-    _vigGrad.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0,    0.38),
-        NumberSequenceKeypoint.new(0.28, 0.97),
-        NumberSequenceKeypoint.new(0.72, 0.97),
-        NumberSequenceKeypoint.new(1,    0.34),
-    })
-
-    -- Pulso: la vigneta rota su gradiente suavemente para efecto de "latido"
-    task.spawn(function()
-        local _vRot = 0
-        while _bgAnimRunning and _vigFrame and _vigFrame.Parent do
-            task.wait(0.08)
-            _vRot = (_vRot + 0.4) % 360
-            pcall(function() _vigGrad.Rotation = _vRot end)
-        end
-    end)
-
-    -- -- CAPA 5: SHIMMER diagonal ? barre cada 8s ---------------------
-    local _shimFrame = Instance.new("Frame", mainFrame)
-    _shimFrame.Name = "HubShimmer"
-    _shimFrame.Size = UDim2.new(0.32, 0, 1.4, 0)
-    _shimFrame.Position = UDim2.new(-0.40, 0, -0.20, 0)
-    _shimFrame.BackgroundTransparency = 1
-    _shimFrame.BorderSizePixel = 0
-    _shimFrame.ZIndex = 5
-    _shimFrame.Visible = false
-    _shimFrame.ClipsDescendants = false
-    local _shimGrad = Instance.new("UIGradient", _shimFrame)
-    _shimGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,    Color3.fromRGB(0,   0,   0)),
-        ColorSequenceKeypoint.new(0.30, Color3.fromRGB(100, 180, 255)),
-        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(200, 240, 255)),
-        ColorSequenceKeypoint.new(0.70, Color3.fromRGB(100, 180, 255)),
-        ColorSequenceKeypoint.new(1,    Color3.fromRGB(0,   0,   0)),
-    })
-    _shimGrad.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0,    1),
-        NumberSequenceKeypoint.new(0.30, 0.84),
-        NumberSequenceKeypoint.new(0.50, 0.72),
-        NumberSequenceKeypoint.new(0.70, 0.84),
-        NumberSequenceKeypoint.new(1,    1),
-    })
-    _shimGrad.Rotation = 22
-
-    task.spawn(function()
-        task.wait(2.5)
-        while _bgAnimRunning and _shimFrame and _shimFrame.Parent do
-            _shimFrame.Position = UDim2.new(-0.40, 0, -0.20, 0)
-            TweenService:Create(_shimFrame,
-                TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-                { Position = UDim2.new(1.15, 0, -0.20, 0) }
-            ):Play()
-            task.wait(2.2 + 6.5)
-        end
-    end)
-end
-
+-- Stub de compatibilidad
+_G._hubBgMainImageRef = nil
+_G._hubBgAnimStop = function() end
 -- HubHeaderBar eliminado: el TopBar ya contiene el header completo estilo Capybara.
 -- _G._hubHeaderBarRef se asigna al TopBar que se crea mas abajo.
 
@@ -59240,7 +60456,7 @@ end)
 _G._isMobileHub = _isMobileHub
 
 -- Tama?o base fijo: UIScale se encarga de ajustar segun dispositivo
-mainFrame.Size = UDim2.new(0, 700, 0, 410)
+mainFrame.Size = UDim2.new(0, 950, 0, 555)
 
 -- ================================================================
 -- == GUARDIAN DE FORMA DEL HUB v1
@@ -59251,7 +60467,7 @@ mainFrame.Size = UDim2.new(0, 700, 0, 410)
 -- script pise el frame del hub.
 -- ================================================================
 do
-    local _guardSize   = UDim2.new(0, 780, 0, 460)
+    local _guardSize   = UDim2.new(0, 950, 0, 555)
     local _guardPos    = UDim2.new(0.5, 0, 0.5, 0)
     local _guardAnchor = Vector2.new(0.5, 0.5)
     local _guardBusy   = false   -- re-entrancy lock
@@ -59270,7 +60486,11 @@ do
 
     mainFrame:GetPropertyChangedSignal("Position"):Connect(function()
         if _guardBusy then return end
-        -- HUB FIJO: el drag esta desactivado, nunca actualizar _guardPos por drag
+        -- HUB MOVIBLE v28: si el hub esta siendo arrastrado, actualizar _guardPos
+        if _G._hubDragging then
+            _guardPos = mainFrame.Position
+            return
+        end
         if mainFrame.Position == _guardPos then return end
         _guardBusy = true
         mainFrame.Position = _guardPos
@@ -59329,7 +60549,7 @@ do
     blinkOverlay.BackgroundTransparency = 1
     blinkOverlay.ImageTransparency      = 1                              -- empieza invisible
     blinkOverlay.ScaleType              = Enum.ScaleType.Stretch         -- igual al fondo principal
-    blinkOverlay.ImageRectSize          = Vector2.new(780, 460)          -- igual al fondo principal
+    blinkOverlay.ImageRectSize          = Vector2.new(1100, 640)          -- igual al fondo principal
     blinkOverlay.ImageRectOffset        = Vector2.new(0, 0)              -- igual al fondo principal
     blinkOverlay.ZIndex                 = 3
     blinkOverlay.Active                 = false
@@ -59384,86 +60604,176 @@ _G._applyHubBackground = function(id)  id = ""  -- fondos eliminados
 end
 _G._hubWaveContainer = nil
 
--- Borde del mainFrame activado (dise?o arco?ris rapido)
+-- BORDE ZERQON v28: imagen de borde estilo splash screen (rbxassetid de la imagen 2)
+-- UIStroke base para compatibilidad interna
 glowBorder = Instance.new("UIStroke", mainFrame)
-glowBorder.Color = Color3.fromRGB(0, 200, 160)
-glowBorder.Thickness = 2.5
-glowBorder.Transparency = 0
+-- v59: el fade de cierre lo busca como mainFrame:FindFirstChild("HubGlowBorder")
+-- y nunca lo encontraba, porque el stroke se creaba sin Name.
+glowBorder.Name = "HubGlowBorder"
+glowBorder.Color = Color3.fromRGB(200, 160, 80)
+glowBorder.Thickness = 1.8
+glowBorder.Transparency = 0.20
 glowBorder.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
--- ANIMACION DE BORDE RAPIDA: arcoiris ciclico con gradiente giratorio
+-- Capa de borde imagen: fuera del mainFrame para que ClipsDescendants no la corte.
+-- Vive en hubGui con mismo anchor/posicion que mainFrame.
+-- Tamanio: pixeles del hub (780x460) + padding en cada lado + UIScale sincronizado.
 do
-    local _borderGrad = Instance.new("UIGradient", glowBorder)
-    _borderGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,    Color3.fromRGB(  0, 220, 170)),
-        ColorSequenceKeypoint.new(0.16, Color3.fromRGB( 80, 160, 255)),
-        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(180,  60, 255)),
-        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255,  60, 120)),
-        ColorSequenceKeypoint.new(0.66, Color3.fromRGB(255, 180,   0)),
-        ColorSequenceKeypoint.new(0.83, Color3.fromRGB( 60, 255, 120)),
-        ColorSequenceKeypoint.new(1,    Color3.fromRGB(  0, 220, 170)),
-    })
-    _borderGrad.Rotation = 0
-    _G._hubBorderGrad = _borderGrad
+    local _PAD = 14  -- px extra en cada lado para que la capsula sobresalga
+    local _borderImg = Instance.new("ImageLabel", hubGui)
+    _borderImg.Name                   = "HubBorderImage"
+    _borderImg.AnchorPoint            = Vector2.new(0.5, 0.5)
+    _borderImg.Position               = UDim2.new(0.5, 0, 0.5, 0)
+    -- 780+28 x 460+28 en pixeles; UIScale se encarga del zoom igual que mainFrame
+    _borderImg.Size                   = UDim2.new(0, 1100 + _PAD * 2, 0, 640 + _PAD * 2)
+    _borderImg.BackgroundTransparency = 1
+    _borderImg.Image                  = "rbxassetid://118465446710889"  -- ZQShape border (imagen 2)
+    _borderImg.ImageColor3            = Color3.fromRGB(200, 160, 80)
+    _borderImg.ImageTransparency      = 1  -- FIX: ocultar la imagen de borde externa que genera esquinas fuera del GUI
+    _borderImg.ScaleType              = Enum.ScaleType.Stretch
+    _borderImg.ZIndex                 = 200
+    _borderImg.Active                 = false
+    _borderImg.Visible                = false  -- FIX: eliminar bordes/esquinas visibles fuera del hub
+    Instance.new("UICorner", _borderImg).CornerRadius = UDim.new(0, 22)
+    -- UIScale propio sincronizado con el del mainFrame
+    local _bScale = Instance.new("UIScale", _borderImg)
+    _bScale.Scale = 0.88  -- valor inicial (mismo que mainFrame)
+    -- Sincronizar despues de que uiScale sea creado
+    task.defer(function()
+        if uiScale and uiScale.Parent then
+            _bScale.Scale = uiScale.Scale
+            uiScale:GetPropertyChangedSignal("Scale"):Connect(function()
+                if _bScale and _bScale.Parent then _bScale.Scale = uiScale.Scale end
+            end)
+        end
+    end)
 
-    -- Animacion rapida: gira 360? en ~1.8 segundos (muy rapida y vistosa)
-    local _borderHue = 0
-    local _borderRotation = 0
-    local _borderAnimRunning = false   -- MODIFICADO: animacion del borde desactivada
-    _G._hubBorderAnimStop = function() _borderAnimRunning = false end
+    -- Animacion lenta de pulso del borde (igual que la imagen 2)
+    task.spawn(function()
+        while _borderImg and _borderImg.Parent do
+            TweenService:Create(_borderImg, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                ImageColor3 = Color3.fromRGB(220, 185, 100),
+                ImageTransparency = 0.10,
+            }):Play()
+            task.wait(2.0)
+            TweenService:Create(_borderImg, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                ImageColor3 = Color3.fromRGB(200, 160, 80),
+                ImageTransparency = 0.35,
+            }):Play()
+            task.wait(2.0)
+        end
+    end)
 
-    -- Paleta de colores arcoiris para ciclar el gradiente completo
-    local _rainbowPalette = {
-        Color3.fromRGB(  0, 220, 170),  -- teal
-        Color3.fromRGB( 80, 160, 255),  -- azul
-        Color3.fromRGB(180,  60, 255),  -- purpura
-        Color3.fromRGB(255,  60, 120),  -- rosa
-        Color3.fromRGB(255, 180,   0),  -- dorado
-        Color3.fromRGB( 60, 255, 120),  -- verde
-    }
+    -- Animacion del UIStroke sincronizada
+    -- v59: respiracion mas marcada. Lo que se nota es la amplitud, no la
+    -- velocidad: cada mitad sigue durando 2 s (Sine InOut, ciclo de 4 s) pero
+    -- ahora va de 1.6 px casi apagado a 3.0 px de oro claro. Las dos capas de
+    -- resplandor (ZQBorderHalo) se calculan de estos mismos valores.
+    task.spawn(function()
+        while glowBorder and glowBorder.Parent do
+            TweenService:Create(glowBorder, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                Color = Color3.fromRGB(255, 215, 130),
+                Thickness = 3.0,
+                Transparency = 0.02,
+            }):Play()
+            task.wait(2.0)
+            TweenService:Create(glowBorder, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                Color = Color3.fromRGB(170, 132,  58),
+                Thickness = 1.6,
+                Transparency = 0.42,
+            }):Play()
+            task.wait(2.0)
+        end
+    end)
 
-    local function _lerpColor(c1, c2, t)
-        return Color3.new(
-            c1.R + (c2.R - c1.R) * t,
-            c1.G + (c2.G - c1.G) * t,
-            c1.B + (c2.B - c1.B) * t
-        )
+    _G._hubBorderImageRef = _borderImg
+end
+_G._hubBorderGrad = nil
+_G._hubBorderAnimStop = function() end
+
+-- == v59: BORDE QUE RESPIRA -- dos capas de resplandor pegadas al marco
+-- El pulso de glowBorder quedo mas marcado (1.6 px casi apagado -> 3.0 px de
+-- oro claro). Estas dos capas lo acompanan para que se lea como resplandor y
+-- no como una linea que cambia de brillo sola.
+--
+-- Van ADENTRO de mainFrame por dos razones: tiene ClipsDescendants = true, asi
+-- que una capa por fuera se cortaria igual; y de paso siguen al hub cuando se
+-- arrastra sin sincronizar posicion ni escala (leccion del morph de v58:
+-- UIScale escala el Size pero NO la Position).
+--
+-- Cada capa esta insetada y su stroke crece hacia AFUERA, asi que la de 6 px
+-- ocupa del borde hacia adentro y la de 13 px queda detras, mas suave: juntas
+-- dan la caida del resplandor. Lo que sobresalga lo corta el ClipsDescendants.
+--
+-- Nada se anima por separado: cada capa se CALCULA a partir de glowBorder, asi
+-- cualquier cosa que toque el borde (el tema, el drag, el hover del header, el
+-- cierre, el skin MM2) arrastra el resplandor sin parchear cada call site. Los
+-- factores estan elegidos para que con el borde en Transparency = 1 las dos
+-- capas den exactamente 1: cuando el borde se apaga, el resplandor tambien.
+do
+    local _rings = {}
+
+    local function _mkRing(inset, thMul, tAdd, tMul)
+        local f = Instance.new("Frame")
+        f.Name                   = "ZQBorderHalo" .. tostring(inset)
+        f.AnchorPoint            = Vector2.new(0.5, 0.5)
+        f.Position               = UDim2.new(0.5, 0, 0.5, 0)
+        f.Size                   = UDim2.new(1, -inset * 2, 1, -inset * 2)
+        f.BackgroundTransparency = 1
+        f.BorderSizePixel        = 0
+        f.Active                 = false   -- que no se coma los toques del celu
+        f.ZIndex                 = 150     -- arriba del contenido (ZIndex 50)
+        f.Parent                 = mainFrame
+        local c = Instance.new("UICorner", f)
+        c.CornerRadius = UDim.new(0, math.max(4, 18 - inset))
+        local s = Instance.new("UIStroke", f)
+        s.Name            = "ZQHaloRing"
+        s.Color           = glowBorder.Color
+        s.Thickness       = 0
+        s.Transparency    = 1
+        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        _rings[#_rings + 1] = { s = s, thMul = thMul, tAdd = tAdd, tMul = tMul }
+        return f
     end
 
-    -- Loop de animacion: rota el gradiente muy rapido y cicla colores
-    task.spawn(function()
-        local _hbAnim = 0
-        local _conn = game:GetService("RunService").Heartbeat:Connect(function(dt)
-            if not _borderAnimRunning or not (glowBorder and glowBorder.Parent) then return end
-            -- Rotar rapido: 200 grados por segundo (vuelta completa en ~1.8s)
-            _borderRotation = (_borderRotation + dt * 200) % 360
-            pcall(function() _borderGrad.Rotation = _borderRotation end)
+    local function _clamp01(v)
+        if v < 0 then return 0 end
+        if v > 1 then return 1 end
+        return v
+    end
 
-            -- Ciclar colores del hub stroke con arcoiris suave
-            _borderHue = (_borderHue + dt * 0.6) % 1
-            local n = #_rainbowPalette
-            local rawPos = _borderHue * n
-            local i1 = math.floor(rawPos) % n + 1
-            local i2 = i1 % n + 1
-            local t_ = rawPos - math.floor(rawPos)
-            local newC = _lerpColor(_rainbowPalette[i1], _rainbowPalette[i2], t_)
-            pcall(function()
-                glowBorder.Color = newC
-            end)
-        end)
-        -- Limpiar cuando el hub se destruya
-        task.spawn(function()
-            while _borderAnimRunning and mainFrame and mainFrame.Parent do
-                task.wait(2)
+    local function _haloSync()
+        if not (glowBorder and glowBorder.Parent) then return end
+        local bt  = glowBorder.Transparency
+        local bth = glowBorder.Thickness
+        local bc  = glowBorder.Color
+        for _, r in ipairs(_rings) do
+            if r.s.Parent then
+                r.s.Color        = bc
+                r.s.Thickness    = math.max(0, bth * r.thMul)
+                r.s.Transparency = _clamp01(r.tAdd + bt * r.tMul)
             end
-            pcall(function() _conn:Disconnect() end)
+        end
+    end
+
+    -- capa 1: pegada al borde, la que mas se ve.  capa 2: mas adentro y suave.
+    _mkRing( 6, 1.60, 0.44, 0.56)
+    _mkRing(13, 2.40, 0.68, 0.32)
+
+    for _, prop in ipairs({ "Transparency", "Thickness", "Color" }) do
+        pcall(function()
+            glowBorder:GetPropertyChangedSignal(prop):Connect(_haloSync)
         end)
-    end)
+    end
+    _haloSync()
+
+    _G._ZQ_HaloSync  = _haloSync
+    _G._ZQ_HaloRings = _rings
 end
 
 -- Helper global: siempre 750x420 (UIScale se encarga de la escala)
 _getHubSize = function()
-    return UDim2.new(0, 780, 0, 460)
+    return UDim2.new(0, 950, 0, 555)
 end
 
 uiScale = Instance.new("UIScale", mainFrame)
@@ -59486,9 +60796,9 @@ _getTargetScale = function()
     -- DEBUG: imprimir valores reales para diagnosticar
     _log("SCALE DEBUG VP=", tostring(_vpNow.X), "x", tostring(_vpNow.Y), "isMobile=", tostring(_isMobileNow))
     if _isMobileNow then
-        -- Calcular escala exacta para que el frame 900x480 entre en pantalla con margen
-        local _scaleByW = (_vpNow.X - 24) / 700
-        local _scaleByH = (_vpNow.Y - 24) / 410
+        -- Calcular escala exacta para que el frame 780x460 entre en pantalla con margen
+        local _scaleByW = (_vpNow.X - 24) / 1100
+        local _scaleByH = (_vpNow.Y - 24) / 460
         local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.30, 0.90)
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
@@ -59497,6 +60807,8 @@ _getTargetScale = function()
         return 1.0
     end
 end
+-- FIX v24: registrar en _G para que el guard de re-ejecucion la encuentre
+_G._getTargetScale = _getTargetScale
 do
     -- FIX: aplicar escala correcta inmediatamente (no diferida) para que PC siempre inicie en 0.70
     uiScale.Scale = _getTargetScale()
@@ -59505,6 +60817,52 @@ do
 end
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+-- ANIMACION DE APERTURA DEL HUB v28: el hub aparece desde escala 0 con easing lento
+-- v58: si la apertura la maneja el overlay morph (el cuadradito que cae y
+-- se expande en el panel), el rebote de escala 0 -> 1 sobra: se veria el hub
+-- saltando adentro del marco. En ese caso entra con un asentado corto.
+do
+    local _openTargetScale = _getTargetScale()
+    if _G._ZQ_MorphDriving == true then
+        uiScale.Scale = _openTargetScale * 0.965
+        task.defer(function()
+            TweenService:Create(uiScale, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Scale = _openTargetScale
+            }):Play()
+        end)
+    else
+        uiScale.Scale = 0  -- inicia en 0 para animar
+        task.defer(function()
+            -- Escala: 0 -> target con Back easing (rebote suave al abrir)
+            TweenService:Create(uiScale, TweenInfo.new(0.80, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Scale = _openTargetScale
+            }):Play()
+        end)
+    end
+end
+-- Aplicar opacidad inicial desde hubSettings
+-- NOTA v5: mainFrame.BackgroundTransparency se mantiene en 1 siempre
+-- porque el VideoFrame (ZIndex=1) actua como fondo. La opacidad visual
+-- se controla via el velo VideoShade dentro del mismo mainFrame.
+do
+    local _initOpacity = (_G._hubSettings and _G._hubSettings.hubOpacity) or 0
+    local _initTrans   = 1 - (_initOpacity / 100)  -- 0->1.0 (invisible), 95->0.05 (opaco)
+    -- mainFrame siempre transparente para exponer el VideoFrame de fondo
+    pcall(function() mainFrame.BackgroundTransparency = 1 end)
+    -- Aplicar opacidad al velo del video para que refleje la preferencia del usuario
+    pcall(function()
+        local _shade = mainFrame:FindFirstChild("VideoShade")
+        if _shade then
+            -- opacity 100% -> velo casi nulo (0.95 trans); opacity 0% -> velo total (0.00 trans)
+            _shade.BackgroundTransparency = math.clamp(0.40 + (_initOpacity / 100) * 0.55, 0.40, 0.95)
+        end
+    end)
+    pcall(function()
+        if contentContainer and contentContainer.Parent then
+            contentContainer.BackgroundTransparency = _initTrans
+        end
+    end)
+end
 -- Reajustar escala en mobile cuando rota la pantalla o cambia el viewport
 if _G._isMobileHub then
     pcall(function()
@@ -59537,7 +60895,7 @@ local orb1 = nil
 local orb2 = nil
 local orb3 = nil
 
--- AuroraContainer va PRIMERO (ZIndex bajo = dibujado debajo de todo)
+-- AuroraContainer: stub vacio de compatibilidad (el video usa SurfaceGui en Part 3D)
 local _auroraContainer = Instance.new("Frame", mainFrame)
 _auroraContainer.Name                   = "AuroraContainer"
 _auroraContainer.Size                   = UDim2.new(1, 0, 1, 0)
@@ -59545,10 +60903,66 @@ _auroraContainer.Position               = UDim2.new(0, 0, 0, 0)
 _auroraContainer.BackgroundTransparency = 1
 _auroraContainer.BorderSizePixel        = 0
 _auroraContainer.ZIndex                 = 1
-_auroraContainer.ClipsDescendants       = true
-_auroraContainer.Active                 = false  -- FIX MOBILE: no bloquear joystick/salto
+_auroraContainer.ClipsDescendants       = false
+_auroraContainer.Active                 = false
 
--- [FONDO DE ONDAS ELIMINADO]
+-- ================================================================
+-- == ZERQON VIDEO BACKGROUND SYSTEM v5
+-- Tecnica: VideoFrame directamente dentro de mainFrame como capa de fondo.
+-- El VideoFrame ocupa exactamente el mismo Size y Position que mainFrame
+-- (UDim2.new(1,0,1,0) relativo al frame), por lo que NUNCA se extiende
+-- fuera del hub, no cubre pantalla completa ni tapa otras interfaces.
+-- Si mainFrame cambia de tamano, el video se adapta automaticamente.
+-- ZIndex = 1 garantiza que queda detras de todos los demas elementos.
+-- ================================================================
+do
+    -- Limpiar instancia anterior si existe (re-ejecucion del script)
+    local _oldVf = mainFrame:FindFirstChild("ZQVideoFrame")
+    if _oldVf then pcall(function() _oldVf:Destroy() end) end
+    local _oldShade = mainFrame:FindFirstChild("VideoShade")
+    if _oldShade then pcall(function() _oldShade:Destroy() end) end
+
+    -- VideoFrame: capa de fondo dentro del mainFrame
+    -- Size y Position 100% relativos -> se adapta automaticamente a cualquier
+    -- cambio de tamano de mainFrame (UIScale, _setHubFrameSize, etc.)
+    local _vf = Instance.new("VideoFrame", mainFrame)
+    _vf.Name                   = "ZQVideoFrame"
+    _vf.Size                   = UDim2.new(1, 0, 1, 0)   -- igual al mainFrame
+    _vf.Position               = UDim2.new(0, 0, 0, 0)   -- esquina superior izquierda
+    _vf.AnchorPoint            = Vector2.new(0, 0)
+    _vf.BackgroundTransparency = 1
+    _vf.Video                  = "rbxassetid://5670799859"
+    _vf.Volume                 = 0      -- sin sonido
+    _vf.Looped                 = true
+    _vf.Playing                = true
+    _vf.ZIndex                 = 1      -- capa mas baja: detras de todo el contenido del hub
+
+    -- Velo oscuro sutil encima del video para mantener la UI legible
+    -- ZIndex = 2 -> encima del video pero debajo del contenido real (ZIndex >= 3)
+    local _vShade = Instance.new("Frame", mainFrame)
+    _vShade.Name                   = "VideoShade"
+    _vShade.Size                   = UDim2.new(1, 0, 1, 0)
+    _vShade.Position               = UDim2.new(0, 0, 0, 0)
+    _vShade.AnchorPoint            = Vector2.new(0, 0)
+    _vShade.BackgroundColor3       = Color3.fromRGB(6, 5, 3)
+    _vShade.BackgroundTransparency = 0.55   -- velo cinematografico oscuro
+    _vShade.BorderSizePixel        = 0
+    _vShade.ZIndex                 = 2
+    _vShade.Active                 = false
+
+    -- Asegurar que el video arranque aunque el asset no este en cache
+    task.defer(function()
+        task.wait(0.5)
+        pcall(function() _vf.Playing = true end)
+    end)
+    task.defer(function()
+        task.wait(2.0)
+        pcall(function() if not _vf.Playing then _vf.Playing = true end end)
+    end)
+end
+-- ================================================================
+-- == FIN ZERQON VIDEO BACKGROUND SYSTEM v5
+-- ================================================================
 
 -- ================================================================
 -- == PELOTAS DE PLAYA: ELIMINADAS
@@ -59942,23 +61356,7 @@ do
     -- Video eliminado
 end
 
--- +======================================================+
--- |   ANIMACION GRADIENTE AURORA BOREAL - FONDO DEL HUB  |
--- |   Mezcla: teal, cian, morado, magenta, azul profundo  |
--- +======================================================+
-do
-    -- Capa base: completamente transparente (sin fondo oscuro)
-    local _auroraBase = Instance.new("Frame", _auroraContainer)
-    _auroraBase.Name = "AuroraBase"
-    _auroraBase.Size = UDim2.new(1, 0, 1, 0)
-    _auroraBase.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
-    _auroraBase.BackgroundTransparency = 1  -- invisible: el fondo del juego se ve detras
-    _auroraBase.BorderSizePixel = 0
-    _auroraBase.ZIndex = 2
-
-    -- Sin gradiente de fondo oscuro: removido para apariencia rosa pura
-end
--- +======================================================+
+-- [AuroraBase eliminado: reemplazado por VideoFrame SurfaceGui]
 
 
 
@@ -60069,97 +61467,131 @@ particles = {}
 
 
     -- ============================================================
-    -- TOPBAR: barra superior compacta estilo referencia
+    -- TOPBAR v7: rediseñado — fondo semitransparente con gradiente,
+    -- borde inferior con gradiente amber, logo más grande y elegante
     -- ============================================================
     header = Instance.new("Frame", mainFrame)
     header.Name = "TopBar"
-    header.Size = UDim2.new(1, 0, 0, 52)
+    header.Size = UDim2.new(1, 0, 0, 60)
     header.Position = UDim2.new(0, 0, 0, 0)
-    header.BackgroundColor3 = Color3.fromRGB(  0,  20,  80)  -- azul vibrante
-    header.BackgroundTransparency = 0.45  -- transparente para ver el juego
+    header.BackgroundColor3 = ThemeColors.BackgroundLight
+    header.BackgroundTransparency = 0.35
     header.BorderSizePixel = 0
     header.ZIndex = 20
     header.Active = true
-    header.ClipsDescendants = false  -- no recortar el boton de salida
-    local _hdrCorner = Instance.new("UICorner", header)
-    _hdrCorner.CornerRadius = UDim.new(0, 0)
-    local _hdrStroke = Instance.new("UIStroke", header)
-    _hdrStroke.Color = Color3.fromRGB( 50, 160, 255)  -- borde azul brillante
-    _hdrStroke.Thickness = 1.5
-    _hdrStroke.Transparency = 0.3
-    _hdrStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    -- Gradiente de color en el header
+    header.ClipsDescendants = false
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 18)
+
+    -- Gradiente sutil en el topbar (más oscuro abajo para separar visualmente)
     local _hdrGrad = Instance.new("UIGradient", header)
     _hdrGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,  40, 120)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(10, 20,  80)),
-        ColorSequenceKeypoint.new(1,   Color3.fromRGB(40,  0, 100)),
+        ColorSequenceKeypoint.new(0, ThemeColors.BackgroundLight),
+        ColorSequenceKeypoint.new(1, ThemeColors.Background),
     })
-    _hdrGrad.Rotation = 0
+    _hdrGrad.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.20),
+        NumberSequenceKeypoint.new(1, 0.55),
+    })
+    _hdrGrad.Rotation = 90
 
-    -- ============================================================
-    -- HEADER ESTILO CAPYBARA: izquierda "GameName / PlayerCount", derecha "By Zerqon Hub" + X
-    -- ============================================================
-    -- Icono/avatar placeholder izquierdo
-    local _hdrIcon = Instance.new("Frame", header)
-    _hdrIcon.Name = "HdrIcon"
-    _hdrIcon.Size = UDim2.new(0, 28, 0, 28)
-    _hdrIcon.Position = UDim2.new(0, 4, 0.5, -14)
-    _hdrIcon.BackgroundColor3 = Color3.fromRGB(  8,  50,  60)
-    _hdrIcon.BackgroundTransparency = 0.3
-    _hdrIcon.BorderSizePixel = 0
-    _hdrIcon.ZIndex = 11
-    Instance.new("UICorner", _hdrIcon).CornerRadius = UDim.new(0, 3)
-    local _hdrIconLbl = Instance.new("TextLabel", _hdrIcon)
-    _hdrIconLbl.Size = UDim2.new(1, 0, 1, 0)
-    _hdrIconLbl.BackgroundTransparency = 1
-    _hdrIconLbl.Text = "Z"
-    _hdrIconLbl.TextColor3 = Color3.fromRGB(200, 220, 255)
-    _hdrIconLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-    _hdrIconLbl.TextSize = 14
-    _hdrIconLbl.ZIndex = 12
+    -- Linea divisoria inferior — degradado amber del hub
+    local _hdrDivider = Instance.new("Frame", header)
+    _hdrDivider.Name = "TopDivider"
+    _hdrDivider.Position = UDim2.new(0.02, 0, 1, -1)
+    _hdrDivider.Size = UDim2.new(0.96, 0, 0, 1.5)
+    _hdrDivider.BackgroundColor3 = ThemeColors.Primary
+    _hdrDivider.BackgroundTransparency = 0.10
+    _hdrDivider.BorderSizePixel = 0
+    _hdrDivider.ZIndex = 21
+    local _divGrad = Instance.new("UIGradient", _hdrDivider)
+    _divGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   ThemeColors.Background),
+        ColorSequenceKeypoint.new(0.3, ThemeColors.Accent),
+        ColorSequenceKeypoint.new(0.7, ThemeColors.Primary),
+        ColorSequenceKeypoint.new(1,   ThemeColors.Background),
+    })
+    _divGrad.Rotation = 0
 
-    -- Titulo del juego: "Murderer Mystery 2 / PlayerCount"
-    local _hdLabel = Instance.new("TextLabel", header)
-    _hdLabel.Name = "HdrGameTitle"
-    _hdLabel.Size = UDim2.new(0.52, 0, 0.55, 0)
-    _hdLabel.Position = UDim2.new(0, 36, 0.02, 0)
-    _hdLabel.BackgroundTransparency = 1
-    _hdLabel.Visible = true
-    _hdLabel.Text = "Murderer Mystery 2"
-    _hdLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    _hdLabel.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-    _hdLabel.TextScaled = false
-    _hdLabel.TextSize = 13
-    _hdLabel.TextXAlignment = Enum.TextXAlignment.Left
-    _hdLabel.TextYAlignment = Enum.TextYAlignment.Center
-    _hdLabel.TextTruncate = Enum.TextTruncate.AtEnd
-    _hdLabel.ZIndex = 12
-    -- Actualizar con player count dinamico
+    -- Logo ◈ — más grande, color animado amber
+    local _zqLogo = Instance.new("TextLabel", header)
+    _zqLogo.Name = "NebLogo"
+    _zqLogo.Position = UDim2.new(0.030, 0, 0.10, 0)
+    _zqLogo.Size = UDim2.new(0.045, 0, 0.78, 0)
+    _zqLogo.BackgroundTransparency = 1
+    _zqLogo.Text = "◈"
+    _zqLogo.TextColor3 = ThemeColors.Accent
+    _zqLogo.TextSize = 24
+    _zqLogo.Font = Enum.Font.GothamBold
+    _zqLogo.ZIndex = 22
+    -- Pulso suave en el logo
     task.spawn(function()
-        local _ps = game:GetService("Players")
-        while _hdLabel and _hdLabel.Parent do
-            local _cnt = #_ps:GetPlayers()
-            local _max = _ps.MaxPlayers
-            _hdLabel.Text = "Murderer Mystery 2 / " .. tostring(_cnt)
-            task.wait(5)
+        while _zqLogo and _zqLogo.Parent do
+            TweenService:Create(_zqLogo, TweenInfo.new(1.2, Enum.EasingStyle.Sine), {TextColor3 = ThemeColors.Primary}):Play()
+            task.wait(1.2)
+            TweenService:Create(_zqLogo, TweenInfo.new(1.2, Enum.EasingStyle.Sine), {TextColor3 = ThemeColors.Accent}):Play()
+            task.wait(1.2)
         end
     end)
 
-    -- Subtitulo: "By Zerqon Hub"
-    local _hdSub = Instance.new("TextLabel", header)
-    _hdSub.Name = "HdrByLine"
-    _hdSub.Size = UDim2.new(0.40, 0, 0.42, 0)
-    _hdSub.Position = UDim2.new(0, 36, 0.55, 0)
-    _hdSub.BackgroundTransparency = 1
-    _hdSub.Visible = true
-    _hdSub.Text = "By Zerqon Hub"
-    _hdSub.TextColor3 = Color3.fromRGB(  0, 200, 160)
-    _hdSub.FontFace = Font.fromEnum(Enum.Font.Gotham)
-    _hdSub.TextSize = 10
-    _hdSub.TextXAlignment = Enum.TextXAlignment.Left
-    _hdSub.TextYAlignment = Enum.TextYAlignment.Center
-    _hdSub.ZIndex = 12
+    -- Titulo principal — tamaño aumentado, bolder
+    local _zqTitle = Instance.new("TextLabel", header)
+    _zqTitle.Name = "NebTitle"
+    _zqTitle.Position = UDim2.new(0.080, 0, 0.07, 0)
+    _zqTitle.Size = UDim2.new(0.28, 0, 0.45, 0)
+    _zqTitle.BackgroundTransparency = 1
+    _zqTitle.Text = "Highgrade Z"
+    _zqTitle.TextColor3 = ThemeColors.TextPrimary
+    _zqTitle.TextSize = 17
+    _zqTitle.Font = Enum.Font.GothamBold
+    _zqTitle.TextXAlignment = Enum.TextXAlignment.Left
+    _zqTitle.ZIndex = 22
+
+    -- Subtitulo: CORE HUB // BUILD 002
+    local _zqSub = Instance.new("TextLabel", header)
+    _zqSub.Name = "NebSubtitle"
+    _zqSub.Position = UDim2.new(0.086, 0, 0.52, 0)
+    _zqSub.Size = UDim2.new(0.30, 0, 0.30, 0)
+    _zqSub.BackgroundTransparency = 1
+    _zqSub.Text = "HIGHGRADE Z  //  VERSION 4.7.2"
+    _zqSub.TextColor3 = Color3.fromRGB(211, 198, 170)
+    _zqSub.TextSize = 9
+    _zqSub.Font = Enum.Font.GothamMedium
+    _zqSub.TextXAlignment = Enum.TextXAlignment.Left
+    _zqSub.ZIndex = 22
+
+    -- Punto ONLINE (pulso)
+    local _zqOnlineDot = Instance.new("Frame", header)
+    _zqOnlineDot.Name = "OnlineDot"
+    _zqOnlineDot.AnchorPoint = Vector2.new(1, 0.5)
+    _zqOnlineDot.Position = UDim2.new(0.91, 0, 0.5, 0)
+    _zqOnlineDot.Size = UDim2.fromOffset(8, 8)
+    _zqOnlineDot.BackgroundColor3 = Color3.fromRGB(255, 211, 116)
+    _zqOnlineDot.BorderSizePixel = 0
+    _zqOnlineDot.ZIndex = 22
+    Instance.new("UICorner", _zqOnlineDot).CornerRadius = UDim.new(1, 0)
+
+    -- Texto ONLINE
+    local _zqOnlineLbl = Instance.new("TextLabel", header)
+    _zqOnlineLbl.AnchorPoint = Vector2.new(1, 0.5)
+    _zqOnlineLbl.Position = UDim2.new(0.895, 0, 0.5, 0)
+    _zqOnlineLbl.Size = UDim2.new(0.08, 0, 0.3, 0)
+    _zqOnlineLbl.BackgroundTransparency = 1
+    _zqOnlineLbl.Text = "ONLINE"
+    _zqOnlineLbl.TextColor3 = Color3.fromRGB(255, 211, 116)
+    _zqOnlineLbl.TextSize = 9
+    _zqOnlineLbl.Font = Enum.Font.GothamBold
+    _zqOnlineLbl.TextXAlignment = Enum.TextXAlignment.Right
+    _zqOnlineLbl.ZIndex = 22
+
+    -- Animacion de pulso del punto online
+    task.spawn(function()
+        while header and header.Parent do
+            TweenService:Create(_zqOnlineDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine), {BackgroundTransparency = 0.35}):Play()
+            task.wait(0.8)
+            TweenService:Create(_zqOnlineDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine), {BackgroundTransparency = 0}):Play()
+            task.wait(0.8)
+        end
+    end)
 
     -- Contenedor centrado legacy (mantener para compatibilidad con referencias)
     local _hdCenter = Instance.new("Frame", header)
@@ -60171,7 +61603,9 @@ particles = {}
     -- Asignar referencia global al TopBar (antes apuntaba a HubHeaderBar eliminado)
     _G._hubHeaderBarRef = header
 
-    -- (animacion de titulo removida: header usa layout Capybara estilo con textos visibles)
+    -- Stubs de compatibilidad con el codigo que lee _hdLabel / _hdSub
+    local _hdLabel = _zqTitle
+    local _hdSub   = _zqSub
 
     -- ================================================================
     -- DRAG DEL HUB ? sistema ?nico consolidado (v-fix)
@@ -60189,7 +61623,7 @@ particles = {}
     dragIcon.TextTransparency = 1
     dragIcon.ZIndex = 0  -- ZIndex bajo para no bloquear botones y sliders del hub
     dragIcon.AutoButtonColor = false
-    dragIcon.Active = true
+    dragIcon.Active = false  -- FIX v38: hub no movible
 
     do
         -- Estado de drag en upvalues locales (no closures anidadas)
@@ -60227,9 +61661,11 @@ particles = {}
                 TweenService:Create(_hubCorner, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
                     {CornerRadius = UDim.new(0, 28)}):Play()
             end
+            -- Al arrastrar: borde más brillante (estilo imagen 2)
             TweenService:Create(glowBorder, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Thickness    = 0,
-                Transparency = 1.0,
+                Thickness    = 2.5,
+                Transparency = 0.0,
+                Color        = Color3.fromRGB(220, 185, 100),
             }):Play()
         end
 
@@ -60238,11 +61674,13 @@ particles = {}
             local _hubCorner = mainFrame:FindFirstChildOfClass("UICorner")
             if _hubCorner then
                 TweenService:Create(_hubCorner, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-                    {CornerRadius = UDim.new(0, 14)}):Play()
+                    {CornerRadius = UDim.new(0, 18)}):Play()
             end
-            TweenService:Create(glowBorder, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Thickness    = 0,
-                Transparency = 1.0,
+            -- Restaurar borde a su estado normal animado
+            TweenService:Create(glowBorder, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Thickness    = 1.8,
+                Transparency = 0.20,
+                Color        = Color3.fromRGB(200, 160, 80),
             }):Play()
         end
 
@@ -60256,7 +61694,7 @@ particles = {}
 
         -- Inicio de drag inmediato desde cualquier parte del mainFrame
         local function _startDrag(inputPos2D)
-            if true then return end  -- DESACTIVADO: hub no movible
+            -- HUB MOVIBLE v28: drag activado
             if _G._hubSettings and _G._hubSettings.allowHubDrag == false then return end
             if _dragActive then return end  -- ya dragging, no re-iniciar
             -- Verificar que el click sea dentro del hub
@@ -60360,115 +61798,132 @@ particles = {}
         header.Active = true
         header.MouseEnter:Connect(function()
             if not _dragActive then
+                -- v59: el comentario de arriba dice "resaltar borde" pero el
+                -- codigo lo apagaba (Thickness 0 / Transparency 1). Con el
+                -- pulso mas marcado eso se veia como un parpadeo cada vez que
+                -- el mouse pasaba por el header. Ahora resalta de verdad,
+                -- como el efecto de arrastre pero mas suave.
                 TweenService:Create(glowBorder, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    Thickness    = 0,
-                    Transparency = 1.0,
+                    Thickness    = 3.4,
+                    Transparency = 0.0,
                 }):Play()
             end
         end)
         header.MouseLeave:Connect(function()
             if not _dragActive then
                 -- FIX DRAG: NO desactivar header.Active en MouseLeave (rompe drag en algunos ejecutores)
+                -- v59: volver a la base del pulso, no apagar el borde.
                 TweenService:Create(glowBorder, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    Thickness    = 0,
-                    Transparency = 1.0,
+                    Thickness    = 1.8,
+                    Transparency = 0.20,
                 }):Play()
             end
         end)
     end -- cierra do drag
 
-    -- -- BOTON CERRAR (X imagen custom) ? esquina superior derecha, fuera del header --
-    local arrowToggleBtn = Instance.new("TextButton", mainFrame)
-    arrowToggleBtn.Name = "CloseHubBtn"
-    arrowToggleBtn.Size = UDim2.new(0, 36, 0, 36)
-    arrowToggleBtn.AnchorPoint = Vector2.new(1, 0)
-    arrowToggleBtn.Position = UDim2.new(1, 8, 0, -8)   -- esquina superior derecha, ligeramente fuera
-    arrowToggleBtn.BackgroundColor3 = Color3.fromRGB(4, 16, 32)
-    arrowToggleBtn.BackgroundTransparency = 0.35
-    arrowToggleBtn.Text = ""
-    arrowToggleBtn.AutoButtonColor = false
-    arrowToggleBtn.BorderSizePixel = 0
-    arrowToggleBtn.ZIndex = 9999
-    arrowToggleBtn.Active = true
-    arrowToggleBtn.ClipsDescendants = false
-    Instance.new("UICorner", arrowToggleBtn).CornerRadius = UDim.new(0, 8)
+    -- -- BOTON CERRAR (rbxassetid://73160772224057) -- esquina superior derecha DENTRO del hub --
+    -- v6: contenedor mas grande, imagen centrada con padding, sin stretch
+    local _CLOSE_BTN_SZ = 48  -- agrandado para mejor visibilidad
+    local _closeBtnContainer = Instance.new("Frame", mainFrame)
+    _closeBtnContainer.Name = "CloseHubBtnContainer"
+    _closeBtnContainer.Size = UDim2.new(0, _CLOSE_BTN_SZ, 0, _CLOSE_BTN_SZ)
+    _closeBtnContainer.AnchorPoint = Vector2.new(1, 0)
+    _closeBtnContainer.Position = UDim2.new(1, -6, 0, 6)
+    _closeBtnContainer.BackgroundTransparency = 1
+    _closeBtnContainer.BorderSizePixel = 0
+    _closeBtnContainer.ZIndex = 9999
+    _closeBtnContainer.ClipsDescendants = false
 
-    -- Borde teal brillante
-    local _closeBtnStroke = Instance.new("UIStroke", arrowToggleBtn)
-    _closeBtnStroke.Color = Color3.fromRGB(0, 230, 180)
-    _closeBtnStroke.Thickness = 1.8
-    _closeBtnStroke.Transparency = 0.15
-    _closeBtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    -- Fondo suave redondeado para que el icono se vea incrustado
+    local _closeBtnBg = Instance.new("Frame", _closeBtnContainer)
+    _closeBtnBg.Name = "CloseBtnBg"
+    _closeBtnBg.AnchorPoint = Vector2.new(0.5, 0.5)
+    _closeBtnBg.Position = UDim2.fromScale(0.5, 0.5)
+    _closeBtnBg.Size = UDim2.new(1, 0, 1, 0)
+    _closeBtnBg.BackgroundColor3 = ThemeColors.Background
+    _closeBtnBg.BackgroundTransparency = 0.55
+    _closeBtnBg.BorderSizePixel = 0
+    _closeBtnBg.ZIndex = 9998
+    Instance.new("UICorner", _closeBtnBg).CornerRadius = UDim.new(1, 0)
+    local _closeBtnBgStroke = Instance.new("UIStroke", _closeBtnBg)
+    _closeBtnBgStroke.Color = ThemeColors.Primary
+    _closeBtnBgStroke.Thickness = 1.5
+    _closeBtnBgStroke.Transparency = 0.35
+    _closeBtnBgStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-    -- Glow suave detras del boton
-    local _closeBtnGlow = Instance.new("ImageLabel", arrowToggleBtn)
-    _closeBtnGlow.Size = UDim2.new(2.2, 0, 2.2, 0)
+    -- Glow (mantenido oculto, igual que antes)
+    local _closeBtnGlow = Instance.new("ImageLabel", _closeBtnContainer)
+    _closeBtnGlow.Size = UDim2.new(0, 0, 0, 0)
     _closeBtnGlow.AnchorPoint = Vector2.new(0.5, 0.5)
     _closeBtnGlow.Position = UDim2.new(0.5, 0, 0.5, 0)
     _closeBtnGlow.BackgroundTransparency = 1
-    _closeBtnGlow.Image = "rbxassetid://5060523656"  -- radial gradient asset de Roblox
-    _closeBtnGlow.ImageColor3 = Color3.fromRGB(0, 230, 180)
-    _closeBtnGlow.ImageTransparency = 0.75
+    _closeBtnGlow.Image = "rbxassetid://5060523656"
+    _closeBtnGlow.ImageColor3 = Color3.fromRGB(220, 150,   0)
+    _closeBtnGlow.ImageTransparency = 1
     _closeBtnGlow.ZIndex = 9998
     _closeBtnGlow.ScaleType = Enum.ScaleType.Stretch
+    _closeBtnGlow.Visible = false
 
-    -- Imagen de la X
-    local arrowLabel = Instance.new("ImageLabel", arrowToggleBtn)
-    arrowLabel.Size = UDim2.new(0.72, 0, 0.72, 0)
+    -- Icono de cierre: centrado con padding uniforme, ScaleType.Fit para que no se deforme
+    local arrowLabel = Instance.new("ImageLabel", _closeBtnContainer)
+    arrowLabel.Name = "CloseIcon"
     arrowLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-    arrowLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    arrowLabel.Position = UDim2.fromScale(0.5, 0.5)
+    arrowLabel.Size = UDim2.new(0, _CLOSE_BTN_SZ - 10, 0, _CLOSE_BTN_SZ - 10)  -- padding de 5px por lado
     arrowLabel.BackgroundTransparency = 1
-    arrowLabel.Image = "rbxassetid://73776638714832"
-    arrowLabel.ScaleType = Enum.ScaleType.Fit
+    arrowLabel.BorderSizePixel = 0
+    arrowLabel.Image = "rbxassetid://73160772224057"
+    arrowLabel.ScaleType = Enum.ScaleType.Fit  -- Fit: mantiene proporcion, queda perfectamente centrado
     arrowLabel.ZIndex = 10000
-    arrowLabel.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    arrowLabel.ImageColor3 = ThemeColors.TextPrimary
+    arrowLabel.ImageTransparency = 0
 
-    -- Hover: se ilumina y agranda suavemente
+    -- TextButton invisible encima para capturar clicks (sin fondo, sin texto)
+    local arrowToggleBtn = Instance.new("TextButton", _closeBtnContainer)
+    arrowToggleBtn.Name = "CloseHubBtn"
+    arrowToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+    arrowToggleBtn.BackgroundTransparency = 1
+    arrowToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    arrowToggleBtn.Text = ""
+    arrowToggleBtn.AutoButtonColor = false
+    arrowToggleBtn.BorderSizePixel = 0
+    arrowToggleBtn.ZIndex = 10001
+    arrowToggleBtn.Active = true
+    -- FIX: eliminar el cuadrado verde que aparece en hover/click/touch en mobile
+    pcall(function()
+        local _noSel = Instance.new("Frame")
+        _noSel.Size = UDim2.new(0, 0, 0, 0)
+        _noSel.BackgroundTransparency = 1
+        _noSel.BorderSizePixel = 0
+        arrowToggleBtn.SelectionImageObject = _noSel
+    end)
+    Instance.new("UICorner", arrowToggleBtn).CornerRadius = UDim.new(1, 0)
+
+    -- FIX v32: Hover sin glow grande - solo cambia color del icono
     arrowToggleBtn.MouseEnter:Connect(function()
-        TweenService:Create(arrowToggleBtn, TweenInfo.new(0.12), {
-            BackgroundTransparency = 0.05,
-            BackgroundColor3 = Color3.fromRGB(6, 30, 50),
-        }):Play()
-        TweenService:Create(_closeBtnStroke, TweenInfo.new(0.12), {
-            Transparency = 0, Thickness = 2.5,
-            Color = Color3.fromRGB(0, 255, 200),
-        }):Play()
-        TweenService:Create(_closeBtnGlow, TweenInfo.new(0.12), {ImageTransparency = 0.50}):Play()
-        TweenService:Create(arrowLabel, TweenInfo.new(0.12), {
-            Size = UDim2.new(0.82, 0, 0.82, 0),
+        TweenService:Create(arrowLabel, TweenInfo.new(0.13), {
+            ImageColor3 = Color3.fromRGB(230, 195, 110),  -- oro brillante en hover
         }):Play()
     end)
     arrowToggleBtn.MouseLeave:Connect(function()
-        TweenService:Create(arrowToggleBtn, TweenInfo.new(0.18), {
-            BackgroundTransparency = 0.35,
-            BackgroundColor3 = Color3.fromRGB(4, 16, 32),
-        }):Play()
-        TweenService:Create(_closeBtnStroke, TweenInfo.new(0.18), {
-            Transparency = 0.15, Thickness = 1.8,
-            Color = Color3.fromRGB(0, 230, 180),
-        }):Play()
-        TweenService:Create(_closeBtnGlow, TweenInfo.new(0.18), {ImageTransparency = 0.75}):Play()
         TweenService:Create(arrowLabel, TweenInfo.new(0.18), {
-            Size = UDim2.new(0.72, 0, 0.72, 0),
+            ImageColor3 = Color3.fromRGB(245, 238, 225),  -- blanco calido normal
         }):Play()
     end)
 
-    -- Press: se achica un tick al clickear
+    -- Press: achica al clickear, vuelve con Back easing
     arrowToggleBtn.MouseButton1Down:Connect(function()
         TweenService:Create(arrowLabel, TweenInfo.new(0.07), {
-            Size = UDim2.new(0.60, 0, 0.60, 0),
+            ImageTransparency = 0.35,  -- press: leve fade en vez de achicar
         }):Play()
     end)
     arrowToggleBtn.MouseButton1Up:Connect(function()
         TweenService:Create(arrowLabel, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0.72, 0, 0.72, 0),
+            ImageTransparency = 0,
         }):Play()
     end)
 
-    -- FIX DUPLICADO: el handler de cierre real esta mas abajo (arrowToggleBtn segundo handler).
-    -- Este bloque fue eliminado para evitar que se creen DOS reopeners simultaneos al cerrar,
-    -- lo que causaba que la Z quedara visible y hubiera que clickear 3 veces para cerrar.
-
+    -- FIX DUPLICADO: el handler de cierre real esta mas abajo.
     minimizeBtn = arrowToggleBtn
 
 
@@ -60477,23 +61932,26 @@ particles = {}
     local SIDE_W = 0  -- sin sidebar lateral
     local TAB_BAR_H = 44  -- altura usada en ShowTabs/ShowServerPanel
 
-    -- ContentContainer: panel izquierdo del hub (contenido de tabs)
+    -- ContentContainer: panel central Zerqon (entre las tabs de los lados)
     contentContainer = Instance.new("Frame", mainFrame)
     contentContainer.Name = "ContentContainer"
-    contentContainer.Size = UDim2.new(0.65, 0, 1, -52)
-    contentContainer.Position = UDim2.new(0, 0, 0, 52)
-    contentContainer.BackgroundColor3 = Color3.fromRGB(24, 54, 122)   -- azul tab dark (igual al dock)
-    contentContainer.BackgroundTransparency = 0.20  -- ligeramente transparente
+    -- FULL BACKGROUND: ocupa todo el hub debajo del header (adherido al fondo)
+    contentContainer.Size = UDim2.new(1, 0, 1, -56)
+    contentContainer.Position = UDim2.new(0, 0, 0, 56)
+    contentContainer.BackgroundColor3 = Color3.fromRGB(26, 19,  5)
+    -- FIX OPACITY: el contenedor no puede agregar una capa oscura al entrar a un tab.
+    -- Con hubOpacity=0 debe ser completamente transparente para dejar visible el fondo.
+    contentContainer.BackgroundTransparency = 1
     contentContainer.BorderSizePixel = 0
     contentContainer.ClipsDescendants = true
     contentContainer.ZIndex = 50
-    contentContainer.Visible = true
+    contentContainer.Visible = false  -- inicia oculto; se muestra al clickear pestana
     local _ccCorner = Instance.new("UICorner", contentContainer)
-    _ccCorner.CornerRadius = UDim.new(0, 0)
+    _ccCorner.CornerRadius = UDim.new(0, 0)  -- sin redondeo para adherirse al fondo
     local _ccStroke = Instance.new("UIStroke", contentContainer)
-    _ccStroke.Color = Color3.fromRGB(83, 126, 218)   -- borde azul brillante (igual a tabs)
-    _ccStroke.Thickness = 1
-    _ccStroke.Transparency = 0.5
+    _ccStroke.Color = Color3.fromRGB(200, 160, 80)
+    _ccStroke.Thickness = 0
+    _ccStroke.Transparency = 1
     _ccStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local _ccPad = Instance.new("UIPadding", contentContainer)
 
@@ -60504,7 +61962,7 @@ particles = {}
     local _auroraFrame = Instance.new("Frame", contentContainer)
     _auroraFrame.Name = "AuroraEffect"
     _auroraFrame.Size = UDim2.new(1, 0, 1, 0)
-    _auroraFrame.BackgroundColor3 = Color3.fromRGB(  3,   8,  18)
+    _auroraFrame.BackgroundColor3 = Color3.fromRGB( 22,  18,  12)
     _auroraFrame.BackgroundTransparency = 1  -- completamente invisible
     _auroraFrame.BorderSizePixel = 0
     _auroraFrame.ZIndex = 1
@@ -60546,14 +62004,13 @@ particles = {}
     sideLayout.Padding = UDim.new(0, 6)
     sideLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-    local tabNames = {"HOME", "GAMEPLAY", "VISUALS", "VIP", "SETTINGS", "BATTLE", "USE", "EMOTES", "UPDATE"}
+    local tabNames = {"HOME", "GAMEPLAY", "VISUALS", "VIP", "SETTINGS", "BATTLE", "USE", "UPDATE"}
     local tabFunctions = {CreateMainTab, CreateWorldTab, CreateVisualsTab, CreatePremiumTab, CreateExclusiveTab, CreateCombatTab,
         function() CreateUseTab() end,      -- late binding: CreateUseTab se define despues de esta tabla
-        function() CreateEmotesTab() end,   -- late binding: CreateEmotesTab
         function() CreateUpdateTab() end}   -- late binding: CreateUpdateTab
     -- IDs de rbxassetid eliminados: se usan emojis en lugar de imagenes
-    local tabIcons = { "", "", "", "", "", "", "", "", "" }
-    local tabEmojis = { "", "", "", "", "", "", "", "", "" }
+    local tabIcons = { "", "", "", "", "", "", "", "" }
+    local tabEmojis = { "", "", "", "", "", "", "", "" }
 
     local sideButtons = {}
     local activeTabIdx = 1
@@ -60594,90 +62051,121 @@ particles = {}
     local _buildQueue    = {}      -- { idx, callback } pendientes
     _G._tabBuilding      = {}      -- [idx] = true mientras ese tab se construye
 
+    -- BUILD ROBUSTO v22
+    -- Nunca marcar un tab como construido antes de que su funcion termine.
+    -- Si una funcion de tab falla, destruimos el cache incompleto y permitimos
+    -- que el siguiente intento lo reconstruya. Esto evita tabs parcialmente
+    -- creados que despues contaminan el estado visual de otros tabs.
     local function _buildTabCached(idx, _onDone)
-        -- Ya construido: llamar callback inmediatamente y salir
-        if _tabBuilt[idx] then
-            if _onDone then _onDone() end
+        if not tabFunctions[idx] then return end
+
+        -- Cache valido: no reconstruir ni recrear controles.
+        local cached = _tabCache[idx]
+        if _tabBuilt[idx] and cached and cached.Parent then
+            if _onDone then pcall(_onDone, true) end
             return
         end
-        -- Si hay otro build corriendo, encolar
+
+        -- Si hay otro build, reemplazar la peticion pendiente del mismo idx
+        -- en lugar de acumular decenas de callbacks al spamear las tabs.
         if _buildMutex then
-            table.insert(_buildQueue, { idx = idx, cb = _onDone })
+            for n = #_buildQueue, 1, -1 do
+                if _buildQueue[n].idx == idx then
+                    _buildQueue[n].cb = _onDone
+                    return
+                end
+            end
+            table.insert(_buildQueue, {idx = idx, cb = _onDone})
             return
         end
-        -- Tomar el mutex
-        _buildMutex          = true
+
+        _buildMutex = true
         _G._tabBuilding[idx] = true
-        _tabBuilt[idx]       = true
+
         local tabFrame = Instance.new("Frame")
         tabFrame.Name                   = "TabCache_" .. tostring(idx)
         tabFrame.Size                   = UDim2.new(1, 0, 1, 0)
         tabFrame.Position               = UDim2.new(0, 0, 0, 0)
         tabFrame.BackgroundTransparency = 1
         tabFrame.BorderSizePixel        = 0
-        tabFrame.ZIndex                 = 1   -- ZIndex standard (contenido usa ZIndex relativo al frame padre)
+        tabFrame.ZIndex                 = 1
         tabFrame.Visible                = false
         tabFrame.Parent                 = contentContainer
-        _tabCache[idx] = tabFrame
-        -- Redirigir contentContainer para que tabFunctions construya dentro del frame del tab
+
         local _real = contentContainer
+        local ok, err
+        _tabCache[idx] = tabFrame
         contentContainer = tabFrame
-        -- FIX v21: registrar que idx se esta construyendo para que _noAutoActivateWorld
-        -- solo bloquee el World Tab (2) y no otros tabs como Combat (6).
         _G._currentBuildingTabIdx = idx
-        pcall(tabFunctions[idx])
+        ok, err = pcall(tabFunctions[idx])
         _G._currentBuildingTabIdx = nil
         contentContainer = _real
-        -- OPT: cachear ScrollingFrames del tab recien construido (evita GetDescendants en cada switch)
-        -- FIX LAG: resetear contador de auto-activaciones al terminar el build del tab
+
         _G._autoActivateCount = 0
-        task.defer(function()
-            if not tabFrame or not tabFrame.Parent then return end
-            local sfs = {}
-            for _, d in ipairs(tabFrame:GetDescendants()) do
-                if d:IsA("ScrollingFrame") then sfs[#sfs+1] = d end
-            end
-            _G._tabScrollFrames[idx] = sfs
-        end)
-        -- Liberar mutex y disparar el callback
-        _G._tabBuilding[idx] = nil
-        _buildMutex          = false
-        -- FIX FONT: aplicar la fuente activa al tab reci?n construido
-        -- (si el usuario ya hab?a seleccionado Arcade antes de abrir este tab)
-        task.defer(function()
-            if _G._hubActiveFontFace and tabFrame and tabFrame.Parent then
-                for _, obj in ipairs(tabFrame:GetDescendants()) do
-                    if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-                        pcall(function()
-                            obj.FontFace = _G._hubActiveFontFace
-                            -- FIX: NO reducir TextSize en modo Arcade
-                        end)
+
+        if not ok or not tabFrame.Parent then
+            -- Rollback completo: un build fallido no puede quedar cacheado.
+            _tabCache[idx] = nil
+            _tabBuilt[idx] = nil
+            _G._tabScrollFrames[idx] = nil
+            pcall(function() tabFrame:Destroy() end)
+            _G._tabBuilding[idx] = nil
+            _buildMutex = false
+
+            _log("Tab build failed", idx, err or "frame destroyed")
+
+            if _onDone then pcall(_onDone, false) end
+        else
+            -- Solo ahora el tab pasa a estado BUILT.
+            _tabBuilt[idx] = true
+
+            -- Cachear ScrollingFrames despues de terminar el build.
+            task.defer(function()
+                if not tabFrame or not tabFrame.Parent then return end
+                local sfs = {}
+                for _, d in ipairs(tabFrame:GetDescendants()) do
+                    if d:IsA("ScrollingFrame") then sfs[#sfs + 1] = d end
+                end
+                _G._tabScrollFrames[idx] = sfs
+            end)
+
+            -- Aplicar fuente activa sin tocar estados/propiedades visuales de toggles.
+            task.defer(function()
+                if _G._hubActiveFontFace and tabFrame and tabFrame.Parent then
+                    for _, obj in ipairs(tabFrame:GetDescendants()) do
+                        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+                            pcall(function() obj.FontFace = _G._hubActiveFontFace end)
+                        end
                     end
                 end
-            end
-        end)
-        if _onDone then pcall(_onDone) end
-        -- Procesar siguiente elemento de la cola
+            end)
+
+            _G._tabBuilding[idx] = nil
+            _buildMutex = false
+            if _onDone then pcall(_onDone, true) end
+        end
+
+        -- Procesar la siguiente peticion.
         if #_buildQueue > 0 then
-            local next = table.remove(_buildQueue, 1)
-            task.defer(function() _buildTabCached(next.idx, next.cb) end)
+            local nextReq = table.remove(_buildQueue, 1)
+            task.defer(function() _buildTabCached(nextReq.idx, nextReq.cb) end)
         end
     end
 
     -- OPT: TweenInfo compartido fuera de SetActiveTab (una sola instancia, nunca se recrea)
     local _ti_tab = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-    -- DOCK NIGHT: colores de tabs en paleta azul oceano nocturno
-    local _C_TOG_BG_IDLE   = Color3.fromRGB(5,  12, 35)    -- azul noche profundo
-    local _C_TOG_BG_ACTIVE = Color3.fromRGB(8,  20, 55)    -- azul activo
-    local _C_TOG_STROKE    = Color3.fromRGB(0, 180, 140)   -- teal oscuro borde
-    local _C_KNOB_ON       = Color3.fromRGB(50, 255, 180)  -- knob ON teal brillante
-    local _C_KNOB_OFF      = Color3.fromRGB(10, 25,  60)   -- knob OFF azul oscuro
-    local _C_LBL_ACTIVE    = Color3.fromRGB(0,  220, 170)  -- teal claro activo
-    local _C_LBL_IDLE      = Color3.fromRGB(180, 230, 220) -- blanco azulado frio
+    -- DOCK NIGHT: colores de tabs en paleta dorada nocturna
+    local _C_TOG_BG_IDLE   = Color3.fromRGB(35,  26,  5)    -- carbon profundo
+    local _C_TOG_BG_ACTIVE = Color3.fromRGB(55,  40,  8)    -- carbon activo
+    local _C_TOG_STROKE    = Color3.fromRGB(200, 160, 80)   -- oro del hub, borde
+    local _C_KNOB_ON       = Color3.fromRGB(255, 190,  50)  -- knob ON oro brillante
+    local _C_KNOB_OFF      = Color3.fromRGB(60, 44,  10)   -- knob OFF carbon oscuro
+    local _C_LBL_ACTIVE    = Color3.fromRGB(220,  150,   0)  -- oro claro activo
+    local _C_LBL_IDLE      = Color3.fromRGB(230, 214, 180) -- blanco calido
 
     -- Colores de acento unicos por pestana (deben coincidir con los del loop de creacion)
-    local _HUB_COLOR = Color3.fromRGB(5, 15, 40)  -- color del hub (igual que mainFrame)
+    local _HUB_COLOR = Color3.fromRGB(40, 29,  5)  -- color del hub (igual que mainFrame)
     local _tabAccentMap = {
         _HUB_COLOR,   -- 1 HOME
         _HUB_COLOR,   -- 2 GAMEPLAY
@@ -60686,43 +62174,74 @@ particles = {}
         _HUB_COLOR,   -- 5 SETTINGS
         _HUB_COLOR,   -- 6 BATTLE
         _HUB_COLOR,   -- 7 USE
-        _HUB_COLOR,   -- 8 EMOTES
-        _HUB_COLOR,   -- 9 UPDATE
+        _HUB_COLOR,   -- 8 UPDATE
     }
+
+    -- Zerqon palette para estados activo/idle de botones
+    local _ZQ_Primary  = Color3.fromRGB(220, 185, 100)
+    local _ZQ_Panel2   = Color3.fromRGB(43, 33, 10)
+    local _ZQ_Hover    = Color3.fromRGB(66, 51, 18)
+    local _ZQ_Line     = Color3.fromRGB(200, 160, 80)
+    local _ZQ_SubText  = Color3.fromRGB(211, 198, 170)
 
     local function _applyBtnState(i, isActive)
         local btn = sideButtons[i]
         if not btn then return end
         local r = _G._tabBtnRefs[i]
-        local stroke = r and r.stroke
-        local lbl2 = r and r.lbl2
+        local stroke   = r and r.stroke
+        local lbl2     = r and r.lbl2
+        local iconLbl  = r and r.icon
+        local accentBar = r and r.activeBar
+        local ti = TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+        -- FIX v29b: NO forzar Visible=true aqui; si el boton esta en fade-out
+        -- (Visible puede ser false ya que task.delay lo ocultara), forzarlo
+        -- visible cancela la animacion. Solo restaurar BackgroundTransparency.
+        if btn then
+            btn.BackgroundTransparency = 1
+        end
         if isActive then
-            TweenService:Create(btn, TweenInfo.new(0.16), {
-                BackgroundColor3 = Color3.fromRGB(83, 126, 218),
-                BackgroundTransparency = 0.04,
+            TweenService:Create(btn, ti, {
+                BackgroundTransparency = 1,
             }):Play()
-            if stroke then TweenService:Create(stroke, TweenInfo.new(0.16), {
-                Color = Color3.fromRGB(83, 126, 218),
-                Thickness = 1.8,
-                Transparency = 0.05,
+            if stroke then TweenService:Create(stroke, ti, {
+                Color = _ZQ_Primary,
+                Thickness = 1.4,
+                Transparency = 0.10,
             }):Play() end
-            if lbl2 then TweenService:Create(lbl2, TweenInfo.new(0.16), {
-                TextColor3 = Color3.fromRGB(244, 247, 255),
-                TextSize = 14,
+            if lbl2 then TweenService:Create(lbl2, ti, {
+                TextColor3 = _ZQ_Primary,
+                TextSize = 10,
+                TextTransparency = 0,  -- FIX: restaurar texto al cambiar pestana
+            }):Play() end
+            if iconLbl then TweenService:Create(iconLbl, ti, {
+                TextColor3 = _ZQ_Primary,
+                TextTransparency = 0,  -- FIX: restaurar icono al cambiar pestana
+            }):Play() end
+            if accentBar then TweenService:Create(accentBar, ti, {
+                Size = UDim2.fromScale(0.012, 0.70),
+                BackgroundTransparency = 0,
             }):Play() end
         else
-            TweenService:Create(btn, TweenInfo.new(0.16), {
-                BackgroundColor3 = Color3.fromRGB(42, 77, 160),
-                BackgroundTransparency = 0.16,
+            TweenService:Create(btn, ti, {
+                BackgroundTransparency = 1,
             }):Play()
-            if stroke then TweenService:Create(stroke, TweenInfo.new(0.16), {
-                Color = Color3.fromRGB(83, 126, 218),
-                Thickness = 1.3,
-                Transparency = 0.30,
+            if stroke then TweenService:Create(stroke, ti, {
+                Color = _ZQ_Line,
+                Thickness = 1.0,
+                Transparency = 0.35,
             }):Play() end
-            if lbl2 then TweenService:Create(lbl2, TweenInfo.new(0.16), {
-                TextColor3 = Color3.fromRGB(244, 247, 255),
-                TextSize = 13,
+            if lbl2 then TweenService:Create(lbl2, ti, {
+                TextColor3 = _ZQ_SubText,
+                TextSize = 9,
+                TextTransparency = 0,  -- FIX: restaurar texto al cambiar pestana
+            }):Play() end
+            if iconLbl then TweenService:Create(iconLbl, ti, {
+                TextColor3 = _ZQ_SubText,
+                TextTransparency = 0,  -- FIX: restaurar icono al cambiar pestana
+            }):Play() end
+            if accentBar then TweenService:Create(accentBar, ti, {
+                Size = UDim2.fromScale(0.012, 0),
+                BackgroundTransparency = 1,
             }):Play() end
         end
     end
@@ -60731,28 +62250,27 @@ particles = {}
     -- TAB BUTTONS: exact visual language of MM2_GUI_Replica_LocalScript
     -- Rounded blue cards, compact spacing, text only, no emojis/icons.
     -- ============================================================
-    local _replicaBlue      = Color3.fromRGB(46, 91, 190)
-    local _replicaBlueDark  = Color3.fromRGB(24, 54, 122)
-    local _replicaBluePanel = Color3.fromRGB(42, 77, 160)
-    local _replicaBright    = Color3.fromRGB(83, 126, 218)
-    local _replicaWhite     = Color3.fromRGB(244, 247, 255)
-    local _replicaSub       = Color3.fromRGB(202, 214, 241)
+    local _replicaBlue      = Color3.fromRGB(190,144,  46)
+    local _replicaBlueDark  = Color3.fromRGB(122, 91,  24)
+    local _replicaBluePanel = Color3.fromRGB(160,123,  42)
+    local _replicaBright    = Color3.fromRGB(218, 175,  83)
+    local _replicaWhite     = Color3.fromRGB(255, 252, 244)
+    local _replicaSub       = Color3.fromRGB(241, 229, 202)
 
     -- ============================================================
-    -- TAB DOCK REPLICA: crear siempre el contenedor antes de estilizarlo.
-    -- Esto evita el error "attempt to index nil with GetChildren" al abrir.
+    -- TAB DOCK ZERQON: contenedor fantasma para compatibilidad interna
+    -- Los botones reales se crean como posiciones fijas en mainFrame
     -- ============================================================
     if not tabDockFrame or not tabDockFrame.Parent then
         tabDockFrame = Instance.new("Frame")
         tabDockFrame.Name = "TabDock"
         tabDockFrame.Parent = mainFrame
-        tabDockFrame.Position = UDim2.new(0.65, 0, 0, 52)
-        tabDockFrame.Size = UDim2.new(0.35, 0, 1, -52)
-        tabDockFrame.BackgroundColor3 = Color3.fromRGB(24, 54, 122)
-        tabDockFrame.BackgroundTransparency = 0.08
+        tabDockFrame.Position = UDim2.new(0, 0, 0, 0)
+        tabDockFrame.Size = UDim2.new(0, 0, 0, 0)
+        tabDockFrame.BackgroundTransparency = 1
         tabDockFrame.BorderSizePixel = 0
-        tabDockFrame.ZIndex = 10
-        tabDockFrame.ClipsDescendants = true
+        tabDockFrame.ZIndex = 1
+        tabDockFrame.Visible = false
         _G._hubTabDockFrame = tabDockFrame
     end
 
@@ -60760,124 +62278,259 @@ particles = {}
         tabDockList = Instance.new("ScrollingFrame")
         tabDockList.Name = "DockList"
         tabDockList.Parent = tabDockFrame
-        tabDockList.Position = UDim2.new(0, 0, 0, 0)
-        tabDockList.Size = UDim2.new(1, 0, 1, 0)
+        tabDockList.Size = UDim2.new(0, 0, 0, 0)
         tabDockList.BackgroundTransparency = 1
         tabDockList.BorderSizePixel = 0
-        tabDockList.ZIndex = 11
-        tabDockList.ScrollBarThickness = 3
-        tabDockList.ScrollBarImageColor3 = Color3.fromRGB(83, 126, 218)
-        tabDockList.ScrollingDirection = Enum.ScrollingDirection.Y
+        tabDockList.ZIndex = 1
+        tabDockList.ScrollBarThickness = 0
         tabDockList.CanvasSize = UDim2.new(0, 0, 0, 0)
-        tabDockList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        tabDockList.ElasticBehavior = Enum.ElasticBehavior.Never
     end
-
-    -- Clean old dock decorations.
-    for _, child in ipairs(tabDockFrame:GetChildren()) do
-        if child:IsA("UIGradient") then pcall(function() child:Destroy() end) end
-        if child.Name == "DockDivider" or child.Name == "DockArrowUp" or child.Name == "DockArrowDn" then
-            pcall(function() child:Destroy() end)
-        end
-    end
-    tabDockFrame.BackgroundColor3 = _replicaBlueDark
-    tabDockFrame.BackgroundTransparency = 0.08
-
-    local oldDockStroke = tabDockFrame:FindFirstChildOfClass("UIStroke")
-    if oldDockStroke then
-        oldDockStroke.Color = _replicaBright
-        oldDockStroke.Thickness = 1.5
-        oldDockStroke.Transparency = 0.20
-    else
-        local st = Instance.new("UIStroke", tabDockFrame)
-        st.Color = _replicaBright
-        st.Thickness = 1.5
-        st.Transparency = 0.20
-    end
-    local dc = tabDockFrame:FindFirstChildOfClass("UICorner") or Instance.new("UICorner", tabDockFrame)
-    dc.CornerRadius = UDim.new(0, 9)
-
-    local dockLayout = tabDockList and tabDockList:FindFirstChildOfClass("UIListLayout")
-    if not dockLayout then dockLayout = Instance.new("UIListLayout", tabDockList) end
-    dockLayout.Padding = UDim.new(0, 8)
-    dockLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    local dockPad = tabDockList and tabDockList:FindFirstChildOfClass("UIPadding")
-    if not dockPad then dockPad = Instance.new("UIPadding", tabDockList) end
-    dockPad.PaddingTop = UDim.new(0, 8)
-    dockPad.PaddingBottom = UDim.new(0, 8)
-    dockPad.PaddingLeft = UDim.new(0, 8)
-    dockPad.PaddingRight = UDim.new(0, 8)
 
     -- ============================================================
-    -- SetActiveTab: core function (defined before buttons use it)
-    -- Builds the tab if needed, then shows/hides frames and updates
-    -- button states to reflect the newly active tab.
+    -- ZERQON TAB LAYOUT: posiciones unicas alrededor del panel central
+    -- Paleta Zerqon — FIX v7: sin azules, todo hub ThemeColors
+    local _ZQ = {
+        Panel2   = ThemeColors.Background,
+        Primary  = ThemeColors.Primary,
+        SubText  = ThemeColors.TextSecondary,
+        Text     = ThemeColors.TextPrimary,
+        Line     = ThemeColors.Primary,
+        Hover    = ThemeColors.BackgroundLight,
+        Accent2  = ThemeColors.Accent,
+        Accent3  = ThemeColors.Aurora1,
+    }
+
+    -- Layout: 8 posiciones en escala relativa al mainFrame (sin el topbar de 56px)
+    -- Columna izquierda: 4 tabs (HOME, VISUALS, SETTINGS, USE)
+    -- Columna derecha: 4 tabs (GAMEPLAY, VIP, BATTLE, UPDATE)
+    -- Fila inferior: nada suelto, USE cierra la columna izquierda (v56)
+    -- Cada boton: ancho 0.19-0.20, alto 0.095 del contenedor de tabs
+    -- Columna izquierda en X 0.075 (v57), columna derecha en 0.750/0.775
+    -- El contenedor de tabs ocupa 0% Y a 100% Y (debajo del header)
+    -- v57: columna izquierda corrida a la derecha. Antes HOME estaba en
+    -- X 0.055 y VISUALS/SETTINGS/USE en 0.035 (pegadas al borde y
+    -- desalineadas entre si). Ahora las 4 comparten X 0.075, y como la
+    -- animacion de entrada sale de X - 0.05 = 0.025 tampoco entran
+    -- recortadas. La columna derecha no se mueve: 0.775 + 0.19 = 0.965
+    -- ya casi no deja margen del otro lado.
+    local _zqTabPositions = {
+        -- [idx] = { posX, posY, sizeX, sizeY }  -- en scale relativa al mainFrame
+        {0.075, 0.14, 0.20, 0.095},  -- 1 HOME        top-left
+        {0.750, 0.14, 0.20, 0.095},  -- 2 GAMEPLAY    top-right
+        {0.075, 0.34, 0.19, 0.095},  -- 3 VISUALS     mid-left-upper
+        {0.775, 0.34, 0.19, 0.095},  -- 4 VIP         mid-right-upper
+        {0.075, 0.61, 0.19, 0.095},  -- 5 SETTINGS    mid-left-lower
+        {0.775, 0.61, 0.19, 0.095},  -- 6 BATTLE      mid-right-lower
+        {0.075, 0.85, 0.19, 0.095},  -- 7 USE         left-column-bottom (debajo de SETTINGS)
+        {0.775, 0.85, 0.19, 0.095},  -- 8 UPDATE      right-column-bottom (debajo de BATTLE)
+    }
+
+    -- Iconos para cada tab (primer tab usa ◆, los demas ◇)
+    local _zqTabIcons = { "◆", "◆", "◆", "◆", "◆", "◆", "◆", "◆" }
+    -- FIX v7: acentos usando SOLO paleta del hub (amber/gold/bronze), sin azul ni cian
+    local _zqTabAccents = {
+        ThemeColors.Accent,                   -- HOME      : amber brillante
+        ThemeColors.Primary,                  -- GAMEPLAY  : gold principal
+        ThemeColors.Aurora1,                  -- VISUALS   : aurora1
+        ThemeColors.Aurora2,                  -- VIP       : aurora2
+        ThemeColors.Aurora3,                  -- SETTINGS  : aurora3
+        Color3.fromRGB(210, 165, 75),         -- BATTLE    : amber oscuro
+        Color3.fromRGB(230, 180, 90),         -- USE       : amber medio
+        Color3.fromRGB(195, 150, 60),         -- UPDATE    : bronze
+    }
+
     -- ============================================================
+    -- SetActiveTab: core function
+    -- ================================================================
+    -- FIX v5: el fade-out anterior tocaba TextTransparency/ImageTransparency
+    -- de TODOS los descendientes, incluyendo el knob, pill y accentBar de
+    -- los toggles. Si el usuario cambiaba de pestana antes de que los tweens
+    -- de restore terminaran, esos valores quedaban en 1 para siempre.
+    --
+    -- Solucion: el fade-out SOLO oculta el frame del tab anterior con
+    -- Visible=false (instantaneo, sin tweens en descendientes).
+    -- El fade-in usa AnimateColumnsEntry que solo anima Position del root.
+    -- Un token de sesion (_tabSwitchToken) invalida tweens huerfanos.
+    -- ================================================================
+    _G._tabSwitchToken = (_G._tabSwitchToken or 0)
+
     SetActiveTab = function(idx)
         if not tabNames[idx] then return end
-        -- Hide all cached tab frames
-        for i, frame in pairs(_tabCache) do
+
+        -- Cada click invalida inmediatamente cualquier animacion/entrada anterior.
+        _G._tabSwitchToken = (_G._tabSwitchToken or 0) + 1
+        local myToken = _G._tabSwitchToken
+
+        -- No usamos delays para cambiar de contenido. Un delay de 160ms hacia que
+        -- varios clicks rapidos dejaran callbacks viejos intentando mostrar tabs
+        -- que ya no eran activos.
+        for _, frame in pairs(_tabCache) do
             if frame and frame.Parent then
                 frame.Visible = false
+                -- El root vuelve siempre a su posicion neutra; los hijos conservan
+                -- sus posiciones propias y estados.
+                frame.Position = UDim2.new(0, 0, 0, 0)
             end
         end
-        -- Update button visual states
-        for i = 1, #tabNames do
-            pcall(function() _applyBtnState(i, i == idx) end)
-        end
+
         activeTabIdx = idx
         _G._activeTabIdx = idx
-        -- Build tab if not yet built, then show its frame
-        _buildTabCached(idx, function()
-            local frame = _tabCache[idx]
-            if frame and frame.Parent then
-                frame.Visible = true
+
+        -- FIX v29b: NO llamar _applyBtnState cuando los botones de tab estan
+        -- en proceso de fade-out (al entrar a una pestana con _tabContentActive).
+        -- _applyBtnState forzaba TextTransparency=0 y re-aparecia el boton activo.
+        -- Solo aplicar el estado visual cuando los botones son visibles (al cambiar
+        -- de una pestana activa a otra sin pasar por el inicio).
+        if not _G._tabContentActive then
+            for i = 1, #tabNames do
+                pcall(function() _applyBtnState(i, i == idx) end)
             end
+        end
+
+        _buildTabCached(idx, function(success)
+            if myToken ~= _G._tabSwitchToken then return end
+            if success == false then return end
+
+            local frame = _tabCache[idx]
+            if not frame or not frame.Parent then return end
+
+            -- ANIMACION DE ENTRADA v6: fade-in suave + slide lateral lento (cinematica)
+            -- El contenido aparece desde la derecha con una curva Quint lenta (0.75s)
+            -- y el contenedor hace un fade-in simultaneo desde transparente.
+            if contentContainer and contentContainer.Parent then
+                contentContainer.Visible = true
+                contentContainer.BackgroundTransparency = 1
+                TweenService:Create(contentContainer,
+                    TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                    {BackgroundTransparency = math.clamp(1 - ((_G._hubSettings and _G._hubSettings.hubOpacity or 0) / 100), 0, 1)}
+                ):Play()
+            end
+            -- El frame arranca levemente a la derecha (offset +6%) y desliza suavemente al centro
+            -- con una curva Quint lenta que da sensacion cinematica/fluida
+            frame.Position = UDim2.new(0.06, 0, 0, 0)
+            frame.BackgroundTransparency = 1
+            frame.Visible = true
+            TweenService:Create(frame,
+                TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                {Position = UDim2.new(0, 0, 0, 0)}
+            ):Play()
+            -- Fade in del frame junto con el slide
+            pcall(function()
+                TweenService:Create(frame,
+                    TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+                    {BackgroundTransparency = 1}  -- el frame en si siempre es transparente, no afecta hijos
+                ):Play()
+            end)
         end)
     end
     -- ============================================================
 
+    -- Crear botones Zerqon posicionados fijamente en mainFrame
     for i = 1, #tabNames do
-        local btn = Instance.new("Frame", tabDockList)
+        local pos = _zqTabPositions[i]
+        if not pos then break end
+
+        local btn = Instance.new("Frame", mainFrame)
         btn.Name = tabNames[i] .. "SideBtn"
-        btn.Size = UDim2.new(1, 0, 0, 70)
-        btn.BackgroundColor3 = _replicaBluePanel
-        btn.BackgroundTransparency = (i == 1) and 0.04 or 0.16
+        btn.Position = UDim2.fromScale(pos[1], pos[2])
+        btn.Size = UDim2.fromScale(pos[3], pos[4])
+        btn.BackgroundColor3 = ThemeColors.BackgroundLight
+        btn.BackgroundTransparency = 1
         btn.BorderSizePixel = 0
-        btn.ClipsDescendants = true
-        btn.LayoutOrder = i
         btn.ZIndex = 13
+        btn.ClipsDescendants = false
 
         local cr = Instance.new("UICorner", btn)
-        cr.CornerRadius = UDim.new(0, 9)
+        cr.CornerRadius = UDim.new(0, 10)
         local bs = Instance.new("UIStroke", btn)
-        bs.Color = _replicaBright
-        bs.Thickness = (i == 1) and 1.8 or 1.3
-        bs.Transparency = (i == 1) and 0.05 or 0.30
+        bs.Color = _ZQ.Line
+        -- INICIO: todos los bordes invisibles, apareceran con animacion
+        bs.Thickness = (i == 1) and 1.4 or 1.0
+        bs.Transparency = 1.0  -- inicia transparente
         bs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
+        -- Capsula de tab usando el mismo asset solicitado (imagen 2 style).
+        local _tabShape = _zqShape(btn, "ZQTabShape", 13)
+        -- Inicia invisible para animar entrada
+        if _tabShape then _tabShape.ImageTransparency = 1 end
+
+        -- Barra de acento izquierda (indicador activo)
+        local accentBar = Instance.new("Frame", btn)
+        accentBar.Name = "AccentBar"
+        accentBar.AnchorPoint = Vector2.new(0, 0.5)
+        accentBar.Position = UDim2.fromScale(0, 0.5)
+        accentBar.Size = UDim2.fromScale(0.012, 0)
+        accentBar.BackgroundColor3 = _zqTabAccents[i]
+        accentBar.BackgroundTransparency = 1
+        accentBar.BorderSizePixel = 0
+        accentBar.ZIndex = 14
+        Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0, 5)
+
+        -- Icono (inicia transparente)
+        local iconLbl = Instance.new("TextLabel", btn)
+        iconLbl.Name = "TabIcon"
+        iconLbl.Position = UDim2.fromScale(0.08, 0.14)
+        iconLbl.Size = UDim2.fromScale(0.20, 0.70)
+        iconLbl.BackgroundTransparency = 1
+        iconLbl.Text = _zqTabIcons[i]
+        iconLbl.TextColor3 = _ZQ.SubText
+        iconLbl.TextSize = 13
+        iconLbl.Font = Enum.Font.GothamBold
+        iconLbl.ZIndex = 15
+        iconLbl.TextTransparency = 1  -- inicia invisible
+
+        -- Etiqueta (inicia transparente)
         local lbl = Instance.new("TextLabel", btn)
         lbl.Name = "TabLabel"
+        lbl.Position = UDim2.fromScale(0.30, 0)
+        lbl.Size = UDim2.fromScale(0.65, 1)
         lbl.BackgroundTransparency = 1
-        lbl.Size = UDim2.new(1, -12, 1, 0)
-        lbl.Position = UDim2.new(0, 6, 0, 0)
         lbl.Text = tabNames[i]
-        lbl.Font = Enum.Font.Gotham
-        lbl.TextSize = (i == 1) and 14 or 13
-        lbl.TextColor3 = _replicaWhite
-        lbl.TextXAlignment = Enum.TextXAlignment.Center
-        lbl.TextYAlignment = Enum.TextYAlignment.Center
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = (i == 1) and 10 or 9
+        lbl.TextColor3 = (i == 1) and _ZQ.Primary or _ZQ.SubText
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextWrapped = false
-        lbl.TextTruncate = Enum.TextTruncate.AtEnd
-        lbl.ZIndex = 16
+        lbl.ZIndex = 15
+        lbl.TextTransparency = 1  -- inicia invisible
 
-        local clickRow = Instance.new("TextButton", btn)
-        clickRow.Name = "TabClick"
-        clickRow.Size = UDim2.new(1, 0, 1, 0)
-        clickRow.BackgroundTransparency = 1
-        clickRow.Text = ""
-        clickRow.AutoButtonColor = false
-        clickRow.ZIndex = 20
+        -- ANIMACION DE ENTRADA DE PESTANAS v6: slide desde izquierda + fade-in lento
+        -- Cada boton desliza desde X negativo y aparece con curva Quint lenta
+        local _btnDelay = 0.08 + (i - 1) * 0.10  -- delay escalonado (un poco mas rapido entre si)
+        local _ti_btnIn = TweenInfo.new(0.80, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)  -- mas lenta
+        -- Posicion inicial: desplazado hacia la izquierda
+        btn.Position = UDim2.fromScale(btn.Position.X.Scale - 0.05, btn.Position.Y.Scale)
+        task.delay(_btnDelay, function()
+            if not btn or not btn.Parent then return end
+            -- Slide hacia la posicion final + fade in del stroke
+            local _btnFinalPos = _zqTabPositions[i]
+            if _btnFinalPos then
+                TweenService:Create(btn, _ti_btnIn, {
+                    Position = UDim2.fromScale(_btnFinalPos[1], _btnFinalPos[2]),
+                }):Play()
+            end
+            TweenService:Create(bs, _ti_btnIn, {
+                Transparency = (i == 1) and 0.10 or 0.35,
+            }):Play()
+            -- Fade in de la imagen ZQTabShape
+            local _sh = btn:FindFirstChild("ZQTabShape")
+            if _sh then
+                TweenService:Create(_sh, _ti_btnIn, {ImageTransparency = 0}):Play()
+            end
+            -- Fade in del icono y label
+            TweenService:Create(iconLbl, _ti_btnIn, {TextTransparency = 0}):Play()
+            TweenService:Create(lbl, _ti_btnIn, {TextTransparency = 0}):Play()
+        end)
+
+        -- Si es el tab activo inicial, marcar visualmente (despues del delay)
+        if i == 1 then
+            btn.BackgroundTransparency = 1
+            task.delay(_btnDelay + 0.65, function()
+                if not accentBar or not accentBar.Parent then return end
+                accentBar.Size = UDim2.fromScale(0.012, 0.70)
+                accentBar.BackgroundTransparency = 0
+            end)
+        end
 
         local _tabKey = tabNames[i]:lower():gsub(" ", "_")
         table.insert(_LangObjects, {obj=lbl, key=_tabKey, prefix="", suffix=""})
@@ -60886,63 +62539,134 @@ particles = {}
             if dict and dict[_tabKey] then lbl.Text = dict[_tabKey] end
         end
 
-        local ti = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        -- Boton de click transparente encima
+        local clickRow = Instance.new("TextButton", btn)
+        clickRow.Name = "TabClick"
+        clickRow.Size = UDim2.new(1, 0, 1, 0)
+        clickRow.BackgroundTransparency = 1
+        clickRow.Text = ""
+        clickRow.AutoButtonColor = false
+        clickRow.ZIndex = 20
+
+        local ti = TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+        -- UIScale para animacion premium de hover en cada boton de tab
+        local _btnHoverScale = btn:FindFirstChildOfClass("UIScale")
+        if not _btnHoverScale then
+            _btnHoverScale = Instance.new("UIScale", btn)
+            _btnHoverScale.Scale = 1.0
+        end
+        local _hoverTiIn  = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+        local _hoverTiOut = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
         clickRow.MouseEnter:Connect(function()
+            -- Animacion premium: agrandamiento suave al pasar el mouse
+            TweenService:Create(_btnHoverScale, _hoverTiIn, {Scale = 1.08}):Play()
             if activeTabIdx ~= i then
-                TweenService:Create(btn, ti, {
-                    BackgroundColor3 = _replicaBlue,
-                    BackgroundTransparency = 0.05,
-                }):Play()
-                TweenService:Create(bs, ti, {
-                    Color = _replicaBright,
-                    Thickness = 1.8,
-                    Transparency = 0.05,
-                }):Play()
-                TweenService:Create(lbl, ti, {
-                    TextColor3 = _replicaWhite,
-                    TextSize = 14,
-                }):Play()
+                TweenService:Create(bs, _hoverTiIn, {Transparency = 0.10, Thickness = 1.5}):Play()
             end
         end)
         clickRow.MouseLeave:Connect(function()
+            -- Volver al tamaño original con easing suave
+            TweenService:Create(_btnHoverScale, _hoverTiOut, {Scale = 1.0}):Play()
             if activeTabIdx ~= i then
-                TweenService:Create(btn, ti, {
-                    BackgroundColor3 = _replicaBluePanel,
-                    BackgroundTransparency = 0.16,
-                }):Play()
-                TweenService:Create(bs, ti, {
-                    Color = _replicaBright,
-                    Thickness = 1.3,
-                    Transparency = 0.30,
-                }):Play()
-                TweenService:Create(lbl, ti, {
-                    TextColor3 = _replicaWhite,
-                    TextSize = 13,
-                }):Play()
+                TweenService:Create(bs, _hoverTiOut, {Transparency = 0.35, Thickness = 1.0}):Play()
             end
         end)
 
         local lastClick = 0
         clickRow.Activated:Connect(function()
             local now = tick()
-            if now - lastClick < 0.30 then return end
+            if now - lastClick < 0.35 then return end
             lastClick = now
             PlayTabSound()
+
+            -- ANIMACION DE ENTRADA A PESTANA v29b: fade-out de TODOS los botones
+            -- (incluyendo el clickeado) al entrar a una pestana.
+            -- Al salir, el bloque de restauracion escalonada los devuelve todos.
+            local _ti_fadeOut = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+            for _jj, _otherBtn2 in ipairs(sideButtons) do
+                local _capturedBtn = _otherBtn2
+                pcall(function()
+                    local _rIcon2 = _capturedBtn:FindFirstChild("TabIcon")
+                    local _rLbl2  = _capturedBtn:FindFirstChild("TabLabel")
+                    local _rStr2  = _capturedBtn:FindFirstChildOfClass("UIStroke")
+                    local _rShp2  = _capturedBtn:FindFirstChild("ZQTabShape")
+                    -- Asegurar que esten visibles antes de animar
+                    _capturedBtn.Visible = true
+                    if _rShp2 then _rShp2.Visible = true end
+                    -- Tweens de fade-out
+                    if _rIcon2 then TweenService:Create(_rIcon2, _ti_fadeOut, {TextTransparency = 1}):Play() end
+                    if _rLbl2  then TweenService:Create(_rLbl2,  _ti_fadeOut, {TextTransparency = 1}):Play() end
+                    if _rStr2  then TweenService:Create(_rStr2,  _ti_fadeOut, {Transparency      = 1}):Play() end
+                    if _rShp2  then TweenService:Create(_rShp2,  _ti_fadeOut, {ImageTransparency = 1}):Play() end
+                end)
+                -- Ocultar el frame raiz despues de que el tween termine
+                task.delay(0.40, function()
+                    if _capturedBtn and _capturedBtn.Parent then
+                        _capturedBtn.Visible = false
+                    end
+                end)
+            end
+
+            -- Marcar homePanel como oculto para que el loop no lo reactive
+            _G._homePanelHidden = true
+
+            -- Ocultar ZerqonCenterPanel con animacion suave
+            pcall(function()
+                local _hp = mainFrame:FindFirstChild("HomePanel")
+                if _hp then
+                    local _nbC = _hp:FindFirstChild("ZerqonCenterPanel")
+                    if _nbC then
+                        -- Fade out + scale down del panel central
+                        local _scExit = _nbC:FindFirstChildOfClass("UIScale")
+                        if _scExit then
+                            TweenService:Create(_scExit, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Scale = 0.80}):Play()
+                        end
+                        local _strExit = _nbC:FindFirstChildOfClass("UIStroke")
+                        if _strExit then
+                            TweenService:Create(_strExit, TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Transparency = 1}):Play()
+                        end
+                        for _, _child in ipairs(_nbC:GetDescendants()) do
+                            pcall(function()
+                                if _child:IsA("TextLabel") or _child:IsA("TextButton") then
+                                    TweenService:Create(_child, TweenInfo.new(0.20), {TextTransparency = 1}):Play()
+                                end
+                            end)
+                        end
+                        task.delay(0.32, function()
+                            if _nbC and _nbC.Parent then _nbC.Visible = false end
+                        end)
+                    end
+                    task.delay(0.34, function()
+                        if _hp and _hp.Parent then _hp.Visible = false end
+                    end)
+                end
+            end)
+
+            -- FIX OPACITY: no volver a poner 0.04 al entrar a una pestana.
+            -- Ese valor era la causa de la pantalla casi negra: tapaba el fondo del hub.
+            -- Se respeta SIEMPRE el valor real de hubOpacity (0 = transparencia total).
+            -- Mostrar el contenedor directamente, sin tween de opacidad.
+            local _savedHubOpacity = tonumber(_G._hubSettings and _G._hubSettings.hubOpacity) or 0
+            local _targetHubTrans = math.clamp(1 - (_savedHubOpacity / 100), 0, 1)
+            contentContainer.BackgroundTransparency = _targetHubTrans
             contentContainer.Visible = true
-            contentContainer.Position = UDim2.new(0, 0, 0, 52)
-            SetActiveTab(i)
             _G._tabContentActive = true
+
+            -- Ejecutar logica interna del tab y mostrar el contenido
+            SetActiveTab(i)
         end)
 
         sideButtons[i] = btn
         _G._tabBtnRefs[i] = {
-            icon = nil,
-            stroke = bs,
-            activeBar = nil,
-            knob = nil,
-            knobBg = nil,
-            lbl2 = lbl,
-            tint = nil,
+            icon    = iconLbl,
+            stroke  = bs,
+            activeBar = accentBar,
+            knob    = nil,
+            knobBg  = nil,
+            lbl2    = lbl,
+            tint    = nil,
         }
     end
 
@@ -60959,7 +62683,6 @@ particles = {}
     function ShowServerPanel()
         tabsVisible = false
         TweenService:Create(arrowLabel, TweenInfo.new(0.25), {ImageTransparency = 0.5}):Play()
-        TweenService:Create(arrowToggleBtn, TweenInfo.new(0.25), {BackgroundColor3 = Color3.fromRGB(255, 180, 0), BackgroundTransparency = 0.5}):Play()
         -- Ocultar dock de tabs al mostrar server panel
         if _G._hubSettings and _G._hubSettings.noMinMaxAnimations then
             if tabDockFrame then tabDockFrame.BackgroundTransparency = 0.30 end  -- TRANSPARENCIA restaurada
@@ -60978,7 +62701,6 @@ particles = {}
     function ShowTabs()
         tabsVisible = true
         TweenService:Create(arrowLabel, TweenInfo.new(0.25), {ImageTransparency = 0}):Play()
-        TweenService:Create(arrowToggleBtn, TweenInfo.new(0.25), {BackgroundColor3 = ThemeColors.Primary, BackgroundTransparency = 0.25}):Play()
         if _G._hubSettings and _G._hubSettings.noMinMaxAnimations then
             serverPanel.Visible = false
             if fpsConn then fpsConn:Disconnect(); fpsConn = nil end
@@ -60991,7 +62713,7 @@ particles = {}
             -- Restaurar dock de tabs
             if tabDockFrame then TweenService:Create(tabDockFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.55}):Play() end
             if contentContainer.Visible then
-                TweenService:Create(contentContainer, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0.35, 0, 0, 52)}):Play()
+                TweenService:Create(contentContainer, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 56)}):Play()
             end
         end
     end
@@ -61081,31 +62803,272 @@ particles = {}
         if _arrowBtnDebounce then return end
         _arrowBtnDebounce = true
         task.delay(0.5, function() _arrowBtnDebounce = false end)
-        -- disparar el handler de cierre/minimizar
+
+        -- SI hay una pestana activa abierta: cerrar el contenido y volver al inicio
+        if _G._tabContentActive then
+            _G._tabContentActive = false
+            -- FIX CRITICO v25: NO modificar transparencias de los hijos al salir.
+            -- El sistema anterior ponia TextTransparency/ImageTransparency/
+            -- BackgroundTransparency de los controles en 1. Al volver a entrar
+            -- al mismo tab, esos valores quedaban guardados en el cache y todas
+            -- las opciones aparecian invisibles.
+            --
+            -- Al salir solo ocultamos el ROOT del tab/contenedor. Esto conserva
+            -- exactamente el estado visual original de cada toggle, slider,
+            -- label, icono y UIStroke.
+            local _exitDuration = 0.35
+            local _activeFrame = _tabCache and _tabCache[activeTabIdx]
+            if _activeFrame and _activeFrame.Parent then
+                _activeFrame.Visible = false
+                _activeFrame.Position = UDim2.new(0, 0, 0, 0)
+            end
+
+            -- Animacion de salida del contentContainer
+            local _sc = contentContainer and contentContainer:FindFirstChildOfClass("UIScale")
+            if _sc then
+                TweenService:Create(_sc,
+                    TweenInfo.new(_exitDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                    {Scale = 0.90}
+                ):Play()
+            end
+            if contentContainer then
+                TweenService:Create(contentContainer,
+                    TweenInfo.new(_exitDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                    {BackgroundTransparency = 1}
+                ):Play()
+            end
+            task.delay(_exitDuration + 0.05, function()
+                if contentContainer then contentContainer.Position = UDim2.new(0, 0, 0, 56) end
+            end)
+            task.delay(_exitDuration + 0.02, function()
+                if contentContainer then contentContainer.Visible = false end
+                -- Resetear escala para proxima apertura
+                local _sc2 = contentContainer and contentContainer:FindFirstChildOfClass("UIScale")
+                if _sc2 then _sc2.Scale = 1 end
+                activeTabIdx = 0
+                _G._activeTabIdx = 0
+
+                -- v29b: PASO 1 - forzar TODOS los botones a estado inicial
+                -- (Visible=true pero todos los elementos transparentes) antes
+                -- de empezar cualquier animacion. Esto garantiza que ningun
+                -- boton quede atrapado en Visible=false del fade-out anterior.
+                for _rIdx2, _preBtn in ipairs(sideButtons) do
+                    pcall(function()
+                        if not _preBtn or not _preBtn.Parent then return end
+                        _preBtn.Visible = true
+                        _preBtn.BackgroundTransparency = 1
+                        local _pIcon = _preBtn:FindFirstChild("TabIcon")
+                        local _pLbl  = _preBtn:FindFirstChild("TabLabel")
+                        local _pStr  = _preBtn:FindFirstChildOfClass("UIStroke")
+                        local _pShp  = _preBtn:FindFirstChild("ZQTabShape")
+                        if _pIcon then _pIcon.TextTransparency = 1 end
+                        if _pLbl  then _pLbl.TextTransparency  = 1 end
+                        if _pStr  then _pStr.Transparency       = 1 end
+                        if _pShp and _pShp:IsA("ImageLabel") then
+                            _pShp.Image = _ZQ_SHAPE_ID
+                            _pShp.ImageTransparency = 1
+                            _pShp.Visible = true
+                            _pShp.BackgroundTransparency = 1
+                        end
+                        -- Resetear AccentBar
+                        local _pBar = _preBtn:FindFirstChild("AccentBar")
+                        if _pBar then
+                            _pBar.Size = UDim2.fromScale(0.012, 0)
+                            _pBar.BackgroundTransparency = 1
+                        end
+                    end)
+                end
+
+                -- PASO 2 - animar fade-in escalonado sobre los botones ya visibles
+                for _rIdx, _restoreBtn in ipairs(sideButtons) do
+                    local _rDelay = (_rIdx - 1) * 0.10  -- 100ms entre cada boton
+                    local _captured = _restoreBtn
+                    task.delay(_rDelay, function()
+                        if not _captured or not _captured.Parent then return end
+                        local _restoreTi = TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        local _rIcon = _captured:FindFirstChild("TabIcon")
+                        local _rLbl  = _captured:FindFirstChild("TabLabel")
+                        local _rStr  = _captured:FindFirstChildOfClass("UIStroke")
+                        local _shape = _captured:FindFirstChild("ZQTabShape")
+                        if _shape and _shape:IsA("ImageLabel") then
+                            TweenService:Create(_shape, _restoreTi, {ImageTransparency = 0}):Play()
+                        end
+                        if _rIcon then TweenService:Create(_rIcon, _restoreTi, {TextTransparency = 0}):Play() end
+                        if _rLbl  then TweenService:Create(_rLbl,  _restoreTi, {TextTransparency = 0}):Play() end
+                        if _rStr  then TweenService:Create(_rStr,  _restoreTi, {Transparency = 0.35}):Play() end
+                    end)
+                end
+
+                -- ANIMACION DE REGRESO AL INICIO v28: el cuadrado central reaparece con fade + scale lento
+                _G._homePanelHidden = false
+                pcall(function()
+                    local _hp = mainFrame:FindFirstChild("HomePanel")
+                    if _hp then
+                        _hp.Visible = true
+                        local _nbC = _hp:FindFirstChild("ZerqonCenterPanel")
+                        if _nbC then
+                            -- Empezar completamente invisible para animar la entrada
+                            _nbC.Visible = true
+                            _nbC.BackgroundTransparency = 1
+
+                            -- Fade in lento del stroke
+                            local _nbStroke = _nbC:FindFirstChildOfClass("UIStroke")
+                            if _nbStroke then _nbStroke.Transparency = 1 end
+
+                            -- Texto de descendientes inicia invisible
+                            for _, _child in ipairs(_nbC:GetDescendants()) do
+                                pcall(function()
+                                    if _child:IsA("TextLabel") or _child:IsA("TextButton") then
+                                        _child.TextTransparency = 1
+                                    end
+                                end)
+                            end
+
+                            -- ANIMACION LENTA: el cuadrado aparece con Back easing (rebote suave)
+                            local _animTiSlow = TweenInfo.new(0.75, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+                            local _animTiFade = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+                            -- UIScale: pop de escala desde 0.70 hasta 1
+                            local _sc = _nbC:FindFirstChildOfClass("UIScale")
+                            if _sc then
+                                _sc.Scale = 0.70
+                                TweenService:Create(_sc, _animTiSlow, {Scale = 1.0}):Play()
+                            end
+
+                            -- Fade in del stroke
+                            if _nbStroke then
+                                TweenService:Create(_nbStroke, _animTiFade, {Transparency = 0.25}):Play()
+                            end
+
+                            -- Imagen ZQShape: fade in
+                            local _nbShape = _nbC:FindFirstChild("ZQShape")
+                            if _nbShape then
+                                _nbShape.ImageTransparency = 1
+                                TweenService:Create(_nbShape, _animTiFade, {ImageTransparency = 0}):Play()
+                            end
+
+                            -- Texto: fade in con delay
+                            task.delay(0.25, function()
+                                if not _nbC or not _nbC.Parent then return end
+                                for _, _child in ipairs(_nbC:GetDescendants()) do
+                                    pcall(function()
+                                        if _child:IsA("TextLabel") or _child:IsA("TextButton") then
+                                            TweenService:Create(_child, _animTiFade, {TextTransparency = 0}):Play()
+                                        end
+                                    end)
+                                end
+                            end)
+                        end
+                    end
+                end)
+            end)
+            return  -- NO cerrar el hub, solo volver al inicio
+        end
+
+        -- Si NO hay pestana activa: cerrar el hub completamente
+        -- FIX v56 (hub roto al reabrir): la animacion de cierre apagaba el
+        -- texto de TODO el hub (TextTransparency = 1) y ningun camino de
+        -- reapertura lo volvia a prender. Solo volvian los nombres de las
+        -- pestanias, porque el camino de "volver al inicio" los restaura
+        -- aparte. Ahora anotamos el valor que tenia cada cosa ANTES de
+        -- apagarla y al reabrir se devuelve ese mismo valor: forzar 0 seria
+        -- peor, prenderia los labels que estan atenuados a proposito.
+        _G._ZQ_FadeSnap = { txt = {}, num = {}, tw = {} }
+        local _fsnap = _G._ZQ_FadeSnap
+        local function _fsTxt(o)
+            if o then _fsnap.txt[#_fsnap.txt + 1] = { o, o.TextTransparency } end
+        end
+        local function _fsNum(o, prop)
+            if o then _fsnap.num[#_fsnap.num + 1] = { o, prop, o[prop] } end
+        end
+        local function _fsPlay(tw)
+            if tw then _fsnap.tw[#_fsnap.tw + 1] = tw; tw:Play() end
+        end
+        function _G._ZQ_RestoreFade()
+            -- v58: si reabrio en medio del cierre, el overlay se va ya
+            pcall(function() if _G._ZQ_MorphKill then _G._ZQ_MorphKill() end end)
+            local s = _G._ZQ_FadeSnap
+            if not s then return 0 end
+            _G._ZQ_FadeSnap = nil
+            for _, tw in ipairs(s.tw) do pcall(function() tw:Cancel() end) end
+            local n = 0
+            for _, e in ipairs(s.txt) do
+                pcall(function()
+                    if e[1].Parent then e[1].TextTransparency = e[2]; n = n + 1 end
+                end)
+            end
+            for _, e in ipairs(s.num) do
+                pcall(function()
+                    if e[1].Parent then e[1][e[2]] = e[3] end
+                end)
+            end
+            return n
+        end
         local _hubGuiRef    = hubGui
         local _mainFrameRef = mainFrame
-        pcall(CloseExpandPanel)
         pcall(function() if _G._stopWeapon then _G._stopWeapon() end end)
         pcall(function() if _G._stopKnife  then _G._stopKnife()  end end)
-        -- BINDABLES: se mantienen visibles al cerrar el hub (son ScreenGuis independientes)
+        -- ANIMACION DE CIERRE v8: lenta, suave, tranquila
+        -- Fade out del contenido + deslizamiento suave hacia arriba
         if _G._hubSettings and _G._hubSettings.noMinMaxAnimations then
-            if _mainFrameRef then _mainFrameRef.BackgroundTransparency = 1 end
-            if tabDockFrame  then tabDockFrame.BackgroundTransparency  = 1 end
+            if _mainFrameRef then
+                _fsNum(_mainFrameRef, "BackgroundTransparency")
+                _mainFrameRef.BackgroundTransparency = 1
+            end
+            if tabDockFrame  then
+                _fsNum(tabDockFrame, "BackgroundTransparency")
+                tabDockFrame.BackgroundTransparency  = 1
+            end
         else
             pcall(function()
-                local uiScaleClose = _mainFrameRef:FindFirstChildOfClass("UIScale")
-                if uiScaleClose then
-                    TweenService:Create(uiScaleClose, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Scale = 0}):Play()
+                local _closeDur = 0.55  -- duración total: lenta y tranquila
+                local _closeTI  = TweenInfo.new(_closeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+                -- Fade out suave del hub (sin escalar, sin deformar)
+                _fsNum(_mainFrameRef, "BackgroundTransparency")
+                _fsNum(_mainFrameRef, "Position")
+                _fsPlay(TweenService:Create(_mainFrameRef, _closeTI, {
+                    BackgroundTransparency = 1,
+                    Position = UDim2.new(0.5, 0, 0.44, 0),  -- sube levemente mientras desaparece
+                }))
+                -- Fade del borde
+                local _gbRef = _mainFrameRef:FindFirstChild("HubGlowBorder")
+                if _gbRef then
+                    _fsNum(_gbRef, "Transparency")
+                    _fsPlay(TweenService:Create(_gbRef, _closeTI, {Transparency = 1}))
                 end
-                TweenService:Create(_mainFrameRef, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
+                -- Fade del topbar
+                local _tb = _mainFrameRef:FindFirstChild("TopBar")
+                if _tb then
+                    _fsNum(_tb, "BackgroundTransparency")
+                    _fsPlay(TweenService:Create(_tb, _closeTI, {BackgroundTransparency = 1}))
+                end
+                -- Todos los labels del hub hacen fade out juntos
+                pcall(function()
+                    for _, desc in ipairs(_mainFrameRef:GetDescendants()) do
+                        if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.TextTransparency < 0.9 then
+                            _fsTxt(desc)
+                            _fsPlay(TweenService:Create(desc,
+                                TweenInfo.new(0.35, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                                {TextTransparency = 1}))
+                        end
+                    end
+                end)
                 if tabDockFrame then
-                    TweenService:Create(tabDockFrame, TweenInfo.new(0.3), {BackgroundTransparency = 0.15}):Play()
+                    _fsNum(tabDockFrame, "BackgroundTransparency")
+                    _fsPlay(TweenService:Create(tabDockFrame, _closeTI, {BackgroundTransparency = 1}))
                 end
             end)
+            -- v58: la animacion que se VE es la del overlay: el panel se
+            -- cierra en una linea, la linea se junta en el cuadradito y el
+            -- cuadradito se cae. El fade de arriba sigue igual, por debajo.
+            pcall(function() if _G._ZQ_MorphClose then _G._ZQ_MorphClose() end end)
         end
         _G._hubHidden = true
         pcall(_flushConfig)
-        task.delay(0.36, function()
+        task.delay(0.60, function()  -- v8: delay ajustado a duracion de cierre (0.55s)
+            -- FIX v56: si el usuario reabrio dentro de esos 0.60 s, este
+            -- delay apagaba el ScreenGui recien prendido y el hub se iba.
+            if not _G._hubHidden then return end
             pcall(function() if _hubGuiRef then _hubGuiRef.Enabled = false end end)
             pcall(function()
                 for _, parent in ipairs({ LocalPlayer:FindFirstChildOfClass("PlayerGui"), game:GetService("CoreGui") }) do
@@ -61130,41 +63093,175 @@ particles = {}
             rGui2.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
             rGui2.DisplayOrder = 9998
             rGui2.Parent = pg
-            local SKULL_SIZE2 = 70
+            local SKULL_SIZE2 = 84  -- v42: mas grande (rbx id ~70% mayor)
             local skullMF2 = Instance.new("Frame", rGui2)
             skullMF2.BackgroundTransparency = 1
             skullMF2.AnchorPoint = Vector2.new(0.5, 0)
             skullMF2.Size = UDim2.new(0, SKULL_SIZE2, 0, SKULL_SIZE2)
             skullMF2.Position = UDim2.new(0.5, 0, 0, 10)
+
+            -- Fondo redondeado con color del hub (carbon oscuro)
             local rBtn2 = Instance.new("TextButton", skullMF2)
             rBtn2.AnchorPoint = Vector2.new(0.5, 0.5)
             rBtn2.Position = UDim2.new(0.5, 0, 0.5, 0)
             rBtn2.Size = UDim2.new(0, 0, 0, 0)
-            rBtn2.BackgroundColor3 = Color3.fromRGB( 50, 255, 180)
-            rBtn2.BackgroundTransparency = 0.3
+            rBtn2.BackgroundColor3 = Color3.fromRGB(34, 26,  8)
+            rBtn2.BackgroundTransparency = 1  -- FIX v35: sin fondo oscuro (era el cuadrado glitch)
             rBtn2.BorderSizePixel = 0
-            rBtn2.Text = "zerqon"
-            rBtn2.TextColor3 = Color3.fromRGB(255, 255, 255)
-            rBtn2.TextScaled = true
-            rBtn2.FontFace = Font.fromEnum(Enum.Font.Montserrat)
+            rBtn2.Text = ""
+            rBtn2.AutoButtonColor = false
             rBtn2.ZIndex = 100
             rBtn2.Active = true
-            rBtn2.AutoButtonColor = false
-            Instance.new("UICorner", rBtn2).CornerRadius = UDim.new(0, 12)
+            rBtn2.ClipsDescendants = false  -- PNG transparente, sin recorte
+            Instance.new("UICorner", rBtn2).CornerRadius = UDim.new(0, 22)
+
+            -- v42: borde con los colores del hub, cambia cada 2 s con tween lento.
+            -- Antes habia un UIGradient RGB sobre un UIStroke sin .Color: el stroke era
+            -- negro por defecto y el gradiente lo multiplicaba, asi que quedaba el
+            -- cuadrado negro que se veia sobre el personaje.
             local _rBtn2Stroke = Instance.new("UIStroke", rBtn2)
-            _rBtn2Stroke.Color = Color3.fromRGB( 50, 255, 180)
-            _rBtn2Stroke.Thickness = 1.5
-            _rBtn2Stroke.Transparency = 0.1
+            _rBtn2Stroke.Thickness = 4
+            _rBtn2Stroke.Transparency = 0
             _rBtn2Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-            local _rBtn2Grad = Instance.new("UIGradient", rBtn2)
-            _rBtn2Grad.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(200, 35, 130)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 80, 170)),
-            })
-            _rBtn2Grad.Rotation = 135
+            -- v43: el ciclo de color va inline en los dos reopeners (como helper
+            -- global fallaba: "attempt to call a nil value" en el segundo).
+            do
+                local _tw = game:GetService("TweenService")
+                local _pal = {}
+                local function _add(key, r, g, b)
+                    local c = (type(ThemeColors) == "table") and ThemeColors[key] or nil
+                    if typeof(c) == "Color3" then
+                        _pal[#_pal + 1] = c
+                    else
+                        _pal[#_pal + 1] = Color3.fromRGB(r, g, b)
+                    end
+                end
+                _add("Accent",  220, 185, 100)
+                _add("Aurora2", 230, 195, 110)
+                _add("Primary", 200, 160,  80)
+                _pal[#_pal + 1] = Color3.fromRGB(190, 145,  65)
+                _pal[#_pal + 1] = Color3.fromRGB(245, 215, 150)
+                _pal[#_pal + 1] = Color3.fromRGB(210, 170,  90)
+                _rBtn2Stroke.Color = _pal[1]
+                task.spawn(function()
+                    local _i = 1
+                    while rBtn2 and rBtn2.Parent do
+                        _i = (_i % #_pal) + 1
+                        pcall(function()
+                            _tw:Create(
+                                _rBtn2Stroke,
+                                TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+                                { Color = _pal[_i] }
+                            ):Play()
+                        end)
+                        task.wait(2)
+                    end
+                end)
+            end
+
+            -- v42: eliminadas las 4 lineas trazadas que rodeaban el icono.
+            -- Se conserva la imagen rbx id de base (la capsula), oculta como estaba.
+            local _rBtn2Img = Instance.new("ImageLabel", skullMF2)
+            _rBtn2Img.Name = "BaseRbxImage"
+            _rBtn2Img.AnchorPoint = Vector2.new(0.5, 0.5)
+            _rBtn2Img.Position = UDim2.fromScale(0.5, 0.5)
+            _rBtn2Img.Size = UDim2.new(1, -6, 1, -6)
+            _rBtn2Img.BackgroundTransparency = 1
+            _rBtn2Img.BorderSizePixel = 0
+            _rBtn2Img.Image = "rbxassetid://126868497225304"
+            _rBtn2Img.ScaleType = Enum.ScaleType.Fit
+            _rBtn2Img.ImageTransparency = 0
+            _rBtn2Img.ImageColor3 = Color3.fromRGB(255, 255, 255)
+            _rBtn2Img.ZIndex = 101
+            _rBtn2Img.Visible = false
+            Instance.new("UICorner", _rBtn2Img).CornerRadius = UDim.new(0, 12)
+
+            -- Imagen central del hub (logo centrada encima)
+            local _rBtn2CenterLogo = Instance.new("ImageLabel", skullMF2)
+            _rBtn2CenterLogo.Name = "CenterLogo"
+            _rBtn2CenterLogo.AnchorPoint = Vector2.new(0.5, 0.5)
+            _rBtn2CenterLogo.Position = UDim2.fromScale(0.5, 0.5)
+            _rBtn2CenterLogo.Size = UDim2.new(0, SKULL_SIZE2 * 0.90, 0, SKULL_SIZE2 * 0.90)
+            _rBtn2CenterLogo.BackgroundTransparency = 1
+            _rBtn2CenterLogo.BorderSizePixel = 0
+            _rBtn2CenterLogo.Image = "rbxassetid://117874078892034"
+            _rBtn2CenterLogo.ScaleType = Enum.ScaleType.Fit
+            _rBtn2CenterLogo.ImageTransparency = 0
+            _rBtn2CenterLogo.ImageColor3 = Color3.fromRGB(255, 255, 255)
+            _rBtn2CenterLogo.ZIndex = 103
+
+            -- v42: fallback de carga; si el rbx id principal no aparece, prueba alternos
+            task.spawn(function()
+                local _ids = {
+                    "rbxassetid://117874078892034",
+                    hubLogoId or "rbxassetid://84374606364703",
+                    "rbxassetid://126868497225304",
+                }
+                for _, _id in ipairs(_ids) do
+                    if not (_rBtn2CenterLogo and _rBtn2CenterLogo.Parent) then return end
+                    _rBtn2CenterLogo.Image = _id
+                    for _ = 1, 24 do
+                        task.wait(0.05)
+                        if _rBtn2CenterLogo.IsLoaded then return end
+                    end
+                end
+            end)
+
+            -- Drag para mover el boton
+            skullMF2.Active = true
+            local _drag2, _dragS2, _startP2 = false, nil, nil
+            rBtn2.InputBegan:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.Touch or inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                    _drag2 = true; _dragS2 = inp.Position; _startP2 = skullMF2.Position
+                end
+            end)
+            rBtn2.InputChanged:Connect(function(inp)
+                if _drag2 and (inp.UserInputType == Enum.UserInputType.Touch or inp.UserInputType == Enum.UserInputType.MouseMovement) then
+                    local d = inp.Position - _dragS2
+                    pcall(function()
+                        skullMF2.Position = UDim2.new(
+                            _startP2.X.Scale, _startP2.X.Offset + d.X,
+                            _startP2.Y.Scale, _startP2.Y.Offset + d.Y
+                        )
+                    end)
+                end
+            end)
+            rBtn2.InputEnded:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.Touch or inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                    _drag2 = false
+                end
+            end)
+
+            -- Glow RGB animado de fondo
+            local _rBtn2Glow = Instance.new("ImageLabel", skullMF2)
+            _rBtn2Glow.AnchorPoint = Vector2.new(0.5, 0.5)
+            _rBtn2Glow.Position = UDim2.fromScale(0.5, 0.5)
+            _rBtn2Glow.Size = UDim2.fromOffset(0, 0)  -- FIX v35: sin tamano
+            _rBtn2Glow.BackgroundTransparency = 1
+            _rBtn2Glow.Image = "rbxassetid://5060523656"
+            _rBtn2Glow.ImageColor3 = Color3.fromRGB(255,174,   0)
+            _rBtn2Glow.ImageTransparency = 1  -- FIX v35: invisible
+            _rBtn2Glow.ZIndex = 99
+            _rBtn2Glow.Visible = false  -- FIX v35: eliminado
+
+            -- v42: loop de rotacion RGB eliminado; el color del borde lo anima
+            -- el bloque de arriba con la paleta del hub cada 2 s.
+
             TweenService:Create(rBtn2, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, SKULL_SIZE2 * 0.9, 0, SKULL_SIZE2 * 0.9)
+                Size = UDim2.new(0, SKULL_SIZE2 * 1.0, 0, SKULL_SIZE2 * 1.0)  -- FIX v41: llena el frame completo
             }):Play()
+
+            -- Hover: borde mas grueso al pasar el mouse
+            rBtn2.MouseEnter:Connect(function()
+                -- FIX v40: imagen fija al borde, solo animar stroke
+                TweenService:Create(_rBtn2Stroke, TweenInfo.new(0.1), {Thickness = 6}):Play()
+            end)
+            rBtn2.MouseLeave:Connect(function()
+                -- FIX v40: imagen fija al borde, solo animar stroke
+                TweenService:Create(_rBtn2Stroke, TweenInfo.new(0.15), {Thickness = 4}):Play()
+            end)
+
+            -- FIX v40: sin achicado al presionar, boton fijo
             local _rBtn2Clicked = false
             local function _reopenHub()
                 if _rBtn2Clicked then return end
@@ -61176,6 +63273,10 @@ particles = {}
                                      or game:GetService("CoreGui"):FindFirstChild("f")
                                      or (gethui and gethui():FindFirstChild("f"))
                     if existingHub and _G._hubHidden then
+                        -- FIX v56: devolver el texto que apago la animacion de cierre
+                        pcall(function()
+                            if _G._ZQ_RestoreFade then _G._ZQ_RestoreFade() end
+                        end)
                         -- FIX TAMA?O REOPEN MOBILE: escala correcta ANTES de Enabled=true
                         local _tgtSc = (_getTargetScale and _getTargetScale() or 0.70)
                         local uiScaleR = mainFrame and mainFrame:FindFirstChildOfClass("UIScale")
@@ -61239,19 +63340,280 @@ particles = {}
     local function _updateHomePremiumStatus() end
     _updateHomePremiumStatus()
 
-    -- === PANEL AVATAR (cuadro grande, imagen 3) ===
-    -- (barras de info eliminadas)
+    -- === PANEL CENTRAL: Avatar + Nombre + 4 Cards info real ===
+    do
+        local _C_Primary  = Color3.fromRGB(220, 185, 100)
+        local _C_Text     = Color3.fromRGB(255, 250, 238)
+        local _C_SubText  = Color3.fromRGB(211, 198, 170)
+        local _C_Line     = Color3.fromRGB(200, 160, 80)
+        local _C_Success  = Color3.fromRGB(255, 211, 116)
+        local _C_Accent2  = ThemeColors.Accent
+
+        -- Todos los elementos arrancan invisibles para el fade-in
+        local function _fadeIn(obj, delay, duration)
+            obj.BackgroundTransparency = 1
+            if obj:IsA("TextLabel") then obj.TextTransparency = 1 end
+            task.delay(delay, function()
+                if not obj or not obj.Parent then return end
+                local goals = {BackgroundTransparency = obj:GetAttribute("_baseBgT") or 1}
+                if obj:IsA("TextLabel") then goals.TextTransparency = 0 end
+                TweenService:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goals):Play()
+            end)
+        end
+
+        -- Panel central contenedor (mas chico)
+        local _nbCenter = Instance.new("Frame", homePanel)
+        _nbCenter.Name                   = "ZerqonCenterPanel"
+        _nbCenter.AnchorPoint            = Vector2.new(0.5, 0.5)
+        _nbCenter.Position               = UDim2.fromScale(0.5, 0.5)
+        _nbCenter.Size                   = UDim2.fromScale(0.44, 0.78)
+        _nbCenter.BackgroundTransparency = 1
+        _nbCenter.BorderSizePixel        = 0
+        _nbCenter.ZIndex                 = 8
+
+        -- UIScale: empieza en 0, sube lento
+        local _nbScale = Instance.new("UIScale", _nbCenter)
+        _nbScale.Scale = 0.0
+
+        task.delay(0.3, function()
+            if not _nbCenter or not _nbCenter.Parent then return end
+            TweenService:Create(_nbScale,
+                TweenInfo.new(1.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                {Scale = 1.0}):Play()
+        end)
+
+        -- ── AVATAR CIRCULAR (mas chico) ───────────────────────────────
+        local _avGlow = Instance.new("Frame", _nbCenter)
+        _avGlow.AnchorPoint            = Vector2.new(0.5, 0)
+        _avGlow.Position               = UDim2.fromScale(0.5, 0.01)
+        _avGlow.Size                   = UDim2.fromOffset(58, 58)
+        _avGlow.BackgroundColor3       = _C_Primary
+        _avGlow.BackgroundTransparency = 1
+        _avGlow.BorderSizePixel        = 0
+        _avGlow.ZIndex                 = 9
+        Instance.new("UICorner", _avGlow).CornerRadius = UDim.new(1, 0)
+
+        local _avOuter = Instance.new("Frame", _nbCenter)
+        _avOuter.Name                   = "AvatarOuter"
+        _avOuter.AnchorPoint            = Vector2.new(0.5, 0)
+        _avOuter.Position               = UDim2.fromScale(0.5, 0.03)
+        _avOuter.Size                   = UDim2.fromOffset(50, 50)
+        _avOuter.BackgroundColor3       = Color3.fromRGB(60, 47, 20)
+        _avOuter.BackgroundTransparency = 1
+        _avOuter.BorderSizePixel        = 0
+        _avOuter.ZIndex                 = 12
+        Instance.new("UICorner", _avOuter).CornerRadius = UDim.new(1, 0)
+        local _avStroke = Instance.new("UIStroke", _avOuter)
+        _avStroke.Color       = _C_Primary
+        _avStroke.Thickness   = 1.8
+        _avStroke.Transparency = 0.1
+
+        local _avImg = Instance.new("ImageLabel", _avOuter)
+        _avImg.AnchorPoint            = Vector2.new(0.5, 0.5)
+        _avImg.Position               = UDim2.fromScale(0.5, 0.5)
+        _avImg.Size                   = UDim2.new(1, -4, 1, -4)
+        _avImg.BackgroundTransparency = 1
+        _avImg.Image                  = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150"
+        _avImg.ScaleType              = Enum.ScaleType.Fit
+        _avImg.ZIndex                 = 13
+        Instance.new("UICorner", _avImg).CornerRadius = UDim.new(1, 0)
+
+        -- ── NOMBRE (mas chico) ────────────────────────────────────────
+        local _nameLbl = Instance.new("TextLabel", _nbCenter)
+        _nameLbl.AnchorPoint            = Vector2.new(0.5, 0)
+        _nameLbl.Position               = UDim2.fromScale(0.5, 0.36)
+        _nameLbl.Size                   = UDim2.fromScale(0.90, 0.08)
+        _nameLbl.BackgroundTransparency = 1
+        _nameLbl.Text                   = LocalPlayer.DisplayName or LocalPlayer.Name
+        _nameLbl.TextColor3             = _C_Text
+        _nameLbl.TextTransparency       = 1
+        _nameLbl.TextSize               = 11
+        _nameLbl.Font                   = Enum.Font.GothamBold
+        _nameLbl.TextXAlignment         = Enum.TextXAlignment.Center
+        _nameLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+        _nameLbl.ZIndex                 = 12
+
+        local _userLbl = Instance.new("TextLabel", _nbCenter)
+        _userLbl.AnchorPoint            = Vector2.new(0.5, 0)
+        _userLbl.Position               = UDim2.fromScale(0.5, 0.44)
+        _userLbl.Size                   = UDim2.fromScale(0.90, 0.06)
+        _userLbl.BackgroundTransparency = 1
+        _userLbl.Text                   = "@" .. LocalPlayer.Name
+        _userLbl.TextColor3             = _C_SubText
+        _userLbl.TextTransparency       = 1
+        _userLbl.TextSize               = 8
+        _userLbl.Font                   = Enum.Font.GothamMedium
+        _userLbl.TextXAlignment         = Enum.TextXAlignment.Center
+        _userLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+        _userLbl.ZIndex                 = 12
+
+        -- Línea separadora
+        local _sep = Instance.new("Frame", _nbCenter)
+        _sep.AnchorPoint            = Vector2.new(0.5, 0)
+        _sep.Position               = UDim2.fromScale(0.5, 0.52)
+        _sep.Size                   = UDim2.fromScale(0.0, 0.004)  -- empieza en 0 de ancho
+        _sep.BackgroundColor3       = _C_Line
+        _sep.BackgroundTransparency = 0.4
+        _sep.BorderSizePixel        = 0
+        _sep.ZIndex                 = 11
+
+        -- ── 4 CARDS (mas chicas) ──────────────────────────────────────
+        local function _makeCard(parent, posScale, titleTxt, initVal, valColor)
+            local card = Instance.new("Frame", parent)
+            card.Position               = UDim2.fromScale(posScale.X, posScale.Y)
+            card.Size                   = UDim2.fromScale(0.43, 0.18)
+            card.BackgroundColor3       = Color3.fromRGB(48, 37, 12)
+            card.BackgroundTransparency = 1  -- empieza invisible
+            card.BorderSizePixel        = 0
+            card.ZIndex                 = 11
+            Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+            local cs = Instance.new("UIStroke", card)
+            cs.Color = _C_Line; cs.Thickness = 1; cs.Transparency = 1  -- empieza invisible
+
+            local tl = Instance.new("TextLabel", card)
+            tl.Position               = UDim2.fromScale(0.06, 0.06)
+            tl.Size                   = UDim2.fromScale(0.88, 0.30)
+            tl.BackgroundTransparency = 1
+            tl.Text                   = titleTxt
+            tl.TextColor3             = _C_SubText
+            tl.TextTransparency       = 1
+            tl.TextSize               = 6
+            tl.Font                   = Enum.Font.GothamBold
+            tl.TextXAlignment         = Enum.TextXAlignment.Left
+            tl.ZIndex                 = 13
+
+            local vl = Instance.new("TextLabel", card)
+            vl.Name                   = "CardValue"
+            vl.Position               = UDim2.fromScale(0.0, 0.36)
+            vl.Size                   = UDim2.fromScale(1.0, 0.60)
+            vl.BackgroundTransparency = 1
+            vl.Text                   = initVal
+            vl.TextColor3             = valColor or _C_Text
+            vl.TextTransparency       = 1
+            vl.TextSize               = 11
+            vl.Font                   = Enum.Font.GothamBold
+            vl.TextXAlignment         = Enum.TextXAlignment.Center
+            vl.TextYAlignment         = Enum.TextYAlignment.Center
+            vl.ZIndex                 = 13
+
+            return card, vl, tl, cs
+        end
+
+        local _cardRol,  _valRol,  _tlRol,  _csRol  = _makeCard(_nbCenter, Vector2.new(0.05, 0.55), "ROL",    "Innocent", _C_Success)
+        local _cardKill, _valKill, _tlKill, _csKill  = _makeCard(_nbCenter, Vector2.new(0.52, 0.55), "KILLS",  "0",        _C_Accent2)
+        local _cardTime, _valTime, _tlTime, _csTime  = _makeCard(_nbCenter, Vector2.new(0.05, 0.76), "TIEMPO", "00:00",    _C_Text)
+        local _cardSrv,  _valSrv,  _tlSrv,  _csSrv  = _makeCard(_nbCenter, Vector2.new(0.52, 0.76), "SERVER", "...",      _C_Primary)
+
+        -- ── ANIMACION LENTA DE APARICION EN CASCADA ───────────────────
+        -- 1) Avatar (delay 0.6s)
+        task.delay(0.6, function()
+            if not _avOuter or not _avOuter.Parent then return end
+            TweenService:Create(_avOuter, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.3}):Play()
+            TweenService:Create(_avGlow,  TweenInfo.new(1.4, Enum.EasingStyle.Sine), {BackgroundTransparency = 0.88}):Play()
+        end)
+        -- 2) Nombre (delay 1.0s)
+        task.delay(1.0, function()
+            if not _nameLbl or not _nameLbl.Parent then return end
+            TweenService:Create(_nameLbl, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+        end)
+        -- 3) @username (delay 1.2s)
+        task.delay(1.2, function()
+            if not _userLbl or not _userLbl.Parent then return end
+            TweenService:Create(_userLbl, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+        end)
+        -- 4) Linea separadora se expande lento (delay 1.4s)
+        task.delay(1.4, function()
+            if not _sep or not _sep.Parent then return end
+            TweenService:Create(_sep, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.fromScale(0.78, 0.004)}):Play()
+        end)
+        -- 5) Cards aparecen de a una con delay creciente (delay 1.7s en adelante)
+        local _cards = {
+            {_cardRol,  _valRol,  _tlRol,  _csRol},
+            {_cardKill, _valKill, _tlKill, _csKill},
+            {_cardTime, _valTime, _tlTime, _csTime},
+            {_cardSrv,  _valSrv,  _tlSrv,  _csSrv},
+        }
+        for i, c in ipairs(_cards) do
+            local d = 1.7 + (i - 1) * 0.22
+            task.delay(d, function()
+                if not c[1] or not c[1].Parent then return end
+                TweenService:Create(c[1], TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.45}):Play()
+                TweenService:Create(c[4], TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.35}):Play()
+                TweenService:Create(c[3], TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+                TweenService:Create(c[2], TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+            end)
+        end
+
+        -- ── LOOPS DE DATOS EN TIEMPO REAL ────────────────────────────
+        task.spawn(function()
+            while _nbCenter and _nbCenter.Parent do
+                pcall(function()
+                    local rol = (_G._currentRole) or (_roleCache and _roleCache.localRole) or "Innocent"
+                    local color = _C_Success
+                    if rol == "Murderer" then color = Color3.fromRGB(255, 80, 80)
+                    elseif rol == "Sheriff" then color = Color3.fromRGB(80, 160, 255) end
+                    _valRol.Text = rol; _valRol.TextColor3 = color
+                end)
+                task.wait(1)
+            end
+        end)
+
+        task.spawn(function()
+            while _nbCenter and _nbCenter.Parent do
+                pcall(function()
+                    _valKill.Text = tostring(_G._sessionKills or 0)
+                end)
+                task.wait(1)
+            end
+        end)
+
+        local _sessionStart = tick()
+        task.spawn(function()
+            while _nbCenter and _nbCenter.Parent do
+                pcall(function()
+                    local e = math.floor(tick() - _sessionStart)
+                    _valTime.Text = string.format("%02d:%02d", math.floor(e/60), e%60)
+                end)
+                task.wait(1)
+            end
+        end)
+
+        task.spawn(function()
+            pcall(function()
+                local jobId = game.JobId or ""
+                _valSrv.Text = jobId ~= "" and ("ZQ-" .. string.sub(jobId,1,4):upper()) or "LOCAL"
+            end)
+        end)
+
+        -- Pulso glow avatar
+        task.spawn(function()
+            while _nbCenter and _nbCenter.Parent do
+                TweenService:Create(_avGlow, TweenInfo.new(1.4, Enum.EasingStyle.Sine), {BackgroundTransparency = 0.93, Size = UDim2.fromOffset(66, 66)}):Play()
+                task.wait(1.4)
+                TweenService:Create(_avGlow, TweenInfo.new(1.4, Enum.EasingStyle.Sine), {BackgroundTransparency = 0.85, Size = UDim2.fromOffset(56, 56)}):Play()
+                task.wait(1.4)
+            end
+        end)
+    end
+    -- === FIN PANEL CENTRAL ===
+
 
     -- Mostrar/ocultar homePanel segun si hay tab activa
     -- FIX LAG: solo un loop activo a la vez. Cada vez que abrirHub() reconstruye
     -- el hub se spawneaba un loop nuevo sin matar el anterior, acumulando N loops
     -- corriendo en paralelo (uno por cada vez que se abrio el hub).
+    -- Inicializar flag de homePanel oculto (se pone true cuando el usuario clickea una pestana)
+    _G._homePanelHidden = false
     if not _G._homePanelLoopActive then
         _G._homePanelLoopActive = true
         task.spawn(function()
             while homePanel and homePanel.Parent do
-                homePanel.Visible = not _G._tabContentActive
-                task.wait(0.1)
+                -- homePanel visible solo cuando no hay pestana seleccionada
+                -- (se controla via _G._homePanelHidden para no interferir con el fade)
+                if not _G._homePanelHidden then
+                    homePanel.Visible = true
+                end
+                task.wait(0.15)
             end
             _G._homePanelLoopActive = false
         end)
@@ -61280,8 +63642,8 @@ particles = {}
             pcall(ApplyTheme, "Neon Green")
             task.defer(function()
                 _G._tabContentActive = false
-                -- FIX: hub inicia SIN pestana abierta; el usuario elige al clickear
-            -- FIX FONDO: restaurar el fondo seleccionado si habia uno activo
+                contentContainer.Visible = false  -- HUB INICIA SIN PESTANA ABIERTA
+                -- FIX FONDO: restaurar el fondo seleccionado si habia uno activo
             task.delay(1.5, function()
                 local _savedBg = _G._hubBackgrounds and _G._hubBackgrounds.current or 0
                 -- FIX COLORES REABRIR: si _restoreBackground ya existe, usarlo.
@@ -61320,12 +63682,8 @@ particles = {}
             mainFrame.BackgroundTransparency = 1
             task.defer(function()
                 _G._tabContentActive = false
-                contentContainer.Visible = true
-                contentContainer.Size     = UDim2.new(0.65, 0, 1, -52)
-                contentContainer.Position = UDim2.new(0, 0, 0, 52)
-                tabDockFrame.Size         = UDim2.new(0.35, 0, 1, -52)
-                tabDockFrame.Position     = UDim2.new(0.65, 0, 0, 52)
-                pcall(function() SetActiveTab(1) end)
+                -- HUB INICIA SIN PESTANA ABIERTA: contentContainer oculto hasta que el usuario clickee
+                contentContainer.Visible = false
                 task.delay(1.5, function()
                     local _savedBg = _G._hubBackgrounds and _G._hubBackgrounds.current or 0
                     if _savedBg > 0 and _G._restoreBackground then
@@ -61410,12 +63768,8 @@ particles = {}
 
         task.defer(function()
             _G._tabContentActive = false
-            contentContainer.Visible = true
-            contentContainer.Size     = UDim2.new(0.65, 0, 1, -52)
-            contentContainer.Position = UDim2.new(0, 0, 0, 52)
-            tabDockFrame.Size         = UDim2.new(0.35, 0, 1, -52)
-            tabDockFrame.Position     = UDim2.new(0.65, 0, 0, 52)
-            pcall(function() SetActiveTab(1) end)
+            -- HUB INICIA SIN PESTANA ABIERTA: contentContainer oculto hasta que el usuario clickee
+            contentContainer.Visible = false
             task.delay(0.5, function()
                 local _savedBg = _G._hubBackgrounds and _G._hubBackgrounds.current or 0
                 if _savedBg > 0 and _G._restoreBackground then
@@ -61437,7 +63791,7 @@ particles = {}
             warn("[HUB] Error en apertura: " .. tostring(_animErr))
             pcall(function()
                 mainFrame.Visible = true
-                mainFrame.BackgroundTransparency = 0
+                mainFrame.BackgroundTransparency = 1  -- VIDEO BG v5: siempre transparente
                 local _uiS = mainFrame:FindFirstChildOfClass("UIScale")
                 if _uiS then _uiS.Scale = (_getTargetScale and _getTargetScale() or 0.70) end
                 if header then header.Position = UDim2.new(0, 0, 0, 0) end
@@ -61448,9 +63802,8 @@ particles = {}
             pcall(ApplyTheme, "Neon Green")
             task.defer(function()
                 _G._tabContentActive = false
-                contentContainer.Visible = true
-                contentContainer.Position = UDim2.new(0, 0, 0, 52)
-                pcall(function() SetActiveTab(1) end)
+                -- HUB INICIA SIN PESTANA ABIERTA
+                contentContainer.Visible = false
             end)
         end
     end)
@@ -61727,9 +64080,6 @@ end)
 
 
 
--- ================================================================
--- == EMOTES TAB
--- ================================================================
 -- ==================================================================
 -- == PESTA?A UPDATE ? Changelog visual del hub
 -- ==================================================================
@@ -61881,13 +64231,13 @@ function CreateUpdateTab()
         local card = Instance.new("Frame", parent)
         card.Size = UDim2.new(1, -8, 0, 0)
         card.AutomaticSize = Enum.AutomaticSize.Y
-        card.BackgroundColor3 = Color3.fromRGB(8, 20, 50)
+        card.BackgroundColor3 = Color3.fromRGB(50, 37,  8)
         card.BackgroundTransparency = 0.25
         card.BorderSizePixel = 0
         card.LayoutOrder = lo or 0
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
         local stroke = Instance.new("UIStroke", card)
-        stroke.Color = Color3.fromRGB( 50, 255, 180)
+        stroke.Color = Color3.fromRGB(255, 190,  50)
         stroke.Thickness = 1.5
         stroke.Transparency = 0.35
         local pad = Instance.new("UIPadding", card)
@@ -61909,7 +64259,7 @@ function CreateUpdateTab()
         lbl.BackgroundTransparency = 1
         lbl.Text = text
         lbl.TextSize = size or 13
-        lbl.TextColor3 = color or Color3.fromRGB(220, 240, 255)
+        lbl.TextColor3 = color or Color3.fromRGB(255, 244, 220)
         lbl.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextWrapped = true
@@ -61922,7 +64272,7 @@ function CreateUpdateTab()
     local function _makeDivider(parent, lo)
         local div = Instance.new("Frame", parent)
         div.Size = UDim2.new(1, 0, 0, 1)
-        div.BackgroundColor3 = Color3.fromRGB(210, 85, 100)
+        div.BackgroundColor3 = Color3.fromRGB(210,170,  85)
         div.BackgroundTransparency = 0.6
         div.BorderSizePixel = 0
         div.LayoutOrder = lo or 0
@@ -61933,13 +64283,13 @@ function CreateUpdateTab()
         local sc = Instance.new("Frame", parent)
         sc.Size = UDim2.new(1, 0, 0, 0)
         sc.AutomaticSize = Enum.AutomaticSize.Y
-        sc.BackgroundColor3 = Color3.fromRGB(5, 15, 40)
+        sc.BackgroundColor3 = Color3.fromRGB(40, 29,  5)
         sc.BackgroundTransparency = 0.45
         sc.BorderSizePixel = 0
         sc.LayoutOrder = lo or 0
         Instance.new("UICorner", sc).CornerRadius = UDim.new(0, 7)
         local stroke = Instance.new("UIStroke", sc)
-        stroke.Color = Color3.fromRGB(255, 130, 190)
+        stroke.Color = Color3.fromRGB(255, 215, 130)
         stroke.Thickness = 1
         stroke.Transparency = 0.55
         local pad = Instance.new("UIPadding", sc)
@@ -61960,7 +64310,7 @@ function CreateUpdateTab()
 
         -- Version badge verde
         local verLbl = _makeLabel(card, upd.version, 22,
-            Color3.fromRGB(0, 230, 120), true, 1)
+            Color3.fromRGB(230, 157,   0), true, 1)
         verLbl.TextSize = 22
 
         _makeDivider(card, 2)
@@ -61970,7 +64320,7 @@ function CreateUpdateTab()
 
         for li, line in ipairs(upd.whatsnew) do
             _makeLabel(card, line, 11,
-                Color3.fromRGB(255, 190, 200), false, 3 + li)
+                Color3.fromRGB(255, 234, 190), false, 3 + li)
         end
 
         local sp = Instance.new("Frame", card)
@@ -61986,566 +64336,17 @@ function CreateUpdateTab()
                 Color3.fromRGB(255, 255, 255), true, 1)
             for li2, line in ipairs(entry.lines) do
                 _makeLabel(sc, line, 10,
-                    Color3.fromRGB(255, 190, 200), false, 1 + li2)
+                    Color3.fromRGB(255, 234, 190), false, 1 + li2)
             end
         end
     end
 end
 
--- ================================================================
--- == EMOTES TAB v2 - Redise?o fachero + optimizaciones de perf
--- PERF: sin Heartbeat para detectar movimiento -> usa StateChanged
---       + velocidad solo cuando el personaje se mueve de verdad.
---       sin Tweens en hover en mobile (solo desktop).
---       animaciones cacheadas por ID para evitar recargas.
--- DESIGN: est?tica ne?n/cyberpunk, cards con icono, grid limpio,
---         barra de estado, controles compactos.
--- ================================================================
-function CreateEmotesTab()
-    if not contentContainer or not contentContainer.Parent then
-        task.wait(0.15)
-        if not contentContainer or not contentContainer.Parent then return end
-    end
-    _makeTwoColumns()
-    -- FIX RACE CONDITION: capturar columnas localmente
-    local leftColumn  = leftColumn
-    local rightColumn = rightColumn
-
-    -- -- Estado global del emote (persiste entre re-ejecuciones) ----------
-    _G._emoteState = _G._emoteState or {
-        loopConn     = nil,
-        loopActive   = false,
-        currentTrack = nil,
-        loopSpeed    = 1.0,
-        stateConn    = nil,
-        velConn      = nil,   -- OPT: conecta solo al moverse, no Heartbeat always-on
-        animCache    = {},    -- OPT: cache de tracks por animId
-        activeAnimId = nil,
-    }
-    local ES = _G._emoteState
-
-    -- -- Datos de emotes con icono emoji ----------------------------------
-    local EMOTES = {
-        { name = "Zerq 1",  id = "rbxassetid://92587731065850",  icon = "??" },
-        { name = "Zerq 2",  id = "rbxassetid://10714061912",     icon = "??" },
-        { name = "Zerq 3",  id = "rbxassetid://76510079095692",  icon = "??" },
-        { name = "Zerq 4",  id = "rbxassetid://10714347256",     icon = "?" },
-        { name = "Zerq 5",  id = "rbxassetid://10714352626",     icon = "?" },
-        { name = "Zerq 6",  id = "rbxassetid://10921258489",     icon = "??" },
-        { name = "Zerq 7",  id = "rbxassetid://10214314957",     icon = "??" },
-        { name = "Zerq 8",  id = "rbxassetid://10713981723",     icon = "??" },
-        { name = "Zerq 9",  id = "rbxassetid://14352340648",     icon = "??" },
-    }
-
-    -- Colores ne?n del tema
-    local CLR_BG       = Color3.fromRGB(8, 10, 22)
-    local CLR_CARD     = Color3.fromRGB(14, 18, 42)
-    local CLR_ACCENT   = Color3.fromRGB(0, 210, 255)    -- cyan ne?n
-    local CLR_ACCENT2  = Color3.fromRGB(180, 0, 255)    -- violeta
-    local CLR_GREEN    = Color3.fromRGB(0, 255, 160)    -- verde ne?n
-    local CLR_RED      = Color3.fromRGB(255, 50, 100)   -- rojo ne?n
-    local CLR_TEXT     = Color3.fromRGB(220, 240, 255)
-    local CLR_MUTED    = Color3.fromRGB(120, 140, 180)
-
-    -- -- OPT: obtener Animator cacheado ------------------------------------
-    local function _getAnimator()
-        local char = LocalPlayer.Character
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        return hum and hum:FindFirstChildOfClass("Animator")
-    end
-
-    -- -- Limpiar conexiones sin tocar el track -----------------------------
-    local function _disconnectConns()
-        if ES.loopConn  then pcall(function() ES.loopConn:Disconnect()  end); ES.loopConn  = nil end
-        if ES.stateConn then pcall(function() ES.stateConn:Disconnect() end); ES.stateConn = nil end
-        if ES.velConn   then pcall(function() ES.velConn:Disconnect()   end); ES.velConn   = nil end
-    end
-
-    -- -- Referencia al label de estado (se actualiza en tiempo real) -------
-    local _statusLbl = nil  -- asignado m?s adelante
-
-    local function _setStatus(txt, color)
-        if _statusLbl then
-            _statusLbl.Text      = txt
-            _statusLbl.TextColor3 = color or CLR_MUTED
-        end
-    end
-
-    -- -- Stop optimizado ---------------------------------------------------
-    local function _stopEmote()
-        _disconnectConns()
-        ES.loopActive   = false
-        ES.activeAnimId = nil
-        if ES.currentTrack then
-            pcall(function() ES.currentTrack:Stop(0.2) end)
-            ES.currentTrack = nil
-        end
-        _setStatus("Sin emote activo", CLR_MUTED)
-    end
-
-    -- -- Play optimizado con cache de animaciones --------------------------
-    -- OPT: en vez de crear Animation cada vez, reutilizamos el track si ya existe
-    -- OPT: en vez de Heartbeat always-on para detectar movimiento, usamos
-    --      StateChanged (firing solo en transiciones) + un solo Heartbeat
-    --      que se activa solo cuando el emote esta activo y corre solo 1 vez/s
-    local function _playEmote(animId, loop)
-        _stopEmote()
-        local animr = _getAnimator()
-        if not animr then
-            _setStatus("Personaje no disponible", CLR_RED)
-            CreateCustomNotification("EMOTES", "Personaje no disponible", 2)
-            return
-        end
-
-        -- OPT: cache de track por animId + animator (evita LoadAnimation repetido)
-        local cacheKey = animId .. tostring(animr)
-        local track = ES.animCache[cacheKey]
-        if not track or not track.Animation then
-            local anim = Instance.new("Animation")
-            anim.AnimationId = animId
-            local ok, t = pcall(function() return animr:LoadAnimation(anim) end)
-            if not ok or not t then
-                _setStatus("Error al cargar animacion", CLR_RED)
-                CreateCustomNotification("EMOTES", "Error al cargar animacion", 2)
-                return
-            end
-            ES.animCache[cacheKey] = t
-            track = t
-        end
-
-        track:AdjustSpeed(ES.loopSpeed)
-        track.Looped = loop
-        track:Play()
-        ES.currentTrack = track
-        ES.activeAnimId = animId
-        ES.loopActive   = loop
-
-        local animName = animId:match("%d+$") or animId
-        _setStatus(loop and ("?? Loop: " .. animName) or ("? Playing: " .. animName), CLR_GREEN)
-
-        -- Re-loop manual si looped=false pero loopActive=true (compatibilidad)
-        if loop then
-            ES.loopConn = track.Stopped:Connect(function()
-                if ES.loopActive and ES.activeAnimId == animId then
-                    task.defer(function()
-                        if ES.loopActive and ES.activeAnimId == animId then
-                            _playEmote(animId, true)
-                        end
-                    end)
-                end
-            end)
-        end
-
-        -- OPT: detectar movimiento/salto sin Heartbeat permanente:
-        -- StateChanged dispara SOLO en transiciones de estado (muy eficiente)
-        local char = LocalPlayer.Character
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            ES.stateConn = hum.StateChanged:Connect(function(_, newState)
-                if newState == Enum.HumanoidStateType.Jumping
-                or newState == Enum.HumanoidStateType.Freefall
-                or newState == Enum.HumanoidStateType.Swimming
-                or newState == Enum.HumanoidStateType.Dead then
-                    _stopEmote()
-                end
-            end)
-            -- OPT: Heartbeat con throttle agresivo (cada 6 frames ~0.1s) SOLO para vel horizontal
-            -- Mucho menos costoso que el Heartbeat cada 3 frames anterior
-            local _hbT = 0
-            local _hrp = char:FindFirstChild("HumanoidRootPart")
-            if _hrp then
-                ES.velConn = RunService.Heartbeat:Connect(function()
-                    _hbT = _hbT + 1
-                    if _hbT < 6 then return end
-                    _hbT = 0
-                    if not ES.currentTrack then
-                        if ES.velConn then pcall(function() ES.velConn:Disconnect() end); ES.velConn = nil end
-                        return
-                    end
-                    local vel = _hrp.AssemblyLinearVelocity
-                    -- umbral 2.0 (era 1.5) para menos falsos positivos en mobile
-                    if vel and (vel.X * vel.X + vel.Z * vel.Z) > 4.0 then
-                        _stopEmote()
-                    end
-                end)
-            end
-        end
-    end
-
-    -- ---------------------------------------------------------------------
-    -- COLUMNA IZQUIERDA: Controles + Custom ID
-    -- ---------------------------------------------------------------------
-
-    -- -- Banner de estado --------------------------------------------------
-    local statusFrame = Instance.new("Frame", leftColumn)
-    statusFrame.Size = UDim2.new(1, -4, 0, 36)
-    statusFrame.BackgroundColor3 = CLR_BG
-    statusFrame.BackgroundTransparency = 0.1
-    statusFrame.BorderSizePixel = 0
-    statusFrame.LayoutOrder = 0
-    Instance.new("UICorner", statusFrame).CornerRadius = UDim.new(0, 10)
-    local sfStroke = Instance.new("UIStroke", statusFrame)
-    sfStroke.Color = CLR_ACCENT
-    sfStroke.Thickness = 1.5
-    sfStroke.Transparency = 0.35
-    local sfPad = Instance.new("UIPadding", statusFrame)
-    sfPad.PaddingLeft = UDim.new(0, 10)
-    sfPad.PaddingRight = UDim.new(0, 6)
-    -- Icono
-    local sfIcon = Instance.new("TextLabel", statusFrame)
-    sfIcon.Size = UDim2.new(0, 22, 1, 0)
-    sfIcon.BackgroundTransparency = 1
-    sfIcon.Text = "??"
-    sfIcon.TextSize = 16
-    sfIcon.ZIndex = 14
-    sfIcon.Font = Enum.Font.GothamBold
-    -- Label de estado
-    _statusLbl = Instance.new("TextLabel", statusFrame)
-    _statusLbl.Size = UDim2.new(1, -28, 1, 0)
-    _statusLbl.Position = UDim2.new(0, 26, 0, 0)
-    _statusLbl.BackgroundTransparency = 1
-    _statusLbl.Text = "Sin emote activo"
-    _statusLbl.TextColor3 = CLR_MUTED
-    _statusLbl.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-    _statusLbl.TextSize = 11
-    _statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-    _statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
-    _statusLbl.ZIndex = 14
-
-    -- -- Secci?n CONTROLES -------------------------------------------------
-    local ctrlSec = CreateBorderedSectionGlobal(leftColumn, "?  CONTROLES")
-
-    -- Toggle Loop
-    CreateAuroraToggle(ctrlSec, "??  Loop (repite automaticamente)", function(on)
-        ES.loopActive = on
-        if on then
-            if ES.currentTrack and ES.currentTrack.IsPlaying and ES.activeAnimId then
-                _playEmote(ES.activeAnimId, true)
-            else
-                CreateCustomNotification("EMOTES", "Elige un emote para loopearlo", 2)
-            end
-        else
-            if ES.loopConn then
-                pcall(function() ES.loopConn:Disconnect() end)
-                ES.loopConn = nil
-            end
-        end
-    end, false)
-
-    -- -- Control de velocidad (compacto) -----------------------------------
-    do
-        local speedRow = Instance.new("Frame", ctrlSec)
-        speedRow.Size = UDim2.new(1, -4, 0, 34)
-        speedRow.BackgroundColor3 = CLR_CARD
-        speedRow.BackgroundTransparency = 0.3
-        speedRow.BorderSizePixel = 0
-        Instance.new("UICorner", speedRow).CornerRadius = UDim.new(0, 8)
-        local sStroke = Instance.new("UIStroke", speedRow)
-        sStroke.Color = CLR_ACCENT2
-        sStroke.Thickness = 1
-        sStroke.Transparency = 0.5
-
-        local speedLbl = Instance.new("TextLabel", speedRow)
-        speedLbl.Size = UDim2.new(0.5, 0, 1, 0)
-        speedLbl.Position = UDim2.new(0, 10, 0, 0)
-        speedLbl.BackgroundTransparency = 1
-        speedLbl.Text = "? Speed: 1.0x"
-        speedLbl.TextColor3 = CLR_TEXT
-        speedLbl.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-        speedLbl.TextSize = 11
-        speedLbl.TextXAlignment = Enum.TextXAlignment.Left
-        speedLbl.ZIndex = 14
-
-        local speeds   = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0}
-        local speedIdx = 4
-
-        local function _applySpeed()
-            ES.loopSpeed = speeds[speedIdx]
-            speedLbl.Text = "? Speed: " .. tostring(speeds[speedIdx]) .. "x"
-            if ES.currentTrack and ES.currentTrack.IsPlaying then
-                pcall(function() ES.currentTrack:AdjustSpeed(ES.loopSpeed) end)
-            end
-        end
-
-        -- Bot?n ?
-        local btnM = Instance.new("TextButton", speedRow)
-        btnM.Size = UDim2.new(0, 28, 0, 24)
-        btnM.Position = UDim2.new(1, -64, 0.5, -12)
-        btnM.BackgroundColor3 = CLR_ACCENT2
-        btnM.BackgroundTransparency = 0.5
-        btnM.BorderSizePixel = 0
-        btnM.Text = "-"
-        btnM.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btnM.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        btnM.TextSize = 16
-        btnM.ZIndex = 14
-        Instance.new("UICorner", btnM).CornerRadius = UDim.new(0, 6)
-        btnM.Activated:Connect(function()
-            if speedIdx > 1 then speedIdx = speedIdx - 1; _applySpeed() end
-        end)
-
-        -- Bot?n +
-        local btnP = Instance.new("TextButton", speedRow)
-        btnP.Size = UDim2.new(0, 28, 0, 24)
-        btnP.Position = UDim2.new(1, -32, 0.5, -12)
-        btnP.BackgroundColor3 = CLR_ACCENT
-        btnP.BackgroundTransparency = 0.4
-        btnP.BorderSizePixel = 0
-        btnP.Text = "+"
-        btnP.TextColor3 = Color3.fromRGB(0, 0, 0)
-        btnP.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        btnP.TextSize = 16
-        btnP.ZIndex = 14
-        Instance.new("UICorner", btnP).CornerRadius = UDim.new(0, 6)
-        btnP.Activated:Connect(function()
-            if speedIdx < #speeds then speedIdx = speedIdx + 1; _applySpeed() end
-        end)
-    end
-
-    -- -- Bot?n STOP --------------------------------------------------------
-    do
-        local stopBtn = Instance.new("TextButton", ctrlSec)
-        stopBtn.Size = UDim2.new(1, -4, 0, 32)
-        stopBtn.BackgroundColor3 = CLR_RED
-        stopBtn.BackgroundTransparency = 0.25
-        stopBtn.BorderSizePixel = 0
-        stopBtn.Text = "?  DETENER EMOTE"
-        stopBtn.TextColor3 = Color3.fromRGB(255, 220, 230)
-        stopBtn.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        stopBtn.TextSize = 13
-        stopBtn.ZIndex = 14
-        Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0, 9)
-        local sbs = Instance.new("UIStroke", stopBtn)
-        sbs.Color = CLR_RED
-        sbs.Thickness = 1.5
-        sbs.Transparency = 0.2
-        stopBtn.Activated:Connect(function()
-            _stopEmote()
-            CreateCustomNotification("EMOTES", "Emote detenido", 1.5)
-        end)
-    end
-
-    -- -- Secci?n CUSTOM EMOTE ID -------------------------------------------
-    local customSec = CreateBorderedSectionGlobal(leftColumn, "??  CUSTOM EMOTE (ID)")
-    do
-        local hintLbl = Instance.new("TextLabel", customSec)
-        hintLbl.Size = UDim2.new(1, -8, 0, 16)
-        hintLbl.BackgroundTransparency = 1
-        hintLbl.Text = "Animation ID:"
-        hintLbl.TextColor3 = CLR_MUTED
-        hintLbl.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-        hintLbl.TextSize = 10
-        hintLbl.TextXAlignment = Enum.TextXAlignment.Left
-        hintLbl.ZIndex = 14
-        Instance.new("UIPadding", hintLbl).PaddingLeft = UDim.new(0, 4)
-
-        local inputBox = Instance.new("TextBox", customSec)
-        inputBox.Size = UDim2.new(1, -4, 0, 30)
-        inputBox.BackgroundColor3 = CLR_BG
-        inputBox.BackgroundTransparency = 0.1
-        inputBox.BorderSizePixel = 0
-        inputBox.PlaceholderText = "rbxassetid://000000000"
-        inputBox.PlaceholderColor3 = CLR_MUTED
-        inputBox.Text = ""
-        inputBox.TextColor3 = CLR_ACCENT
-        inputBox.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-        inputBox.TextSize = 11
-        inputBox.ClearTextOnFocus = false
-        inputBox.ZIndex = 14
-        Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 8)
-        local ibStroke = Instance.new("UIStroke", inputBox)
-        ibStroke.Color = CLR_ACCENT
-        ibStroke.Thickness = 1
-        ibStroke.Transparency = 0.5
-        local ibPad = Instance.new("UIPadding", inputBox)
-        ibPad.PaddingLeft = UDim.new(0, 9)
-
-        -- Highlight on focus (sin Tween: solo propiedad directa = mas rapido)
-        inputBox.Focused:Connect(function()     ibStroke.Transparency = 0.1 end)
-        inputBox.FocusLost:Connect(function()   ibStroke.Transparency = 0.5 end)
-
-        local playBtn = Instance.new("TextButton", customSec)
-        playBtn.Size = UDim2.new(1, -4, 0, 30)
-        playBtn.BackgroundColor3 = CLR_GREEN
-        playBtn.BackgroundTransparency = 0.2
-        playBtn.BorderSizePixel = 0
-        playBtn.Text = "?  Reproducir Custom"
-        playBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
-        playBtn.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        playBtn.TextSize = 12
-        playBtn.ZIndex = 14
-        Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 9)
-        local pbStroke = Instance.new("UIStroke", playBtn)
-        pbStroke.Color = CLR_GREEN
-        pbStroke.Thickness = 1.5
-        pbStroke.Transparency = 0.25
-
-        playBtn.Activated:Connect(function()
-            local raw = inputBox.Text:gsub("%s", "")
-            if raw == "" then
-                CreateCustomNotification("EMOTES", "Ingresa un ID primero", 2); return
-            end
-            local finalId = raw
-            if not raw:find("rbxassetid://") then
-                local num = raw:match("%d+")
-                if not num then
-                    CreateCustomNotification("EMOTES", "ID invalido", 2); return
-                end
-                finalId = "rbxassetid://" .. num
-            end
-            _playEmote(finalId, ES.loopActive)
-            CreateCustomNotification("EMOTES", "? Custom: " .. finalId:match("%d+$"), 2)
-        end)
-    end
-
-    -- ---------------------------------------------------------------------
-    -- COLUMNA DERECHA: Grid de emotes (redise?ado)
-    -- ---------------------------------------------------------------------
-
-    -- Header decorativo
-    local hdrFrame = Instance.new("Frame", rightColumn)
-    hdrFrame.Size = UDim2.new(1, -4, 0, 38)
-    hdrFrame.BackgroundColor3 = CLR_BG
-    hdrFrame.BackgroundTransparency = 0.05
-    hdrFrame.BorderSizePixel = 0
-    hdrFrame.LayoutOrder = 0
-    Instance.new("UICorner", hdrFrame).CornerRadius = UDim.new(0, 10)
-    local hdrGrad = Instance.new("UIGradient", hdrFrame)
-    hdrGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0,   CLR_ACCENT),
-        ColorSequenceKeypoint.new(0.5, CLR_ACCENT2),
-        ColorSequenceKeypoint.new(1,   CLR_ACCENT),
-    })
-    hdrGrad.Rotation = 90
-    hdrGrad.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0,   0.75),
-        NumberSequenceKeypoint.new(0.5, 0.6),
-        NumberSequenceKeypoint.new(1,   0.75),
-    })
-    local hdrStroke = Instance.new("UIStroke", hdrFrame)
-    hdrStroke.Color = CLR_ACCENT
-    hdrStroke.Thickness = 1.5
-    hdrStroke.Transparency = 0.3
-    local hdrLbl = Instance.new("TextLabel", hdrFrame)
-    hdrLbl.Size = UDim2.new(1, 0, 1, 0)
-    hdrLbl.BackgroundTransparency = 1
-    hdrLbl.Text = "??  EMOTES  ?  Zerqon Hub"
-    hdrLbl.TextColor3 = CLR_TEXT
-    hdrLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-    hdrLbl.TextSize = 13
-    hdrLbl.ZIndex = 14
-
-    -- Secci?n grid
-    local emoteSec = CreateBorderedSectionGlobal(rightColumn, "EMOTES")
-
-    -- OPT: pre-alocar todos los TweenInfo fuera del loop
-    local _tiHover = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-    -- Grid 2 columnas con cards estilo ne?n
-    local emoteGrid = Instance.new("Frame", emoteSec)
-    emoteGrid.Name      = "EmoteGrid"
-    emoteGrid.Size      = UDim2.new(1, -4, 0, 0)
-    emoteGrid.AutomaticSize = Enum.AutomaticSize.Y
-    emoteGrid.BackgroundTransparency = 1
-    emoteGrid.BorderSizePixel = 0
-    emoteGrid.ZIndex = 14
-
-    local gridLayout = Instance.new("UIGridLayout", emoteGrid)
-    gridLayout.CellSize          = UDim2.new(0.5, -5, 0, 80)
-    gridLayout.CellPadding       = UDim2.new(0, 5, 0, 5)
-    gridLayout.FillDirection     = Enum.FillDirection.Horizontal
-    gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    gridLayout.VerticalAlignment = Enum.VerticalAlignment.Top
-    gridLayout.SortOrder         = Enum.SortOrder.LayoutOrder
-
-    -- OPT: colores alternados precalculados (no crear tablas en cada iteraci?n)
-    local CARD_COLORS = {
-        Color3.fromRGB(14, 30, 70),
-        Color3.fromRGB(28, 12, 60),
-        Color3.fromRGB(10, 35, 55),
-        Color3.fromRGB(35, 12, 50),
-    }
-    local STROKE_COLORS = { CLR_ACCENT, CLR_ACCENT2, CLR_GREEN, CLR_RED }
-
-    for i, emote in ipairs(EMOTES) do
-        local ci = ((i - 1) % 4) + 1
-
-        local card = Instance.new("Frame", emoteGrid)
-        card.LayoutOrder = i
-        card.BackgroundColor3 = CARD_COLORS[ci]
-        card.BackgroundTransparency = 0.25
-        card.BorderSizePixel = 0
-        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 12)
-        local cardStroke = Instance.new("UIStroke", card)
-        cardStroke.Color = STROKE_COLORS[ci]
-        cardStroke.Thickness = 1.5
-        cardStroke.Transparency = 0.45
-
-        -- Icono grande
-        local iconLbl = Instance.new("TextLabel", card)
-        iconLbl.Size = UDim2.new(1, 0, 0, 34)
-        iconLbl.Position = UDim2.new(0, 0, 0, 6)
-        iconLbl.BackgroundTransparency = 1
-        iconLbl.Text = emote.icon
-        iconLbl.TextSize = 24
-        iconLbl.Font = Enum.Font.GothamBold
-        iconLbl.ZIndex = 14
-
-        -- Nombre
-        local nameLbl = Instance.new("TextLabel", card)
-        nameLbl.Size = UDim2.new(1, -6, 0, 22)
-        nameLbl.Position = UDim2.new(0, 3, 0, 42)
-        nameLbl.BackgroundTransparency = 1
-        nameLbl.Text = emote.name
-        nameLbl.TextColor3 = CLR_TEXT
-        nameLbl.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-        nameLbl.TextSize = 11
-        nameLbl.TextWrapped = true
-        nameLbl.ZIndex = 14
-
-        -- Bot?n transparente encima (cubre la card entera)
-        local btn = Instance.new("TextButton", card)
-        btn.Size = UDim2.new(1, 0, 1, 0)
-        btn.BackgroundTransparency = 1
-        btn.BorderSizePixel = 0
-        btn.Text = ""
-        btn.ZIndex = 15
-
-        -- OPT: hover sin Tween en mobile (directo = 0 overhead)
-        -- En desktop usamos Tween porque tenemos MouseEnter/Leave
-        btn.MouseEnter:Connect(function()
-            TweenService:Create(card, _tiHover, {
-                BackgroundTransparency = 0.05,
-                BackgroundColor3       = CARD_COLORS[ci]:Lerp(Color3.new(1,1,1), 0.08),
-            }):Play()
-            TweenService:Create(cardStroke, _tiHover, { Transparency = 0 }):Play()
-        end)
-        btn.MouseLeave:Connect(function()
-            TweenService:Create(card, _tiHover, {
-                BackgroundTransparency = 0.25,
-                BackgroundColor3       = CARD_COLORS[ci],
-            }):Play()
-            TweenService:Create(cardStroke, _tiHover, { Transparency = 0.45 }):Play()
-        end)
-
-        -- OPT: capturar upvalues fuera del closure
-        local _eId   = emote.id
-        local _eName = emote.name
-        btn.Activated:Connect(function()
-            _playEmote(_eId, ES.loopActive)
-            CreateCustomNotification("EMOTES", emote.icon .. " " .. _eName .. (ES.loopActive and " ??" or ""), 1.5)
-        end)
-    end
-
-    -- -- Limpiar cache al cambiar de personaje -----------------------------
-    LocalPlayer.CharacterAdded:Connect(function()
-        ES.animCache    = {}
-        ES.currentTrack = nil
-        ES.activeAnimId = nil
-        _disconnectConns()
-        _setStatus("Sin emote activo", CLR_MUTED)
-    end)
-end
+-- v50: la pestania EMOTES se elimino por completo: la funcion que la
+-- construia y sus entradas en tabNames / tabFunctions / _zqTabPositions /
+-- _zqTabIcons / _zqTabAccents / _tabAccentMap. UPDATE pasa a ser el indice 8.
+-- La seccion de emotes de GAMEPLAY sigue existiendo y la UI nativa del juego
+-- no se toca.
 
 function CreateUseTab()
     -- Guard: verificar contentContainer sin usar task.wait (el wait romperia la redireccion
@@ -62845,7 +64646,7 @@ function CreateUseTab()
 
     local rolesPanel = Instance.new("Frame", infoRolesSec)
     rolesPanel.Size = UDim2.new(1,0,0,108)
-    rolesPanel.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+    rolesPanel.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
     rolesPanel.BackgroundTransparency = 0.85; rolesPanel.BorderSizePixel = 0
     Instance.new("UICorner", rolesPanel).CornerRadius = UDim.new(0,10)
     local rpStroke = Instance.new("UIStroke", rolesPanel)
@@ -62853,7 +64654,7 @@ function CreateUseTab()
 
     local murderPanel = Instance.new("Frame", rolesPanel)
     murderPanel.Size = UDim2.new(0.5,-6,1,-8); murderPanel.Position = UDim2.new(0,4,0,4)
-    murderPanel.BackgroundColor3 = Color3.fromRGB(200,30,30); murderPanel.BackgroundTransparency = 0.68; murderPanel.BorderSizePixel = 0
+    murderPanel.BackgroundColor3 = Color3.fromRGB(200,146,30); murderPanel.BackgroundTransparency = 0.68; murderPanel.BorderSizePixel = 0
     Instance.new("UICorner", murderPanel).CornerRadius = UDim.new(0,8)
     local murdAvatar = Instance.new("ImageLabel", murderPanel)
     murdAvatar.Size = UDim2.new(0,58,0,58); murdAvatar.Position = UDim2.new(0.5,0,0,4)
@@ -62863,7 +64664,7 @@ function CreateUseTab()
     murdNameLbl.Size = UDim2.new(1,-4,0,17); murdNameLbl.Position = UDim2.new(0,2,1,-21)
  murdNameLbl.BackgroundTransparency = 1; murdNameLbl.Text = " MURDER: ?"
     murdNameLbl.FontFace = Font.fromEnum(Enum.Font.Montserrat); murdNameLbl.TextSize = 9
-    murdNameLbl.TextColor3 = Color3.fromRGB(255,80,80)
+    murdNameLbl.TextColor3 = Color3.fromRGB(255,200,80)
     murdNameLbl.TextXAlignment = Enum.TextXAlignment.Center; murdNameLbl.TextTruncate = Enum.TextTruncate.AtEnd; murdNameLbl.ZIndex = 14
 
     local sheriffPanel = Instance.new("Frame", rolesPanel)
@@ -62884,7 +64685,7 @@ function CreateUseTab()
 
     local allPlayersFrame = Instance.new("ScrollingFrame", infoRolesSec)
     allPlayersFrame.Size = UDim2.new(1,0,0,140)
-    allPlayersFrame.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+    allPlayersFrame.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
     allPlayersFrame.BackgroundTransparency = 0.85
     allPlayersFrame.BorderSizePixel = 0
     allPlayersFrame.ScrollBarThickness = 3
@@ -62905,7 +64706,7 @@ function CreateUseTab()
         for _, p in ipairs(_cachedPlayers) do
             local row = Instance.new("Frame", allPlayersFrame)
             row.Size = UDim2.new(1,0,0,38)
-            row.BackgroundColor3 = Color3.fromRGB(20, 35, 80)
+            row.BackgroundColor3 = Color3.fromRGB(80, 61, 20)
             row.BackgroundTransparency = 0.75
             row.BorderSizePixel = 0
             Instance.new("UICorner", row).CornerRadius = UDim.new(0,6)
@@ -62919,7 +64720,7 @@ function CreateUseTab()
             nm.Size = UDim2.new(0.55,0,0,18); nm.Position = UDim2.new(0,40,0,2)
  nm.BackgroundTransparency = 1; nm.Text = p.DisplayName
             nm.FontFace = Font.fromEnum(Enum.Font.Montserrat); nm.TextSize = 11
-            nm.TextColor3 = Color3.fromRGB(220,220,235)
+            nm.TextColor3 = Color3.fromRGB(235,230,220)
             nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTruncate = Enum.TextTruncate.AtEnd
 
             local rl = Instance.new("TextLabel", row)
@@ -62983,13 +64784,13 @@ function CreateUseTab()
     local infoDeadSec = CreateBorderedSectionGlobal(rightColumn, " INFORMATION DEAD")
     local deadLogFrame = Instance.new("ScrollingFrame", infoDeadSec)
     deadLogFrame.Size = UDim2.new(1,0,0,140)
-    deadLogFrame.BackgroundColor3 = Color3.fromRGB(20, 35, 80); deadLogFrame.BackgroundTransparency = 0.85; deadLogFrame.BorderSizePixel = 0
+    deadLogFrame.BackgroundColor3 = Color3.fromRGB(80, 61, 20); deadLogFrame.BackgroundTransparency = 0.85; deadLogFrame.BorderSizePixel = 0
     deadLogFrame.BackgroundTransparency = 0.75
-    deadLogFrame.ScrollBarThickness = 3; deadLogFrame.ScrollBarImageColor3 = Color3.fromRGB(200,50,50)
+    deadLogFrame.ScrollBarThickness = 3; deadLogFrame.ScrollBarImageColor3 = Color3.fromRGB(200,152,50)
     deadLogFrame.CanvasSize = UDim2.new(0,0,0,0); deadLogFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
     Instance.new("UICorner", deadLogFrame).CornerRadius = UDim.new(0,8)
     local dlStroke = Instance.new("UIStroke", deadLogFrame)
-    dlStroke.Color = Color3.fromRGB(200,50,50); dlStroke.Thickness = 2.5; dlStroke.Transparency = 0.3
+    dlStroke.Color = Color3.fromRGB(200,152,50); dlStroke.Thickness = 2.5; dlStroke.Transparency = 0.3
     local deadLogLayout = Instance.new("UIListLayout", deadLogFrame)
     deadLogLayout.Padding = UDim.new(0,3); deadLogLayout.SortOrder = Enum.SortOrder.LayoutOrder
     local dlPad = Instance.new("UIPadding", deadLogFrame)
@@ -62999,7 +64800,7 @@ function CreateUseTab()
         local t = os.date("%H:%M:%S")
         local row = Instance.new("Frame", deadLogFrame)
         row.Size = UDim2.new(1,0,0,36)
-        row.BackgroundColor3 = Color3.fromRGB(60,10,10)
+        row.BackgroundColor3 = Color3.fromRGB(60,44,10)
         row.BackgroundTransparency = 0.75; row.BorderSizePixel = 0
         Instance.new("UICorner", row).CornerRadius = UDim.new(0,6)
 
@@ -63013,14 +64814,14 @@ function CreateUseTab()
         lbl.BackgroundTransparency = 1
  lbl.Text = " "..p.Name.." murio"
         lbl.FontFace = Font.fromEnum(Enum.Font.Montserrat); lbl.TextSize = 11
-        lbl.TextColor3 = Color3.fromRGB(255,100,100)
+        lbl.TextColor3 = Color3.fromRGB(255,206,100)
         lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextTruncate = Enum.TextTruncate.AtEnd
 
         local tlbl = Instance.new("TextLabel", row)
         tlbl.Size = UDim2.new(1,-38,0,14); tlbl.Position = UDim2.new(0,36,0,20)
  tlbl.BackgroundTransparency = 1; tlbl.Text = "["..t.."]"
         tlbl.FontFace = Font.fromEnum(Enum.Font.Montserrat); tlbl.TextSize = 9
-        tlbl.TextColor3 = Color3.fromRGB(180,80,80)
+        tlbl.TextColor3 = Color3.fromRGB(180,148,80)
         tlbl.TextXAlignment = Enum.TextXAlignment.Left
 
         table.insert(deadLog, row)
@@ -63067,19 +64868,19 @@ function CreateUseTab()
         return t
     end
 
-    -- -- makePlayerDropdown -- ahora usa CreateNebulaSelector (glassmorphism hub) --
+    -- -- makePlayerDropdown -- ahora usa CreateZerqonSelector (glassmorphism hub) --
     -- Devuelve un getter function() -> Player | nil, igual que antes.
     -- El selector muestra la lista actual; un boton "-> Actualizar" la refresca.
     local function makePlayerDropdown(parent, labelText, accentColor, onSelect)
         local _selected    = nil
-        local _nebulaObj   = nil   -- referencia al masterFrame del selector
-        local _nebulaSetFn = nil   -- funcion interna para cambiar la seleccion (no expuesta por CreateNebulaSelector, usamos callback)
+        local _zerqonObj   = nil   -- referencia al masterFrame del selector
+        local _zerqonSetFn = nil   -- funcion interna para cambiar la seleccion (no expuesta por CreateZerqonSelector, usamos callback)
 
         -- Construir lista inicial
         local _initList = _buildPlayerNames()
 
-        -- Crear el NebulaSelector glassmorphism
-        _nebulaObj = CreateNebulaSelector(parent, labelText, _initList, _initList[1], function(name)
+        -- Crear el ZerqonSelector glassmorphism
+        _zerqonObj = CreateZerqonSelector(parent, labelText, _initList, _initList[1], function(name)
             if name == "(sin jugadores)" then _selected = nil; return end
             _selected = Players:FindFirstChild(name)
             if onSelect then onSelect(_selected) end
@@ -63087,23 +64888,23 @@ function CreateUseTab()
         end)
 
         -- Boton "-> Actualizar lista" -- reconstruye la lista re-creando el selector
-        -- Como NebulaSelector no expone un metodo de rebuild, recreamos solo sus opciones
+        -- Como ZerqonSelector no expone un metodo de rebuild, recreamos solo sus opciones
         -- usando el patron estandar del hub: destruir y recrear el frame.
         local rfBtn = Instance.new("TextButton", parent)
         rfBtn.Name                   = "RefreshPlayersBtn"
         rfBtn.Size                   = UDim2.new(1, 0, 0, 28)
-        rfBtn.BackgroundColor3       = Color3.fromRGB( 50, 255, 180)
+        rfBtn.BackgroundColor3       = Color3.fromRGB(255, 190,  50)
         rfBtn.BackgroundTransparency = 0.75
         rfBtn.BorderSizePixel        = 0
         rfBtn.Text                   = "->  Actualizar lista de jugadores"
         rfBtn.FontFace               = Font.fromEnum(Enum.Font.Montserrat)
         rfBtn.TextSize               = 11
-        rfBtn.TextColor3             = Color3.fromRGB( 50, 255, 180)
+        rfBtn.TextColor3             = Color3.fromRGB(255, 190,  50)
         rfBtn.AutoButtonColor        = false
         rfBtn.ZIndex                 = 13
         Instance.new("UICorner", rfBtn).CornerRadius = UDim.new(0, 8)
         local rfStroke = Instance.new("UIStroke", rfBtn)
-        rfStroke.Color = Color3.fromRGB( 50, 255, 180); rfStroke.Thickness = 1.2; rfStroke.Transparency = 0.20
+        rfStroke.Color = Color3.fromRGB(255, 190,  50); rfStroke.Thickness = 1.2; rfStroke.Transparency = 0.20
         rfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         rfBtn.MouseEnter:Connect(function()
             TweenService:Create(rfBtn, TweenInfo.new(0.10), {BackgroundTransparency = 0.20}):Play()
@@ -63116,12 +64917,12 @@ function CreateUseTab()
         rfBtn.Activated:Connect(function()
             local newList = _buildPlayerNames()
  CreateCustomNotification("PLAYERS", "Lista: " .. #newList .. " jugadores", 2)
-            -- Destruir y recrear el NebulaSelector con la lista actualizada
-            if _nebulaObj and _nebulaObj.Parent then
-                _nebulaObj:Destroy()
+            -- Destruir y recrear el ZerqonSelector con la lista actualizada
+            if _zerqonObj and _zerqonObj.Parent then
+                _zerqonObj:Destroy()
             end
             _selected = nil
-            _nebulaObj = CreateNebulaSelector(parent, labelText, newList, newList[1], function(name)
+            _zerqonObj = CreateZerqonSelector(parent, labelText, newList, newList[1], function(name)
                 if name == "(sin jugadores)" then _selected = nil; return end
                 _selected = Players:FindFirstChild(name)
                 if onSelect then onSelect(_selected) end
@@ -63156,11 +64957,151 @@ function CreateUseTab()
     end
 
     -- ================================================================
+    -- == GOOGLE MATERIAL COLOR PALETTE - Selectors para partes del hub
+    -- Paleta Material Design 2 completa con selectores por componente
+    -- ================================================================
+    do
+        local matSec = CreateBorderedSectionGlobal(col, "Google Material Colors")
+
+        local matTitle = Instance.new("TextLabel", matSec)
+        matTitle.Size                   = UDim2.new(1, 0, 0, 22)
+        matTitle.BackgroundTransparency = 1
+        matTitle.Text                   = "Toca una parte del hub para elegir su color"
+        matTitle.TextSize               = 11
+        matTitle.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        matTitle.TextColor3             = ThemeColors.Primary
+        matTitle.TextXAlignment         = Enum.TextXAlignment.Center
+        matTitle.ZIndex                 = 22
+        matTitle.LayoutOrder            = 0
+
+        -- Partes del hub que se pueden recolorear
+        local HUB_PARTS = {
+            { label = "Color Principal",     key = "Primary"     },
+            { label = "Acento",              key = "Accent"      },
+            { label = "Toggle Activo",       key = "Aurora1"     },
+            { label = "Knob Activo",         key = "Aurora2"     },
+            { label = "Texto",               key = "TextPrimary" },
+            { label = "Panel Oscuro",        key = "BackgroundLight" },
+        }
+
+        -- v54: antes habia una grilla Material de 14x5 y botones para elegir
+        -- "parte del hub". Ahora cada parte es una fila con su muestra y su
+        -- hex, y el color sale del selector (cuadrado SV + barra de hue).
+        -- El aplicado en vivo es el mismo de v48: se busca en todo el hub lo
+        -- que estaba pintado con el color viejo de esa clave y se tweenea.
+        local function _matApply(key, newC, labelTxt)
+            if not (key and newC and ThemeColors[key]) then return end
+            local oldC = Color3.new(ThemeColors[key].R, ThemeColors[key].G, ThemeColors[key].B)
+            ThemeColors[key] = newC
+            pcall(function()
+                if not mainFrame then return end
+                local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                for _, obj in ipairs(mainFrame:GetDescendants()) do
+                    pcall(function()
+                        -- no tocar los internals del toggle
+                        local _pn = obj.Parent and obj.Parent.Name or ""
+                        if _pn:sub(1,16) == "AuroraToggleRow_" and (obj.Name == "Knob" or obj.Name == "TogglePill") then return end
+                        -- ni las muestras de las filas de color: esas llevan el
+                        -- color que eligio el usuario, no un color del tema
+                        if _pn == "ZQColorRow" and obj.Name == "Swatch" then return end
+                        if obj:IsA("Frame") or obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                            local dr = math.abs(obj.BackgroundColor3.R - oldC.R)*255
+                            local dg = math.abs(obj.BackgroundColor3.G - oldC.G)*255
+                            local db = math.abs(obj.BackgroundColor3.B - oldC.B)*255
+                            if dr+dg+db < 60 then
+                                TweenService:Create(obj, ti, {BackgroundColor3 = newC}):Play()
+                            end
+                        elseif obj:IsA("TextLabel") or obj:IsA("TextBox") then
+                            local dr = math.abs(obj.TextColor3.R - oldC.R)*255
+                            local dg = math.abs(obj.TextColor3.G - oldC.G)*255
+                            local db = math.abs(obj.TextColor3.B - oldC.B)*255
+                            if dr+dg+db < 60 then
+                                TweenService:Create(obj, ti, {TextColor3 = newC}):Play()
+                            end
+                        elseif obj:IsA("UIStroke") then
+                            local dr = math.abs(obj.Color.R - oldC.R)*255
+                            local dg = math.abs(obj.Color.G - oldC.G)*255
+                            local db = math.abs(obj.Color.B - oldC.B)*255
+                            if dr+dg+db < 60 then
+                                TweenService:Create(obj, ti, {Color = newC}):Play()
+                            end
+                        end
+                    end)
+                end
+            end)
+            local hx = _G._ZQ_Hex and _G._ZQ_Hex(newC)
+                or string.format("#%02X%02X%02X", math.floor(newC.R*255+0.5), math.floor(newC.G*255+0.5), math.floor(newC.B*255+0.5))
+            CreateCustomNotification("COLOR APLICADO", tostring(labelTxt) .. " -> " .. hx, 2)
+        end
+
+        local _matRows = {}
+        if _G._ZQ_ColorRow then
+            for i, part in ipairs(HUB_PARTS) do
+                local _k, _lb = part.key, part.label
+                local r = _G._ZQ_ColorRow(matSec, {
+                    label = _lb,
+                    order = i,
+                    title = "HUB  //  " .. _lb,
+                    get   = function() return ThemeColors[_k] end,
+                    set   = function(c) _matApply(_k, c, _lb) end,
+                })
+                if r then table.insert(_matRows, r) end
+            end
+        end
+
+        -- Boton restore colores del hub
+        local matRestoreBtn = Instance.new("TextButton", matSec)
+        matRestoreBtn.Size                   = UDim2.new(1, -8, 0, 28)
+        matRestoreBtn.BackgroundColor3       = ThemeColors.Background
+        matRestoreBtn.BackgroundTransparency = 0.35
+        matRestoreBtn.BorderSizePixel        = 0
+        matRestoreBtn.Text                   = "↺ Restaurar Colores del Hub"
+        matRestoreBtn.TextSize               = 11
+        matRestoreBtn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        matRestoreBtn.TextColor3             = ThemeColors.Primary
+        matRestoreBtn.AutoButtonColor        = false
+        matRestoreBtn.ZIndex                 = 23
+        matRestoreBtn.LayoutOrder            = 10
+        Instance.new("UICorner", matRestoreBtn).CornerRadius = UDim.new(0, 7)
+        local matRestoreStroke = Instance.new("UIStroke", matRestoreBtn)
+        matRestoreStroke.Color           = ThemeColors.Primary
+        matRestoreStroke.Thickness       = 1.2
+        matRestoreStroke.Transparency    = 0.3
+        matRestoreStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        matRestoreBtn.MouseEnter:Connect(function()
+            TweenService:Create(matRestoreBtn, TweenInfo.new(0.12), {BackgroundTransparency = 0.15}):Play()
+        end)
+        matRestoreBtn.MouseLeave:Connect(function()
+            TweenService:Create(matRestoreBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.35}):Play()
+        end)
+        matRestoreBtn.Activated:Connect(function()
+            local _defaultTheme2 = {
+                Primary         = Color3.fromRGB(200, 160,  80),
+                Secondary       = Color3.fromRGB( 28,  24,  20),
+                Accent          = Color3.fromRGB(220, 185, 100),
+                Background      = Color3.fromRGB( 10,   8,   6),
+                BackgroundLight = Color3.fromRGB( 32,  28,  22),
+                TextPrimary     = Color3.fromRGB(245, 238, 225),
+                TextSecondary   = Color3.fromRGB(180, 155, 100),
+                Aurora1         = Color3.fromRGB(190, 145,  65),
+                Aurora2         = Color3.fromRGB(230, 195, 110),
+                Aurora3         = Color3.fromRGB(160, 125,  60),
+                Aurora4         = Color3.fromRGB( 22,  18,  12),
+            }
+            local RESTORE2 = "__MatRestore__"
+            Themes[RESTORE2] = _defaultTheme2
+            pcall(function() ApplyTheme(RESTORE2) end)
+            for _, r in ipairs(_matRows) do pcall(r.refresh) end
+            CreateCustomNotification("RESTAURADO", "Colores originales del hub", 2)
+        end)
+    end
+
+    -- ================================================================
     -- == HTML COLOR PICKER - Grilla con los 141 colores HTML estandar
     -- Mueve el mouse/dedo sobre el cuadrado para ver nombre y hex.
     -- ================================================================
     do
-        local colorSec = CreateBorderedSectionGlobal(leftColumn, "?? HTML Colors")
+        local colorSec = CreateBorderedSectionGlobal(col, "?? HTML Colors")
 
         -- Titulo de la seccion
         local colorTitle = Instance.new("TextLabel", colorSec)
@@ -63169,7 +65110,7 @@ function CreateUseTab()
         colorTitle.Text                   = "?? HTML Colors (141)"
         colorTitle.TextSize               = 13
         colorTitle.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
-        colorTitle.TextColor3             = Color3.fromRGB(220, 100, 130)
+        colorTitle.TextColor3             = Color3.fromRGB(220, 182, 100)
         colorTitle.TextXAlignment         = Enum.TextXAlignment.Center
         colorTitle.ZIndex                 = 22
 
@@ -63248,6 +65189,13 @@ function CreateUseTab()
         gridFrame.ZIndex                 = 20
         gridFrame.ClipsDescendants       = true
 
+        -- Color seleccionado actualmente (para el boton APPLY)
+        local _selectedHtmlColor = Color3.fromRGB(255, 250, 240)  -- AliceBlue default
+        local _selectedHtmlName  = "AliceBlue"
+
+        -- Celda activa (para mostrar borde de seleccion)
+        local _activeCellStroke = nil
+
         -- Crear una celda por color
         for i, c in ipairs(HTML_COLORS) do
             local col = (i - 1) % COLS
@@ -63258,6 +65206,12 @@ function CreateUseTab()
             cell.BackgroundColor3 = Color3.fromRGB(c[2], c[3], c[4])
             cell.BorderSizePixel  = 0
             cell.ZIndex           = 21
+            -- Stroke oculto para indicar seleccion
+            local cellStroke = Instance.new("UIStroke", cell)
+            cellStroke.Color        = Color3.fromRGB(255,255,255)
+            cellStroke.Thickness    = 1.5
+            cellStroke.Transparency = 1  -- oculto por defecto
+            cellStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
             -- Tooltip invisible para deteccion de hover
             local btn = Instance.new("TextButton", cell)
             btn.Size                   = UDim2.new(1, 0, 1, 0)
@@ -63265,23 +65219,42 @@ function CreateUseTab()
             btn.Text                   = ""
             btn.ZIndex                 = 25
             btn.AutoButtonColor        = false
+            local _cc = Color3.fromRGB(c[2], c[3], c[4])
+            local _cn = c[1]
             btn.MouseEnter:Connect(function()
                 local hex = string.format("#%02X%02X%02X", c[2], c[3], c[4])
-                colorInfoName.Text = c[1]
+                colorInfoName.Text = _cn
                 colorInfoHex.Text  = hex
-                colorSwatch.BackgroundColor3 = Color3.fromRGB(c[2], c[3], c[4])
+                colorSwatch.BackgroundColor3 = _cc
             end)
             btn.Activated:Connect(function()
+                -- FIX v5: click SOLO selecciona el color, NO lo aplica al hub
+                -- (evita que cambie el fondo/opacidad del hub al clickear)
+                _selectedHtmlColor = _cc
+                _selectedHtmlName  = _cn
                 local hex = string.format("#%02X%02X%02X", c[2], c[3], c[4])
-                SetClipboard(hex)
-                CreateCustomNotification("COLOR COPIADO", c[1] .. " " .. hex, 2)
+                colorInfoName.Text = _cn
+                colorInfoHex.Text  = hex
+                colorSwatch.BackgroundColor3 = _cc
+
+                -- Remover borde de celda anterior
+                if _activeCellStroke then
+                    _activeCellStroke.Transparency = 1
+                end
+                -- Mostrar borde en celda activa
+                cellStroke.Transparency = 0
+                _activeCellStroke = cellStroke
+
+                -- Solo copiar al clipboard, NO llamar _applyHubColor
+                pcall(function() SetClipboard(hex) end)
+                CreateCustomNotification("COLOR SELECCIONADO", _cn .. " " .. hex .. " — presiona APPLY para aplicar", 2)
             end)
         end
 
         -- Panel de info (swatch + nombre + hex)
         local infoRow = Instance.new("Frame", colorSec)
         infoRow.Size                   = UDim2.new(1, 0, 0, 36)
-        infoRow.BackgroundColor3       = Color3.fromRGB(  4,  12,  22)
+        infoRow.BackgroundColor3       = Color3.fromRGB( 22,  16,   4)
         infoRow.BackgroundTransparency = 0.4
         infoRow.BorderSizePixel        = 0
         infoRow.ZIndex                 = 20
@@ -63293,7 +65266,7 @@ function CreateUseTab()
         colorSwatch.Size             = UDim2.new(0, 26, 0, 26)
         colorSwatch.AnchorPoint      = Vector2.new(0, 0.5)
         colorSwatch.Position         = UDim2.new(0, 0, 0.5, 0)
-        colorSwatch.BackgroundColor3 = Color3.fromRGB(240, 248, 255)
+        colorSwatch.BackgroundColor3 = Color3.fromRGB(255, 250, 240)
         colorSwatch.BorderSizePixel  = 0
         colorSwatch.ZIndex           = 22
         Instance.new("UICorner", colorSwatch).CornerRadius = UDim.new(0, 4)
@@ -63331,44 +65304,93 @@ function CreateUseTab()
         hintLabel.Text                   = "Hover = ver color  |  Click = copiar hex"
         hintLabel.TextSize               = 10
         hintLabel.FontFace               = Font.fromEnum(Enum.Font.Gotham)
-        hintLabel.TextColor3             = Color3.fromRGB(160, 60, 80)
+        hintLabel.TextColor3             = Color3.fromRGB(160,128, 60)
         hintLabel.TextXAlignment         = Enum.TextXAlignment.Center
         hintLabel.ZIndex                 = 22
 
-        -- -- Boton APPLY COLOR -------------------------------------------------
-        -- Construye un tema dinamico desde el color seleccionado y repinta
-        -- toggles, bindables, selectores, border y fondo (ImageLabel) del hub.
-        local applyBtn = Instance.new("TextButton", colorSec)
-        applyBtn.Name                   = "ApplyColorBtn"
-        applyBtn.Size                   = UDim2.new(1, -8, 0, 32)
-        applyBtn.Position               = UDim2.new(0, 4, 0, 0)
-        applyBtn.BackgroundColor3       = Color3.fromRGB( 50, 255, 180)
-        applyBtn.BackgroundTransparency = 0.15
-        applyBtn.BorderSizePixel        = 0
-        applyBtn.Text                   = "APPLY COLOR AL HUB"
-        applyBtn.TextSize               = 13
-        applyBtn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
-        applyBtn.TextColor3             = Color3.fromRGB(255, 230, 235)
-        applyBtn.AutoButtonColor        = false
-        applyBtn.ZIndex                 = 23
-        Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 7)
-        local applyStroke = Instance.new("UIStroke", applyBtn)
-        applyStroke.Color           = Color3.fromRGB(220, 80, 110)
-        applyStroke.Thickness       = 1.5
-        applyStroke.Transparency    = 0.1
-        applyStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        -- ================================================================
+        -- == SELECTORES DE COLORES DEFAULT DEL HUB
+        -- Colores base del tema Cinema Dark (defaults del hub)
+        -- ================================================================
+        local _defaultSwatchColors = {
+            { name = "Primary",         color = Color3.fromRGB(200, 160,  80),  label = "Primary (Amber)" },
+            { name = "Accent",          color = Color3.fromRGB(220, 185, 100),  label = "Accent (Gold)" },
+            { name = "Aurora1",         color = Color3.fromRGB(190, 145,  65),  label = "Toggle ON" },
+            { name = "Aurora2",         color = Color3.fromRGB(230, 195, 110),  label = "Knob ON" },
+            { name = "Background",      color = Color3.fromRGB( 10,   8,   6),  label = "Background" },
+            { name = "BackgroundLight", color = Color3.fromRGB( 32,  28,  22),  label = "Panel BG" },
+            { name = "TextPrimary",     color = Color3.fromRGB(245, 238, 225),  label = "Text" },
+        }
 
-        applyBtn.MouseEnter:Connect(function()
-            TweenService:Create(applyBtn, TweenInfo.new(0.10), {BackgroundTransparency = 0}):Play()
-            TweenService:Create(applyStroke, TweenInfo.new(0.10), {Transparency = 0}):Play()
-        end)
-        applyBtn.MouseLeave:Connect(function()
-            TweenService:Create(applyBtn, TweenInfo.new(0.12), {BackgroundTransparency = 0.15}):Play()
-            TweenService:Create(applyStroke, TweenInfo.new(0.12), {Transparency = 0.1}):Play()
-        end)
+        local defSwatchTitle = Instance.new("TextLabel", colorSec)
+        defSwatchTitle.Size                   = UDim2.new(1, 0, 0, 18)
+        defSwatchTitle.BackgroundTransparency = 1
+        defSwatchTitle.Text                   = "✦ Default Hub Colors — click to preview"
+        defSwatchTitle.TextSize               = 10
+        defSwatchTitle.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        defSwatchTitle.TextColor3             = ThemeColors.Primary
+        defSwatchTitle.TextXAlignment         = Enum.TextXAlignment.Center
+        defSwatchTitle.ZIndex                 = 22
 
-        applyBtn.Activated:Connect(function()
-            local selColor = colorSwatch.BackgroundColor3
+        local defSwatchRow = Instance.new("Frame", colorSec)
+        defSwatchRow.Size                   = UDim2.new(1, -8, 0, 36)
+        defSwatchRow.Position               = UDim2.new(0, 4, 0, 0)
+        defSwatchRow.BackgroundTransparency = 1
+        defSwatchRow.BorderSizePixel        = 0
+        defSwatchRow.ZIndex                 = 22
+
+        local defSwatchLayout = Instance.new("UIListLayout", defSwatchRow)
+        defSwatchLayout.FillDirection         = Enum.FillDirection.Horizontal
+        defSwatchLayout.HorizontalAlignment   = Enum.HorizontalAlignment.Left
+        defSwatchLayout.VerticalAlignment     = Enum.VerticalAlignment.Center
+        defSwatchLayout.Padding               = UDim.new(0, 4)
+        defSwatchLayout.SortOrder             = Enum.SortOrder.LayoutOrder
+
+        for i, sw in ipairs(_defaultSwatchColors) do
+            local swBtn = Instance.new("TextButton", defSwatchRow)
+            swBtn.Size                   = UDim2.new(0, 28, 0, 28)
+            swBtn.BackgroundColor3       = sw.color
+            swBtn.BackgroundTransparency = 0
+            swBtn.BorderSizePixel        = 0
+            swBtn.Text                   = ""
+            swBtn.ZIndex                 = 25
+            swBtn.AutoButtonColor        = false
+            swBtn.LayoutOrder            = i
+            local swCorner = Instance.new("UICorner", swBtn)
+            swCorner.CornerRadius = UDim.new(0, 5)
+            local swStroke = Instance.new("UIStroke", swBtn)
+            swStroke.Color           = Color3.fromRGB(255, 255, 255)
+            swStroke.Thickness       = 1
+            swStroke.Transparency    = 0.7
+            swStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            local capturedSw = sw
+            swBtn.MouseEnter:Connect(function()
+                colorSwatch.BackgroundColor3 = capturedSw.color
+                local r2 = math.floor(capturedSw.color.R * 255)
+                local g2 = math.floor(capturedSw.color.G * 255)
+                local b2 = math.floor(capturedSw.color.B * 255)
+                colorInfoName.Text = capturedSw.label
+                colorInfoHex.Text  = string.format("#%02X%02X%02X", r2, g2, b2)
+                TweenService:Create(swStroke, TweenInfo.new(0.10), {Transparency = 0.0, Thickness = 2}):Play()
+            end)
+            swBtn.MouseLeave:Connect(function()
+                TweenService:Create(swStroke, TweenInfo.new(0.12), {Transparency = 0.7, Thickness = 1}):Play()
+            end)
+            swBtn.Activated:Connect(function()
+                colorSwatch.BackgroundColor3 = capturedSw.color
+                local r2 = math.floor(capturedSw.color.R * 255)
+                local g2 = math.floor(capturedSw.color.G * 255)
+                local b2 = math.floor(capturedSw.color.B * 255)
+                colorInfoName.Text = capturedSw.label
+                colorInfoHex.Text  = string.format("#%02X%02X%02X", r2, g2, b2)
+                CreateCustomNotification("COLOR SELECCIONADO", capturedSw.label, 1.5)
+            end)
+        end
+
+        -- ================================================================
+        -- == APPLY COLOR AL HUB
+        -- ================================================================
+        local function _applyHubColor(selColor)
             local r = math.floor(selColor.R * 255)
             local g = math.floor(selColor.G * 255)
             local b = math.floor(selColor.B * 255)
@@ -63412,78 +65434,178 @@ function CreateUseTab()
             pcall(function() ApplyTheme(CUSTOM_NAME) end)
 
             pcall(function()
-                local bg = _G._hubBgMainImageRef
-                    or (mainFrame and mainFrame:FindFirstChild("HubBackground"))
-                if bg then
-                    TweenService:Create(bg, TweenInfo.new(0.4, Enum.EasingStyle.Sine), {
-                        ImageColor3 = dark1
-                    }):Play()
-                end
                 if glowBorder then
                     TweenService:Create(glowBorder, TweenInfo.new(0.3), {Color = base}):Play()
                 end
             end)
 
+            return base, dark1, bright, pale
+        end
+
+        local applyBtn = Instance.new("TextButton", colorSec)
+        applyBtn.Name                   = "ApplyColorBtn"
+        applyBtn.Size                   = UDim2.new(1, -8, 0, 32)
+        applyBtn.Position               = UDim2.new(0, 4, 0, 0)
+        applyBtn.BackgroundColor3       = ThemeColors.Aurora1
+        applyBtn.BackgroundTransparency = 0.15
+        applyBtn.BorderSizePixel        = 0
+        applyBtn.Text                   = "APPLY COLOR AL HUB"
+        applyBtn.TextSize               = 13
+        applyBtn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        applyBtn.TextColor3             = ThemeColors.TextPrimary
+        applyBtn.AutoButtonColor        = false
+        applyBtn.ZIndex                 = 23
+        Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 7)
+        local applyStroke = Instance.new("UIStroke", applyBtn)
+        applyStroke.Color           = ThemeColors.Accent
+        applyStroke.Thickness       = 1.5
+        applyStroke.Transparency    = 0.1
+        applyStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        applyBtn.MouseEnter:Connect(function()
+            TweenService:Create(applyBtn, TweenInfo.new(0.10), {BackgroundTransparency = 0}):Play()
+            TweenService:Create(applyStroke, TweenInfo.new(0.10), {Transparency = 0}):Play()
+        end)
+        applyBtn.MouseLeave:Connect(function()
+            TweenService:Create(applyBtn, TweenInfo.new(0.12), {BackgroundTransparency = 0.15}):Play()
+            TweenService:Create(applyStroke, TweenInfo.new(0.12), {Transparency = 0.1}):Play()
+        end)
+
+        applyBtn.Activated:Connect(function()
+            -- FIX v5: usar _selectedHtmlColor (color clickeado en la grilla),
+            -- no colorSwatch.BackgroundColor3 (que puede ser el hover)
+            local selColor = _selectedHtmlColor or colorSwatch.BackgroundColor3
+            local base, dark1, bright, pale = _applyHubColor(selColor)
+            local r = math.floor(selColor.R * 255)
+            local g = math.floor(selColor.G * 255)
+            local b = math.floor(selColor.B * 255)
             applyBtn.BackgroundColor3 = dark1
             applyBtn.TextColor3       = pale
             applyStroke.Color         = bright
-            task.delay(0.6, function()
-                if applyBtn and applyBtn.Parent then
-                    TweenService:Create(applyBtn, TweenInfo.new(0.3), {
-                        BackgroundColor3 = dark1
-                    }):Play()
-                end
-            end)
-
             local hex  = string.format("#%02X%02X%02X", r, g, b)
-            local name = colorInfoName.Text or "Color"
+            local name = _selectedHtmlName or colorInfoName.Text or "Color"
             CreateCustomNotification("HUB RECOLOREADO", name .. " " .. hex, 3)
         end)
 
-        -- Boton secundario: restaurar tema original
-        local resetBtn = Instance.new("TextButton", colorSec)
-        resetBtn.Name                   = "ResetColorBtn"
-        resetBtn.Size                   = UDim2.new(1, -8, 0, 22)
-        resetBtn.Position               = UDim2.new(0, 4, 0, 0)
-        resetBtn.BackgroundColor3       = Color3.fromRGB(  4,  12,  22)
-        resetBtn.BackgroundTransparency = 0.5
-        resetBtn.BorderSizePixel        = 0
-        resetBtn.Text                   = "Restaurar tema original"
-        resetBtn.TextSize               = 11
-        resetBtn.FontFace               = Font.fromEnum(Enum.Font.Gotham)
-        resetBtn.TextColor3             = Color3.fromRGB(180, 80, 100)
-        resetBtn.AutoButtonColor        = false
-        resetBtn.ZIndex                 = 23
-        Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 5)
-        local resetStroke = Instance.new("UIStroke", resetBtn)
-        resetStroke.Color           = Color3.fromRGB( 50, 255, 180)
-        resetStroke.Thickness       = 1
-        resetStroke.Transparency    = 0.4
-        resetStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        -- ================================================================
+        -- == RESTORE COLORS — restablece los colores default del hub lentamente
+        -- ================================================================
+        local restoreBtn = Instance.new("TextButton", colorSec)
+        restoreBtn.Name                   = "RestoreColorsBtn"
+        restoreBtn.Size                   = UDim2.new(1, -8, 0, 30)
+        restoreBtn.Position               = UDim2.new(0, 4, 0, 0)
+        restoreBtn.BackgroundColor3       = Color3.fromRGB( 22,  16,   4)
+        restoreBtn.BackgroundTransparency = 0.4
+        restoreBtn.BorderSizePixel        = 0
+        restoreBtn.Text                   = "↺  RESTORE COLORS"
+        restoreBtn.TextSize               = 12
+        restoreBtn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        restoreBtn.TextColor3             = ThemeColors.Primary
+        restoreBtn.AutoButtonColor        = false
+        restoreBtn.ZIndex                 = 23
+        Instance.new("UICorner", restoreBtn).CornerRadius = UDim.new(0, 7)
+        local restoreStroke = Instance.new("UIStroke", restoreBtn)
+        restoreStroke.Color           = ThemeColors.Primary
+        restoreStroke.Thickness       = 1.5
+        restoreStroke.Transparency    = 0.3
+        restoreStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-        resetBtn.MouseEnter:Connect(function()
-            TweenService:Create(resetBtn, TweenInfo.new(0.10), {BackgroundTransparency = 0.2}):Play()
+        restoreBtn.MouseEnter:Connect(function()
+            TweenService:Create(restoreBtn, TweenInfo.new(0.10), {BackgroundTransparency = 0.2}):Play()
+            TweenService:Create(restoreStroke, TweenInfo.new(0.10), {Transparency = 0.0}):Play()
         end)
-        resetBtn.MouseLeave:Connect(function()
-            TweenService:Create(resetBtn, TweenInfo.new(0.12), {BackgroundTransparency = 0.5}):Play()
+        restoreBtn.MouseLeave:Connect(function()
+            TweenService:Create(restoreBtn, TweenInfo.new(0.12), {BackgroundTransparency = 0.4}):Play()
+            TweenService:Create(restoreStroke, TweenInfo.new(0.12), {Transparency = 0.3}):Play()
         end)
-        resetBtn.Activated:Connect(function()
-            pcall(function() ApplyTheme("Neon Green") end)
+
+        restoreBtn.Activated:Connect(function()
+            -- Animacion lenta de restauracion (tween prolongado en todo el hub)
+            local _defaultTheme = {
+                Primary         = Color3.fromRGB(200, 160,  80),
+                Secondary       = Color3.fromRGB( 28,  24,  20),
+                Accent          = Color3.fromRGB(220, 185, 100),
+                Background      = Color3.fromRGB( 10,   8,   6),
+                BackgroundLight = Color3.fromRGB( 32,  28,  22),
+                TextPrimary     = Color3.fromRGB(245, 238, 225),
+                TextSecondary   = Color3.fromRGB(180, 155, 100),
+                Aurora1         = Color3.fromRGB(190, 145,  65),
+                Aurora2         = Color3.fromRGB(230, 195, 110),
+                Aurora3         = Color3.fromRGB(160, 125,  60),
+                Aurora4         = Color3.fromRGB( 22,  18,  12),
+            }
+            -- Usar ApplyTheme con un tween info lento sobrescribiendo el TweenService interno
+            -- Trick: crear un tema temporal "DefaultRestore" con los valores originales
+            local RESTORE_NAME = "__DefaultRestore__"
+            Themes[RESTORE_NAME] = _defaultTheme
+            -- Override el TweenInfo de ApplyTheme localmente para hacerlo lento
+            local _oldTI = TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+            -- Aplicar manualmente con tween lento
             pcall(function()
-                local bg = _G._hubBgMainImageRef
-                    or (mainFrame and mainFrame:FindFirstChild("HubBackground"))
-                if bg then
-                    TweenService:Create(bg, TweenInfo.new(0.4), {
-                        ImageColor3 = Color3.new(1, 1, 1)
-                    }):Play()
+                if not (mainFrame and mainFrame.Parent) then return end
+                -- Snapshot del tema actual para remap
+                local oldT = {}
+                local keys = {"Primary","Secondary","Accent","Background","BackgroundLight","TextPrimary","TextSecondary","Aurora1","Aurora2","Aurora3","Aurora4"}
+                for _, k in ipairs(keys) do oldT[k] = Color3.new(ThemeColors[k].R, ThemeColors[k].G, ThemeColors[k].B) end
+                -- Actualizar ThemeColors
+                for k, v in pairs(_defaultTheme) do ThemeColors[k] = v end
+                local function _remapC(oldColor)
+                    local bestKey, bestDist = nil, math.huge
+                    for _, k in ipairs(keys) do
+                        local tc = oldT[k]
+                        local dr = (oldColor.R - tc.R)*255
+                        local dg = (oldColor.G - tc.G)*255
+                        local db = (oldColor.B - tc.B)*255
+                        local dist = dr*dr + dg*dg + db*db
+                        if dist < bestDist then bestDist = dist; bestKey = k end
+                    end
+                    return bestKey and _defaultTheme[bestKey] or nil
                 end
-                if glowBorder then
-                    TweenService:Create(glowBorder, TweenInfo.new(0.3), {
-                        Color = Color3.fromRGB(210, 85, 100)
-                    }):Play()
+                for _, obj in ipairs(mainFrame:GetDescendants()) do
+                    pcall(function()
+                        local n = obj.Name or ""
+                        if n == "Knob" or n == "ToggleBackground" or n == "HubBackground" or n == "HubHeaderBar" then return end
+                        if n == "TOGGLE_ROW_TAG" or n == "TOGGLE_STROKE_PROTECTED" or n == "TOGGLE_TRACK_STROKE" then return end
+                        local _p = obj.Parent
+                        while _p do
+                            if _p.Name and _p.Name:sub(1,16) == "AuroraToggleRow_" then return end
+                            _p = _p.Parent; if _p == mainFrame then break end
+                        end
+                        if obj:IsA("Frame") or obj:IsA("ScrollingFrame") or obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                            if not obj:FindFirstChild("TAB_BTN_PROTECTED") then
+                                local m = _remapC(obj.BackgroundColor3)
+                                if m then TweenService:Create(obj, _oldTI, {BackgroundColor3 = m}):Play() end
+                            end
+                        elseif obj:IsA("TextLabel") or obj:IsA("TextBox") then
+                            local mt = _remapC(obj.TextColor3)
+                            if mt then TweenService:Create(obj, _oldTI, {TextColor3 = mt}):Play() end
+                        elseif obj:IsA("UIStroke") then
+                            local mc = _remapC(obj.Color)
+                            if mc then TweenService:Create(obj, _oldTI, {Color = mc}):Play() end
+                        elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+                            if obj.ImageColor3 ~= Color3.new(1,1,1) then
+                                local mi = _remapC(obj.ImageColor3)
+                                if mi then TweenService:Create(obj, _oldTI, {ImageColor3 = mi}):Play() end
+                            end
+                        end
+                    end)
                 end
+                if glowBorder and glowBorder.Parent then
+                    TweenService:Create(glowBorder, _oldTI, {Color = _defaultTheme.Primary}):Play()
+                end
+                -- Restaurar boton
+                TweenService:Create(restoreBtn, _oldTI, {
+                    TextColor3 = _defaultTheme.Primary,
+                    BackgroundColor3 = Color3.fromRGB(22, 16,  4),
+                }):Play()
+                TweenService:Create(restoreStroke, _oldTI, {Color = _defaultTheme.Primary}):Play()
+                TweenService:Create(applyBtn, _oldTI, {
+                    BackgroundColor3 = _defaultTheme.Aurora1,
+                    TextColor3 = _defaultTheme.TextPrimary,
+                }):Play()
+                TweenService:Create(applyStroke, _oldTI, {Color = _defaultTheme.Accent}):Play()
             end)
-            CreateCustomNotification("RESTAURADO", "Tema original del hub", 2)
+            CreateCustomNotification("RESTAURADO", "Colores originales del hub", 2)
         end)
     end
 
@@ -63499,25 +65621,986 @@ _G._ItemsFakeState = _ItemsFakeState
 
 end -- cierra abrirHub
 
+-- FIX v23: registrar en _G justo despues de definirse
+-- El guard de re-ejecucion (linea ~79) busca _G._abrirHub como fallback
+-- cuando abrirHub no esta en el scope de la segunda ejecucion del script
+_G._abrirHub = abrirHub
+
 
 
 -- ================================================================
 -- == PANTALLA DE CARGA ZERQON HUB (v2 - FACHERA EDITION)
 -- == Mas grande, colores del hub, delays de 3s, animaciones epicas
 -- ================================================================
+-- ==================================================================
+-- == ZQ GATE v47 -- MODO ACTUALIZACION + VERIFICACION REAL DE CARGA
+-- ------------------------------------------------------------------
+--  * _G._ZQ_UpdateActive()  -> el hub esta en actualizacion
+--  * _G._ZQ_IsAllowed()     -> lauchafc5 / baneado2003 (entran siempre)
+--  * _G._ZQ_SetUpdateMode() -> lo usa el toggle "Resume Hub" (SETTINGS)
+--  * _G._ZQ_Block(cfg)      -> congela la pantalla, la desenfoca, muestra
+--                              una tarjeta grande y expulsa del juego al
+--                              primer click / touch
+--  * _G._ZQ_Fatal(motivo)   -> pantalla de error de carga
+--  * _G._ZQG.groups         -> checks REALES que corre la pantalla de carga
+--  * _G._ZQ_PostVerify()    -> valida que el hub quedo realmente en pantalla
+-- ==================================================================
+do
+    local _ZPly = game:GetService("Players")
+
+    _G._ZQG = _G._ZQG or {}
+    local G = _G._ZQG
+
+    -- ---------------- CONFIG ----------------
+    -- Poner en false para liberar el hub para todos sin tocar el toggle.
+    G.UPDATE_DEFAULT = true
+    G.IMG_UPDATE     = "rbxassetid://115695337188918"
+    G.IMG_ERROR      = "rbxassetid://115238738491617"
+    G.OWNER          = "lauchafc5"
+    G.ALLOW          = { ["lauchafc5"] = true, ["baneado2003"] = true }
+    G.FLAG_FILE      = "zerqon_hub_release.txt"
+    -- OPCIONAL: url raw (pastebin/github) con "1" (liberado) o "0"
+    -- (en actualizacion). Si esta vacia se usa el archivo local + el
+    -- default de arriba. Es la unica forma de que el switch valga para
+    -- TODOS los usuarios sin re-subir el script.
+    G.REMOTE_FLAG_URL = ""
+
+    local function _svc(n)
+        local ok, s = pcall(function() return game:GetService(n) end)
+        return ok and s or nil
+    end
+
+    -- ---------------- ESTADO PERSISTIDO ----------------
+    -- Archivo: "1" = hub liberado, "0" = en actualizacion.
+    local function _readRelease()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then return nil end
+        local ok, raw = pcall(function()
+            if isfile(G.FLAG_FILE) then return readfile(G.FLAG_FILE) end
+            return nil
+        end)
+        if ok and type(raw) == "string" then
+            raw = raw:gsub("%s", "")
+            if raw == "1" then return true  end
+            if raw == "0" then return false end
+        end
+        return nil
+    end
+
+    -- Flag remoto (si hay url): manda por encima del archivo local.
+    local function _readRemote()
+        if type(G.REMOTE_FLAG_URL) ~= "string" or G.REMOTE_FLAG_URL == "" then return nil end
+        local getter = nil
+        if type(game.HttpGet) == "function" then
+            getter = function() return game:HttpGet(G.REMOTE_FLAG_URL, true) end
+        elseif type(request) == "function" then
+            getter = function()
+                local r = request({ Url = G.REMOTE_FLAG_URL, Method = "GET" })
+                return r and r.Body
+            end
+        end
+        if not getter then return nil end
+        local ok, raw = pcall(getter)
+        if ok and type(raw) == "string" then
+            raw = raw:gsub("%s", "")
+            if raw == "1" then return true  end
+            if raw == "0" then return false end
+        end
+        return nil
+    end
+
+    if G.updateMode == nil then
+        local rel = _readRemote()
+        if rel == nil then rel = _readRelease() end
+        if rel == nil then
+            G.updateMode = G.UPDATE_DEFAULT and true or false
+        else
+            G.updateMode = not rel
+        end
+    end
+
+    function _G._ZQ_UpdateActive()
+        return (_G._ZQG and _G._ZQG.updateMode) and true or false
+    end
+
+    function _G._ZQ_SetUpdateMode(on)
+        G.updateMode = on and true or false
+        if type(writefile) == "function" then
+            pcall(function() writefile(G.FLAG_FILE, G.updateMode and "0" or "1") end)
+        end
+        return G.updateMode
+    end
+
+    function _G._ZQ_IsAllowed()
+        local lp = _ZPly.LocalPlayer
+        local n  = tostring((lp and lp.Name) or ""):lower()
+        return G.ALLOW[n] == true
+    end
+
+    function _G._ZQ_IsOwner()
+        local lp = _ZPly.LocalPlayer
+        return tostring((lp and lp.Name) or ""):lower() == G.OWNER
+    end
+
+    -- ==============================================================
+    -- PANTALLA DE BLOQUEO: congela todo, desenfoca el juego, muestra
+    -- una tarjeta grande (no fullscreen) y expulsa al primer toque.
+    -- cfg = { image, title, sub, lines, hint, accent, kickMsg }
+    -- ==============================================================
+    function _G._ZQ_Block(cfg)
+        if G.blocked then return end
+        G.blocked = true
+        cfg = cfg or {}
+
+        local TS  = _svc("TweenService")
+        local UIS = _svc("UserInputService")
+        local lp  = _ZPly.LocalPlayer
+        local accent = cfg.accent or Color3.fromRGB(220, 185, 100)
+
+        -- 1) Matar la GUI del hub y la pantalla de carga: nada usable atras.
+        pcall(function()
+            local function _kill(root)
+                if not root then return end
+                -- Juntar primero y destruir despues: destruir mientras se
+                -- itera con ipairs saltea elementos (la lista se reindexa).
+                local doomed = {}
+                for _, ch in ipairs(root:GetChildren()) do
+                    if ch:IsA("ScreenGui")
+                        and (ch.Name == "f" or ch.Name == "ZerqonLoadScreen") then
+                        doomed[#doomed + 1] = ch
+                    end
+                end
+                for _, ch in ipairs(doomed) do
+                    pcall(function() ch:Destroy() end)
+                end
+            end
+            if type(gethui) == "function" then
+                local okH, h = pcall(gethui)
+                if okH then _kill(h) end
+            end
+            _kill(_svc("CoreGui"))
+            if lp then _kill(lp:FindFirstChildOfClass("PlayerGui")) end
+        end)
+        pcall(function() _G._hubReady = false end)
+
+        -- 2) Desenfoque del juego (pantalla "congelada y borrosa").
+        pcall(function()
+            local L = _svc("Lighting")
+            if not L then return end
+            local old = L:FindFirstChild("ZQ_BlockBlur")
+            if old then old:Destroy() end
+            local bl = Instance.new("BlurEffect")
+            bl.Name   = "ZQ_BlockBlur"
+            bl.Size   = 0
+            bl.Parent = L
+            if TS then
+                TS:Create(bl, TweenInfo.new(0.9, Enum.EasingStyle.Sine), {Size = 28}):Play()
+            else
+                bl.Size = 28
+            end
+        end)
+
+        -- 3) Congelar al personaje (ademas del Modal del backdrop).
+        pcall(function()
+            local ch  = lp and lp.Character
+            local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed  = 0
+                hum.JumpPower  = 0
+                pcall(function() hum.JumpHeight = 0 end)
+                hum.AutoRotate = false
+            end
+        end)
+
+        -- 4) GUI de bloqueo
+        local sg = Instance.new("ScreenGui")
+        sg.Name           = "ZQ_BlockScreen"
+        sg.ResetOnSpawn   = false
+        sg.IgnoreGuiInset = true
+        sg.DisplayOrder   = 2147483000
+        pcall(function()
+            if type(gethui) == "function" then
+                local okH, h = pcall(gethui)
+                if okH and h then sg.Parent = h end
+            end
+            if not sg.Parent then sg.Parent = _svc("CoreGui") end
+        end)
+        if not sg.Parent and lp then
+            pcall(function() sg.Parent = lp:FindFirstChildOfClass("PlayerGui") end)
+        end
+        if not sg.Parent then return end
+
+        -- Backdrop modal: bloquea el input del juego y congela los controles.
+        local back = Instance.new("TextButton")
+        back.Name                   = "Freeze"
+        back.Size                   = UDim2.new(1, 0, 1, 0)
+        back.Position               = UDim2.new(0, 0, 0, 0)
+        back.BackgroundColor3       = Color3.fromRGB(2, 2, 3)
+        back.BackgroundTransparency = 1
+        back.BorderSizePixel        = 0
+        back.Text                   = ""
+        back.AutoButtonColor        = false
+        back.Modal                  = true
+        back.Selectable             = false
+        back.ZIndex                 = 1
+        back.Parent                 = sg
+        if TS then
+            TS:Create(back, TweenInfo.new(0.8, Enum.EasingStyle.Sine),
+                {BackgroundTransparency = 0.25}):Play()
+        else
+            back.BackgroundTransparency = 0.25
+        end
+
+        -- Tarjeta central: grande pero sin tapar toda la pantalla.
+        local card = Instance.new("Frame")
+        card.Name                   = "Card"
+        card.AnchorPoint            = Vector2.new(0.5, 0.5)
+        card.Position               = UDim2.new(0.5, 0, 0.5, 0)
+        card.Size                   = UDim2.fromOffset(170, 120)
+        card.BackgroundColor3       = Color3.fromRGB(10, 8, 6)
+        card.BackgroundTransparency = 0.06
+        card.BorderSizePixel        = 0
+        card.ClipsDescendants       = true
+        card.ZIndex                 = 5
+        card.Parent                 = sg
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 16)
+
+        local sizeC = Instance.new("UISizeConstraint", card)
+        sizeC.MaxSize = Vector2.new(620, 430)
+        sizeC.MinSize = Vector2.new(250, 220)
+
+        local cGrad = Instance.new("UIGradient", card)
+        cGrad.Rotation = 130
+        cGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(236, 232, 226)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(236, 232, 226)),
+        })
+
+        local cStroke = Instance.new("UIStroke", card)
+        cStroke.Color           = accent
+        cStroke.Thickness       = 2.5
+        cStroke.Transparency    = 0.05
+        cStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        -- Imagen (el rbxassetid que pidio el usuario)
+        local imgWrap = Instance.new("Frame", card)
+        imgWrap.Name                   = "ImgWrap"
+        imgWrap.AnchorPoint            = Vector2.new(0.5, 0)
+        imgWrap.Position               = UDim2.new(0.5, 0, 0, 12)
+        imgWrap.Size                   = UDim2.new(1, -28, 0.46, 0)
+        imgWrap.BackgroundColor3       = Color3.fromRGB(18, 15, 11)
+        imgWrap.BackgroundTransparency = 0.35
+        imgWrap.BorderSizePixel        = 0
+        imgWrap.ClipsDescendants       = true
+        imgWrap.ZIndex                 = 6
+        Instance.new("UICorner", imgWrap).CornerRadius = UDim.new(0, 10)
+
+        local img = Instance.new("ImageLabel", imgWrap)
+        img.Name                   = "Img"
+        img.Size                   = UDim2.new(1, 0, 1, 0)
+        img.BackgroundTransparency = 1
+        img.BorderSizePixel        = 0
+        img.Image                  = tostring(cfg.image or "")
+        img.ScaleType              = Enum.ScaleType.Fit
+        img.ImageTransparency      = 1
+        img.ZIndex                 = 7
+
+        local title = Instance.new("TextLabel", card)
+        title.Position               = UDim2.new(0, 16, 0.46, 16)
+        title.Size                   = UDim2.new(1, -32, 0, 30)
+        title.BackgroundTransparency = 1
+        title.Text                   = tostring(cfg.title or "HUB BLOQUEADO")
+        title.TextColor3             = Color3.fromRGB(245, 238, 225)
+        title.FontFace               = Font.fromEnum(Enum.Font.GothamBlack)
+        title.TextSize               = 24
+        title.TextScaled             = false
+        title.TextXAlignment         = Enum.TextXAlignment.Center
+        title.TextTransparency       = 1
+        title.ZIndex                 = 8
+
+        local sub = Instance.new("TextLabel", card)
+        sub.Position               = UDim2.new(0, 16, 0.46, 48)
+        sub.Size                   = UDim2.new(1, -32, 0, 16)
+        sub.BackgroundTransparency = 1
+        sub.Text                   = tostring(cfg.sub or "")
+        sub.TextColor3             = accent
+        sub.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        sub.TextSize               = 11
+        sub.TextXAlignment         = Enum.TextXAlignment.Center
+        sub.TextTransparency       = 1
+        sub.ZIndex                 = 8
+
+        local body = Instance.new("TextLabel", card)
+        body.Position               = UDim2.new(0, 18, 0.46, 68)
+        body.Size                   = UDim2.new(1, -36, 0, 58)
+        body.BackgroundTransparency = 1
+        body.Text                   = table.concat(cfg.lines or {""}, "\n")
+        body.TextColor3             = Color3.fromRGB(198, 186, 168)
+        body.FontFace               = Font.fromEnum(Enum.Font.Gotham)
+        body.TextSize               = 12
+        body.TextWrapped            = true
+        body.TextXAlignment         = Enum.TextXAlignment.Center
+        body.TextYAlignment         = Enum.TextYAlignment.Top
+        body.TextTransparency       = 1
+        body.ZIndex                 = 8
+
+        local hint = Instance.new("TextLabel", card)
+        hint.AnchorPoint            = Vector2.new(0.5, 1)
+        hint.Position               = UDim2.new(0.5, 0, 1, -10)
+        hint.Size                   = UDim2.new(1, -32, 0, 20)
+        hint.BackgroundTransparency = 1
+        hint.Text                   = tostring(cfg.hint or "TOCA LA PANTALLA PARA SALIR")
+        hint.TextColor3             = accent
+        hint.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        hint.TextSize               = 12
+        hint.TextXAlignment         = Enum.TextXAlignment.Center
+        hint.TextTransparency       = 1
+        hint.ZIndex                 = 8
+
+        -- Entrada de la tarjeta + fade del contenido
+        task.spawn(function()
+            if TS then
+                TS:Create(card, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                    {Size = UDim2.fromScale(0.66, 0.56)}):Play()
+            else
+                card.Size = UDim2.fromScale(0.66, 0.56)
+            end
+            task.wait(0.35)
+            if TS then
+                TS:Create(img,   TweenInfo.new(0.5), {ImageTransparency = 0}):Play()
+                TS:Create(title, TweenInfo.new(0.4), {TextTransparency  = 0}):Play()
+                task.wait(0.10)
+                TS:Create(sub,   TweenInfo.new(0.4), {TextTransparency  = 0.05}):Play()
+                TS:Create(body,  TweenInfo.new(0.4), {TextTransparency  = 0.10}):Play()
+                task.wait(0.10)
+                TS:Create(hint,  TweenInfo.new(0.4), {TextTransparency  = 0.15}):Play()
+            else
+                img.ImageTransparency = 0
+                title.TextTransparency = 0; sub.TextTransparency = 0
+                body.TextTransparency = 0;  hint.TextTransparency = 0
+            end
+        end)
+
+        -- Fallback de imagen: si el asset no carga, se agranda el texto.
+        task.spawn(function()
+            local waited = 0
+            while waited < 5 do
+                local ok, loaded = pcall(function() return img.IsLoaded end)
+                if ok and loaded then return end
+                task.wait(0.25); waited = waited + 0.25
+            end
+            pcall(function()
+                imgWrap.Visible = false
+                title.Position  = UDim2.new(0, 16, 0, 26)
+                sub.Position    = UDim2.new(0, 16, 0, 60)
+                body.Position   = UDim2.new(0, 18, 0, 84)
+                body.Size       = UDim2.new(1, -36, 0, 120)
+                title.TextSize  = 28
+                body.TextSize   = 14
+            end)
+        end)
+
+        -- Borde de la tarjeta pulsando con la paleta del hub
+        task.spawn(function()
+            local pal = (_G._ZQRGB and _G._ZQRGB.palette) or { accent }
+            if cfg.monoStroke then pal = { accent } end
+            local i = 0
+            while card and card.Parent do
+                i = (i % #pal) + 1
+                if TS then
+                    pcall(function()
+                        TS:Create(cStroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine), {Color = pal[i]}):Play()
+                    end)
+                end
+                task.wait(1.2)
+            end
+        end)
+
+        -- Hint pulsando
+        task.spawn(function()
+            task.wait(1.0)   -- deja terminar el fade de entrada
+            while hint and hint.Parent do
+                if TS then
+                    TS:Create(hint, TweenInfo.new(0.75, Enum.EasingStyle.Sine), {TextTransparency = 0.65}):Play()
+                    task.wait(0.8)
+                    TS:Create(hint, TweenInfo.new(0.75, Enum.EasingStyle.Sine), {TextTransparency = 0.05}):Play()
+                    task.wait(0.8)
+                else
+                    task.wait(1.5)
+                end
+            end
+        end)
+
+        -- ---------- EXPULSION SOLO CON CLICK / TOUCH REAL ----------
+        -- v48 FIX: antes se conectaba card.InputBegan directo a _doKick. Ese evento
+        -- tambien dispara con Enum.UserInputType.MouseMovement, o sea que bastaba
+        -- mover el mouse encima de la tarjeta para salir expulsado. Ademas
+        -- UIS.InputBegan aceptaba Keyboard y Gamepad1, asi que cualquier tecla
+        -- (WASD, chat, etc.) tambien kickeaba. Ahora solo valen MouseButton1,
+        -- MouseButton2 y Touch, y hay una guarda de tiempo por si algun evento
+        -- llega antes de que el overlay este realmente armado.
+        local kickMsg = tostring(cfg.kickMsg or "[ HIGHGRADE Z ]  Hub cerrado.")
+        G.armedAt = nil
+        local function _isRealPress(inp)
+            if not inp then return false end
+            local t = nil
+            local okT = pcall(function() t = inp.UserInputType end)
+            if not okT or t == nil then return false end
+            return t == Enum.UserInputType.MouseButton1
+                or t == Enum.UserInputType.MouseButton2
+                or t == Enum.UserInputType.Touch
+        end
+        local function _doKick()
+            if G.kicking then return end
+            if not G.armedAt then return end
+            G.kicking = true
+            pcall(function()
+                if TS then
+                    TS:Create(back, TweenInfo.new(0.22), {BackgroundTransparency = 0}):Play()
+                    TS:Create(card, TweenInfo.new(0.22), {Size = UDim2.fromScale(0.60, 0.50)}):Play()
+                end
+            end)
+            task.spawn(function()
+                for _ = 1, 3 do
+                    task.wait(0.18)
+                    pcall(function() _ZPly.LocalPlayer:Kick(kickMsg) end)
+                    task.wait(1.2)
+                end
+            end)
+        end
+        G.doKick = _doKick
+
+        local function _onInput(inp)
+            if _isRealPress(inp) then _doKick() end
+        end
+
+        -- Arm delay de 1.5s: ni un click en curso ni el fade de entrada expulsan.
+        -- Nada esta conectado hasta que G.armedAt tiene valor.
+        task.delay(1.5, function()
+            if not (back and back.Parent) then return end
+            G.armedAt = true
+            -- PC: click real sobre el fondo modal.
+            pcall(function() back.MouseButton1Click:Connect(_doKick) end)
+            -- Celular: el tap genera InputBegan de tipo Touch sobre el boton.
+            pcall(function() back.InputBegan:Connect(_onInput) end)
+            -- Click o tap encima de la tarjeta (ya filtrado por tipo de input).
+            pcall(function() card.InputBegan:Connect(_onInput) end)
+            -- Red de seguridad global, tambien filtrada.
+            pcall(function()
+                if not UIS then return end
+                G.inputConn = UIS.InputBegan:Connect(_onInput)
+            end)
+        end)
+    end
+
+    -- ---------------- WRAPPERS ----------------
+    function _G._ZQ_Fatal(reason)
+        local r = tostring(reason or "Error desconocido")
+        _G._ZQ_Block({
+            image   = G.IMG_ERROR,
+            title   = "ERROR DE CARGA",
+            sub     = "HIGHGRADE Z  //  EL HUB NO CARGO BIEN",
+            lines   = { r, "Se cancelo la ejecucion para no dejar el hub roto." },
+            hint    = "TOCA LA PANTALLA PARA SALIR DEL JUEGO",
+            accent  = Color3.fromRGB(230,179, 70),
+            monoStroke = true,
+            kickMsg = "[ HIGHGRADE Z ]  Carga fallida: " .. r,
+        })
+    end
+
+    function _G._ZQ_UpdateBlock()
+        _G._ZQ_Block({
+            image   = G.IMG_UPDATE,
+            title   = "HUB EN ACTUALIZACION",
+            sub     = "HIGHGRADE Z  //  UPDATE EN CURSO",
+            lines   = { "El hub esta siendo actualizado en este momento.",
+                        "Volve a ejecutarlo cuando termine la update." },
+            hint    = "TOCA LA PANTALLA PARA SALIR DEL JUEGO",
+            accent  = Color3.fromRGB(220, 185, 100),
+            kickMsg = "[ HIGHGRADE Z ]  Hub en actualizacion, volve mas tarde.",
+        })
+    end
+
+    -- ==============================================================
+    -- CANDADO MM2: el hub corre unicamente en Murder Mystery 2.
+    -- Se chequea por GameId (universo) y PlaceId, que son los datos que el
+    -- cliente ya tiene cargados. El nombre del juego solo se usa de respaldo
+    -- si el executor no expone los ids (ambos en 0), porque un nombre suelto
+    -- con "murder" no alcanza para dar por valido cualquier juego.
+    -- ==============================================================
+    G.MM2_UNIVERSE = 155615604
+    G.MM2_PLACES   = { [142823291] = true, [189707] = true }
+
+    function _G._ZQ_IsMM2()
+        local gid, pid = -1, -1
+        pcall(function() gid = tonumber(game.GameId) or -1 end)
+        pcall(function() pid = tonumber(game.PlaceId) or -1 end)
+        if gid == G.MM2_UNIVERSE then return true end
+        if G.MM2_PLACES[pid] then return true end
+        if (gid <= 0) and (pid <= 0) then
+            local nm = ""
+            pcall(function() nm = tostring(game.Name or ""):lower() end)
+            if nm:find("murder") then return true end
+        end
+        return false
+    end
+
+    function _G._ZQ_MM2Guard()
+        local ok, res = pcall(_G._ZQ_IsMM2)
+        if ok and res then return true end
+        local pid = 0
+        pcall(function() pid = game.PlaceId end)
+        _G._ZQ_Block({
+            image      = G.IMG_ERROR,
+            title      = "JUEGO NO COMPATIBLE",
+            sub        = "HIGHGRADE Z  //  SOLO MURDER MYSTERY 2",
+            lines      = { "Este hub funciona unicamente en Murder Mystery 2.",
+                           "PlaceId detectado: " .. tostring(pid) },
+            hint       = "TOCA LA PANTALLA PARA SALIR DEL JUEGO",
+            accent     = Color3.fromRGB(230,179, 70),
+            monoStroke = true,
+            kickMsg    = "[ HIGHGRADE Z ]  Este hub es solo para Murder Mystery 2.",
+        })
+        return false
+    end
+
+    -- ==============================================================
+    -- CHECKS REALES QUE CORRE LA PANTALLA DE CARGA
+    -- Formato: { nombre, esFatal, funcion }  -> funcion devuelve ok, detalle
+    -- Nada de adorno: cada uno consulta el juego de verdad.
+    -- ==============================================================
+    G.groups = {
+        {
+            label = "Verificando entorno...",
+            done  = "Entorno del executor OK",
+            checks = {
+                { "Funciones base del executor", true, function()
+                    if type(task) ~= "table" or type(task.wait) ~= "function" then
+                        return false, "El executor no expone task.wait"
+                    end
+                    if type(pcall) ~= "function" then return false, "pcall no disponible" end
+                    local ok, res = pcall(function() return Instance.new("Frame") end)
+                    if not (ok and res) then return false, "Instance.new bloqueado por el executor" end
+                    pcall(function() res:Destroy() end)
+                    return true, "ok"
+                end },
+                { "Servicios de Roblox", true, function()
+                    local need = { "Players", "TweenService", "UserInputService",
+                                   "RunService", "Lighting", "ReplicatedStorage" }
+                    for _, n in ipairs(need) do
+                        if not _svc(n) then return false, "No se pudo obtener el servicio " .. n end
+                    end
+                    return true, "ok"
+                end },
+                { "Contenedor de interfaz (gethui/CoreGui)", true, function()
+                    if type(gethui) == "function" then
+                        local ok, h = pcall(gethui)
+                        if ok and h then return true, "gethui" end
+                    end
+                    if _svc("CoreGui") then return true, "CoreGui" end
+                    local lp = _ZPly.LocalPlayer
+                    if lp and lp:FindFirstChildOfClass("PlayerGui") then return true, "PlayerGui" end
+                    return false, "No hay donde crear la interfaz del hub"
+                end },
+                { "Guardado de config (writefile)", false, function()
+                    if type(writefile) ~= "function" then
+                        return false, "Sin writefile: la config no se va a guardar"
+                    end
+                    return true, "ok"
+                end },
+            },
+        },
+        {
+            label = "Analizando el juego...",
+            done  = "Juego analizado y compatible",
+            checks = {
+                { "Esperando que el juego cargue", true, function()
+                    local waited = 0
+                    while waited < 20 do
+                        local ok, loaded = pcall(function() return game:IsLoaded() end)
+                        if ok and loaded then return true, "ok" end
+                        task.wait(0.25); waited = waited + 0.25
+                    end
+                    return false, "El juego nunca termino de cargar (timeout 20s)"
+                end },
+                { "Jugador local y PlayerGui", true, function()
+                    local waited = 0
+                    while (not _ZPly.LocalPlayer) and waited < 10 do
+                        task.wait(0.2); waited = waited + 0.2
+                    end
+                    local lp = _ZPly.LocalPlayer
+                    if not lp then return false, "LocalPlayer sigue en nil" end
+                    local pg = lp:FindFirstChildOfClass("PlayerGui")
+                    if not pg then
+                        local ok, res = pcall(function() return lp:WaitForChild("PlayerGui", 8) end)
+                        pg = (ok and res) or nil
+                    end
+                    if not pg then return false, "PlayerGui nunca aparecio" end
+                    return true, "ok"
+                end },
+                { "Contenido replicado del servidor", false, function()
+                    local rs = _svc("ReplicatedStorage")
+                    if not rs then return false, "ReplicatedStorage inaccesible" end
+                    local waited = 0
+                    while #rs:GetChildren() == 0 and waited < 15 do
+                        task.wait(0.3); waited = waited + 0.3
+                    end
+                    if #rs:GetChildren() == 0 then
+                        return false, "Replicacion lenta: ReplicatedStorage sigue vacio"
+                    end
+                    return true, "ok"
+                end },
+                { "Workspace del juego", true, function()
+                    local waited = 0
+                    local function _n()
+                        local ok, n = pcall(function() return #workspace:GetChildren() end)
+                        return ok and (n or 0) or -1
+                    end
+                    while _n() < 3 and waited < 15 do
+                        task.wait(0.3); waited = waited + 0.3
+                    end
+                    if _n() < 3 then return false, "Workspace vacio o inaccesible" end
+                    return true, "ok"
+                end },
+                { "Juego compatible (Murder Mystery 2)", true, function()
+                    -- v48: sin escape. Antes pasaba con "sin check de juego"
+                    -- cuando isMM2 no existia; ahora el candado propio decide.
+                    local ok, res = pcall(_G._ZQ_IsMM2)
+                    if ok and res then return true, "ok" end
+                    local pid = "?"
+                    pcall(function() pid = tostring(game.PlaceId) end)
+                    return false, "Este hub es solo para Murder Mystery 2 (PlaceId " .. pid .. ")"
+                end },
+                { "Personaje y humanoide", false, function()
+                    local lp = _ZPly.LocalPlayer
+                    if not lp then return false, "sin LocalPlayer" end
+                    local waited = 0
+                    local function _have()
+                        local ch = lp.Character
+                        return ch and ch:FindFirstChildOfClass("Humanoid") and true or false
+                    end
+                    while (not _have()) and waited < 15 do
+                        task.wait(0.3); waited = waited + 0.3
+                    end
+                    if not _have() then return false, "Todavia sin personaje (respawn)" end
+                    return true, "ok"
+                end },
+            },
+        },
+        {
+            label = "Verificando el hub...",
+            done  = "Hub verificado, iniciando",
+            checks = {
+                { "Funciones core del hub", true, function()
+                    if type(abrirHub) ~= "function" then return false, "Falta abrirHub()" end
+                    if type(CreateAuroraToggle) ~= "function" then return false, "Falta CreateAuroraToggle()" end
+                    if type(CreateBorderedSectionGlobal) ~= "function" then return false, "Falta CreateBorderedSectionGlobal()" end
+                    if type(CreateCustomNotification) ~= "function" then return false, "Falta CreateCustomNotification()" end
+                    if type(CreateZerqonSelector) ~= "function" then return false, "Falta CreateZerqonSelector()" end
+                    return true, "ok"
+                end },
+                { "Constructores de pestanias", true, function()
+                    if type(CreateMainTab)      ~= "function" then return false, "Falta la pestania HOME" end
+                    if type(CreateWorldTab)     ~= "function" then return false, "Falta la pestania GAMEPLAY" end
+                    if type(CreateVisualsTab)   ~= "function" then return false, "Falta la pestania VISUALS" end
+                    if type(CreatePremiumTab)   ~= "function" then return false, "Falta la pestania VIP" end
+                    if type(CreateExclusiveTab) ~= "function" then return false, "Falta la pestania SETTINGS" end
+                    if type(CreateCombatTab)    ~= "function" then return false, "Falta la pestania BATTLE" end
+                    return true, "ok"
+                end },
+                { "Paleta y tema del hub", true, function()
+                    if type(ThemeColors) ~= "table" then return false, "ThemeColors no existe" end
+                    if not ThemeColors.Primary or not ThemeColors.Accent then return false, "Paleta del hub incompleta" end
+                    if type(ApplyTheme) ~= "function" then return false, "Falta ApplyTheme()" end
+                    return true, "ok"
+                end },
+                { "Sistema de guardado y toggles", false, function()
+                    if type(_G._toggleStates) ~= "table" then return false, "Sin tabla de toggles todavia" end
+                    return true, "ok"
+                end },
+            },
+        },
+    }
+
+    -- ==============================================================
+    -- POST-VERIFICACION: el hub tiene que quedar REALMENTE en pantalla.
+    -- Si no aparece, se muestra el error de carga y se expulsa.
+    -- ==============================================================
+    function _G._ZQ_PostVerify()
+        local lp = _ZPly.LocalPlayer
+
+        local waited = 0
+        while (not _G._hubReady) and waited < 25 do
+            task.wait(0.5); waited = waited + 0.5
+            if G.blocked then return false end
+        end
+        if not _G._hubReady then
+            _G._ZQ_Fatal("El hub no termino de construirse (timeout 25s)")
+            return false
+        end
+
+        local function _findHub()
+            local roots = {}
+            if type(gethui) == "function" then
+                local ok, h = pcall(gethui)
+                if ok and h then roots[#roots + 1] = h end
+            end
+            local cg = _svc("CoreGui")
+            if cg then roots[#roots + 1] = cg end
+            local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
+            if pg then roots[#roots + 1] = pg end
+            for _, r in ipairs(roots) do
+                local g = r:FindFirstChild("f")
+                if g and g:IsA("ScreenGui") and g:FindFirstChildOfClass("Frame") then
+                    return g
+                end
+            end
+            return nil
+        end
+
+        local g = _findHub()
+        waited = 0
+        while (not g) and waited < 12 do
+            task.wait(0.4); waited = waited + 0.4
+            g = _findHub()
+        end
+        if not g then
+            _G._ZQ_Fatal("La interfaz del hub no aparecio en pantalla")
+            return false
+        end
+
+        -- Y tiene que tener contenido de verdad, no un frame vacio.
+        local okDesc, nDesc = pcall(function() return #g:GetDescendants() end)
+        if not okDesc or (nDesc or 0) < 20 then
+            _G._ZQ_Fatal("La interfaz del hub cargo incompleta (" .. tostring(nDesc or 0) .. " objetos)")
+            return false
+        end
+
+        G.verified = true
+        return true
+    end
+end
+-- == FIN ZQ GATE v47 ===============================================
+
+-- ================================================================
+-- == v58: MORPH FX -- el cuadradito, la linea y el panel
+-- El guardian de forma de mainFrame (GetPropertyChangedSignal de
+-- Size/Position) revierte cualquier tween que no pase por
+-- _G._setHubFrameSize, asi que la animacion NO se puede hacer sobre
+-- el hub real. Se hace sobre un panel falso en su propio ScreenGui
+-- que tapa al hub, y el hub real solo aparece o se apaga por debajo.
+--   _ZQ_MorphClose() -> panel -> linea -> cuadradito -> se cae
+--   _ZQ_MorphOpen(f) -> cuadradito cae de arriba -> linea -> panel,
+--                       y ahi llama a f() que abre el hub de verdad
+--   _ZQ_MorphKill()  -> mata el overlay y invalida los beats viejos
+-- ================================================================
+do
+    local _mTS   = game:GetService("TweenService")
+    local HUB_W, HUB_H = 950, 555   -- el mismo rect que mainFrame
+    local SQ     = 100              -- el cuadradito de la pantalla de carga
+    local LINE_H = 4                -- la linea recta de la foto
+    local C_FILL   = Color3.fromRGB( 14,  11,   7)
+    local C_GRAD   = Color3.fromRGB( 34,  29,  20)
+    local C_ACCENT = Color3.fromRGB(220, 185, 100)
+
+    local _gen = 0     -- generacion: si cambia, los beats viejos se cortan
+    local _gui = nil
+    local _box = nil
+
+    local function _mScale()
+        local s = 1
+        if _G._getTargetScale then
+            local ok, r = pcall(_G._getTargetScale)
+            if ok and type(r) == "number" and r > 0.05 then s = r end
+        end
+        return s
+    end
+
+    local function _mDestroy()
+        local g = _gui
+        _gui, _box = nil, nil
+        if g then pcall(function() g:Destroy() end) end
+    end
+
+    function _G._ZQ_MorphKill()
+        _gen = _gen + 1
+        _mDestroy()
+    end
+
+    -- Arma el overlay. Devuelve nil si no hay donde parentearlo.
+    local function _mkBox()
+        _mDestroy()
+        _gen = _gen + 1
+        local sc   = _mScale()
+        local W    = math.floor(HUB_W * sc + 0.5)
+        local H    = math.floor(HUB_H * sc + 0.5)
+        local sg   = Instance.new("ScreenGui")
+        sg.Name           = "ZQMorphFX"
+        sg.ResetOnSpawn   = false
+        sg.IgnoreGuiInset = true
+        sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        sg.DisplayOrder   = 99998
+        local okP = false
+        pcall(function() if gethui then sg.Parent = gethui(); okP = true end end)
+        if not okP then
+            pcall(function() sg.Parent = game:GetService("CoreGui"); okP = true end)
+        end
+        if not okP then
+            pcall(function()
+                local lp = game:GetService("Players").LocalPlayer
+                sg.Parent = lp:FindFirstChildOfClass("PlayerGui")
+                okP = true
+            end)
+        end
+        if not okP then pcall(function() sg:Destroy() end); return nil end
+        local bx = Instance.new("Frame")
+        bx.Name                   = "MorphBox"
+        bx.AnchorPoint            = Vector2.new(0.5, 0.5)
+        bx.Position               = UDim2.new(0.5, 0, 0.5, 0)
+        bx.Size                   = UDim2.new(0, W, 0, H)
+        bx.BackgroundColor3       = C_FILL
+        bx.BackgroundTransparency = 0.06
+        bx.BorderSizePixel        = 0
+        bx.ClipsDescendants       = true
+        bx.Parent                 = sg
+        local cr = Instance.new("UICorner", bx)
+        cr.CornerRadius = UDim.new(0, 14)
+        local gr = Instance.new("UIGradient", bx)
+        gr.Rotation = 135
+        gr.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0.0, C_GRAD),
+            ColorSequenceKeypoint.new(1.0, C_FILL),
+        })
+        local st = Instance.new("UIStroke", bx)
+        st.Color           = C_ACCENT
+        st.Thickness       = 2.5
+        st.Transparency    = 0.10
+        st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        _gui, _box = sg, bx
+        return { gen = _gen, box = bx, stroke = st, w = W, h = H }
+    end
+
+    local function _mAlive(g)
+        return _gen == g and _box ~= nil and _box.Parent ~= nil
+    end
+
+    -- ------------------------------------------------------------
+    -- CIERRE: el panel se cierra como una persiana hasta quedar en
+    -- una linea, la linea se junta en el cuadradito y el cuadradito
+    -- se cae de la pantalla. El fade del hub real sigue corriendo
+    -- por debajo (no se toca), tapado por el overlay.
+    -- ------------------------------------------------------------
+    function _G._ZQ_MorphClose()
+        local m = _mkBox()
+        if not m then return end
+        local g, bx, st, W, H = m.gen, m.box, m.stroke, m.w, m.h
+        bx.BackgroundTransparency = 0.55
+        st.Transparency           = 0.55
+        _mTS:Create(bx, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+            { BackgroundTransparency = 0.06 }):Play()
+        _mTS:Create(st, TweenInfo.new(0.18), { Transparency = 0.10 }):Play()
+        task.spawn(function()
+            task.wait(0.26)
+            if not _mAlive(g) then return end
+            -- 1) persiana: alto -> linea
+            _mTS:Create(bx, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { Size = UDim2.new(0, W, 0, LINE_H) }):Play()
+            task.wait(0.24)
+            if not _mAlive(g) then return end
+            -- 2) la linea se junta al ancho del cuadradito
+            _mTS:Create(bx, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                { Size = UDim2.new(0, SQ, 0, LINE_H) }):Play()
+            task.wait(0.17)
+            if not _mAlive(g) then return end
+            _mTS:Create(bx, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { Size = UDim2.new(0, SQ, 0, SQ) }):Play()
+            task.wait(0.11)
+            if not _mAlive(g) then return end
+            -- 3) el cuadradito se cae
+            _mTS:Create(bx, TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+                { Position = UDim2.new(0.5, 0, 1.30, 0), BackgroundTransparency = 1 }):Play()
+            _mTS:Create(st, TweenInfo.new(0.30), { Transparency = 1 }):Play()
+            task.wait(0.38)
+            if _gen == g then _mDestroy() end
+        end)
+    end
+
+    -- ------------------------------------------------------------
+    -- APERTURA: el cuadradito cae de arriba de todo, se ubica en el
+    -- medio, se achata en la linea recta y la linea se abre hacia
+    -- arriba hasta el panel entero. Recien ahi se abre el hub real
+    -- (onReveal) adentro del marco, y el marco se desvanece.
+    -- El alto crece 0.60H para arriba y 0.40H para abajo: el pivote
+    -- arranca H*0.10 debajo del centro y sube al centro junto con el
+    -- Size, asi la expansion se ve para arriba y el panel igual
+    -- termina centrado como manda el guardian de forma.
+    -- ------------------------------------------------------------
+    function _G._ZQ_MorphOpen(onReveal)
+        local m = _mkBox()
+        if not m then
+            if type(onReveal) == "function" then pcall(onReveal) end
+            return
+        end
+        local g, bx, st, W, H = m.gen, m.box, m.stroke, m.w, m.h
+        local LOW = math.floor(H * 0.10 + 0.5)
+        bx.Size     = UDim2.new(0, SQ, 0, SQ)
+        bx.Position = UDim2.new(0.5, 0, -0.20, 0)
+        task.spawn(function()
+            -- 1) cae de arriba de todo hasta el medio
+            _mTS:Create(bx, TweenInfo.new(0.48, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                { Position = UDim2.new(0.5, 0, 0.5, LOW) }):Play()
+            task.wait(0.56)
+            if not _mAlive(g) then return end
+            -- 2) se achata y se estira: queda la linea recta
+            _mTS:Create(bx, TweenInfo.new(0.20, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { Size = UDim2.new(0, SQ, 0, LINE_H) }):Play()
+            task.wait(0.14)
+            if not _mAlive(g) then return end
+            _mTS:Create(bx, TweenInfo.new(0.30, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                { Size = UDim2.new(0, W, 0, LINE_H) }):Play()
+            task.wait(0.34)
+            if not _mAlive(g) then return end
+            -- 3) la linea se expande para arriba hasta el panel
+            _mTS:Create(bx, TweenInfo.new(0.44, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                {
+                    Size     = UDim2.new(0, W, 0, H),
+                    Position = UDim2.new(0.5, 0, 0.5, 0),
+                }):Play()
+            task.wait(0.30)
+            if not _mAlive(g) then return end
+            -- 4) el hub real aparece adentro del marco
+            _G._ZQ_MorphDriving = true
+            if type(onReveal) == "function" then pcall(onReveal) end
+            task.wait(0.16)
+            if not _mAlive(g) then _G._ZQ_MorphDriving = nil; return end
+            _mTS:Create(bx, TweenInfo.new(0.34, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+                { BackgroundTransparency = 1 }):Play()
+            _mTS:Create(st, TweenInfo.new(0.30), { Transparency = 1 }):Play()
+            task.wait(0.38)
+            _G._ZQ_MorphDriving = nil
+            if _gen == g then _mDestroy() end
+        end)
+    end
+end
+
 local function _ZerqonLoadingScreen(onComplete)
     local TweenService = game:GetService("TweenService")
     local Players      = game:GetService("Players")
     local lp           = Players.LocalPlayer
 
-    -- Colores del hub (teal/cyan oscuro igual que la UI principal)
-    local C_BG_DARK   = Color3.fromRGB( 10,  20,  60)   -- fondo oscuro del hub
-    local C_BG_MID    = Color3.fromRGB( 15,  35, 100)   -- azul medio hub
-    local C_ACCENT    = Color3.fromRGB(  0, 200, 255)   -- cyan/teal del hub
-    local C_CHECK     = Color3.fromRGB( 57, 255, 154)   -- verde check
-    local C_WHITE     = Color3.fromRGB(255, 255, 255)
-    local C_DIM       = Color3.fromRGB(130, 190, 220)   -- texto apagado
-    local C_GLOW      = Color3.fromRGB(  0, 255, 220)   -- brillo teal
+    -- ============================================================
+    -- COLORES DEL HUB (amber/gold — igual que ThemeColors pero
+    -- definidos aqui como literales porque ThemeColors ya existe)
+    -- ============================================================
+    local C_PRIMARY   = Color3.fromRGB(200, 160,  80)   -- gold principal
+    local C_ACCENT    = Color3.fromRGB(220, 185, 100)   -- amber brillante
+    local C_DARK      = Color3.fromRGB( 10,   8,   6)   -- fondo oscuro
+    local C_MID       = Color3.fromRGB( 32,  28,  22)   -- panel medio
+    local C_TEXT      = Color3.fromRGB(245, 238, 225)   -- texto claro
+    local C_SUBTEXT   = Color3.fromRGB(180, 155, 100)   -- texto secundario
+    local C_CHECK     = Color3.fromRGB(220, 182, 100)   -- oro check
+    local C_FAIL      = Color3.fromRGB(230, 179,  70)   -- v47: check fatal
+    local C_WARN      = Color3.fromRGB(235, 180,  80)   -- v47: aviso no fatal
 
     -- ScreenGui
     local sg = Instance.new("ScreenGui")
@@ -63531,389 +66614,446 @@ local function _ZerqonLoadingScreen(onComplete)
     end)
     if not sg.Parent then sg.Parent = lp.PlayerGui end
 
-    -- Fondo oscuro semitransparente (backdrop)
+    -- Backdrop oscuro de fondo
     local backdrop = Instance.new("Frame", sg)
-    backdrop.Name                 = "Backdrop"
-    backdrop.Size                 = UDim2.new(1, 0, 1, 0)
-    backdrop.Position             = UDim2.new(0, 0, 0, 0)
-    backdrop.BackgroundColor3     = Color3.fromRGB(0, 0, 0)
-    backdrop.BackgroundTransparency = 1  -- empieza invisible, fade in
-    backdrop.BorderSizePixel      = 0
-    backdrop.ZIndex               = 8
+    backdrop.Name                   = "Backdrop"
+    backdrop.Size                   = UDim2.new(1, 0, 1, 0)
+    backdrop.Position               = UDim2.new(0, 0, 0, 0)
+    backdrop.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+    backdrop.BackgroundTransparency = 1
+    backdrop.BorderSizePixel        = 0
+    backdrop.ZIndex                 = 8
 
-    -- Contenedor principal (MAS GRANDE: 420x220)
+    -- ============================================================
+    -- CUADRADO PRINCIPAL — empieza pequeño en la parte superior
+    -- y cae hacia el centro mientras se agranda (como imagen 2)
+    -- ============================================================
+    local FINAL_W, FINAL_H = 440, 260
+    local START_W, START_H = 100, 100   -- cuadradito inicial que cae
+
     local rect = Instance.new("Frame", sg)
-    rect.Name                 = "LoadRect"
-    rect.Size                 = UDim2.new(0, 420, 0, 220)
-    rect.Position             = UDim2.new(0.5, -210, 0.5, -110)
-    rect.BackgroundColor3     = C_BG_DARK
-    rect.BackgroundTransparency = 1  -- empieza invisible para animacion de entrada
-    rect.BorderSizePixel      = 0
-    rect.ZIndex               = 10
+    rect.Name                   = "LoadRect"
+    rect.AnchorPoint            = Vector2.new(0.5, 0.5)
+    rect.Size                   = UDim2.new(0, START_W, 0, START_H)
+    -- Posicion inicial: centrado horizontalmente, arriba de la pantalla (fuera de vista)
+    rect.Position               = UDim2.new(0.5, 0, -0.12, 0)
+    rect.BackgroundColor3       = C_DARK
+    rect.BackgroundTransparency = 0.34   -- v47: panel translucido
+    rect.BorderSizePixel        = 0
+    rect.ZIndex                 = 10
+    rect.ClipsDescendants       = true
 
-    -- Esquinas redondeadas
     local corner = Instance.new("UICorner", rect)
-    corner.CornerRadius = UDim.new(0, 12)
+    corner.CornerRadius = UDim.new(0, 14)
 
-    -- ClipsDescendants: evita que el HubBackground y el BlinkOverlay se salgan del rect
-    rect.ClipsDescendants = true
-
-    -- Borde brillante (stroke teal)
-    local stroke = Instance.new("UIStroke", rect)
-    stroke.Color       = C_ACCENT
-    stroke.Thickness   = 2
-    stroke.Transparency = 1  -- empieza invisible
-
-    -- Fondo del hub (imagen principal, igual que en el hub abierto)
-    local loadHubBg = Instance.new("ImageLabel", rect)
-    loadHubBg.Name                   = "LoadHubBackground"
-    loadHubBg.Size                   = UDim2.new(1, 0, 1, 0)
-    loadHubBg.Position               = UDim2.new(0, 0, 0, 0)
-    loadHubBg.BackgroundTransparency = 1
-    loadHubBg.Image                  = ""
-    loadHubBg.ImageTransparency      = 1
-    loadHubBg.ScaleType              = Enum.ScaleType.Stretch
-    loadHubBg.ImageRectSize          = Vector2.new(780, 460)
-    loadHubBg.ImageRectOffset        = Vector2.new(0, 0)
-    loadHubBg.ZIndex                 = 10  -- debajo del contenido pero sobre el fondo solido
-
-    -- Overlay de parpadeo (mismo asset que el hub principal)
-    local loadBlinkOverlay = Instance.new("ImageLabel", rect)
-    loadBlinkOverlay.Name                   = "LoadBlinkOverlay"
-    loadBlinkOverlay.Size                   = UDim2.new(1, 0, 1, 0)
-    loadBlinkOverlay.Position               = UDim2.new(0, 0, 0, 0)
-    loadBlinkOverlay.BackgroundTransparency = 1
-    loadBlinkOverlay.Image                  = "rbxassetid://124196125990159"
-    loadBlinkOverlay.ImageTransparency      = 1   -- empieza invisible
-    loadBlinkOverlay.ScaleType              = Enum.ScaleType.Stretch
-    loadBlinkOverlay.ImageRectSize          = Vector2.new(780, 460)
-    loadBlinkOverlay.ImageRectOffset        = Vector2.new(0, 0)
-    loadBlinkOverlay.ZIndex                 = 11  -- encima del HubBackground, debajo del contenido
-    loadBlinkOverlay.Active                 = false
-
-    -- Gradiente de fondo del rect (encima del hubBg para que el contenido sea legible)
+    -- Gradiente de fondo amber/gold
     local grad = Instance.new("UIGradient", rect)
-    grad.Color    = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C_BG_DARK),
-        ColorSequenceKeypoint.new(1, C_BG_MID),
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   C_MID),
+        ColorSequenceKeypoint.new(0.5, C_DARK),
+        ColorSequenceKeypoint.new(1,   C_MID),
     })
     grad.Rotation = 135
 
-    -- Header: nombre del hub con icono
-    local headerLbl = Instance.new("TextLabel", rect)
-    headerLbl.Name               = "Header"
-    headerLbl.Size               = UDim2.new(1, -20, 0, 36)
-    headerLbl.Position           = UDim2.new(0, 10, 0, 10)
-    headerLbl.BackgroundTransparency = 1
-    headerLbl.Text               = "? ZERQON HUB"
-    headerLbl.TextColor3         = C_ACCENT
-    headerLbl.Font               = Enum.Font.GothamBold
-    headerLbl.TextSize           = 22
-    headerLbl.TextXAlignment     = Enum.TextXAlignment.Left
-    headerLbl.TextTransparency   = 1
-    headerLbl.ZIndex             = 13
+    -- Borde amber animado
+    local stroke = Instance.new("UIStroke", rect)
+    stroke.Color            = C_ACCENT
+    stroke.Thickness        = 2.5
+    stroke.Transparency     = 0.10
+    stroke.ApplyStrokeMode  = Enum.ApplyStrokeMode.Border
+    -- Gradiente en el borde
+    local strokeGrad = Instance.new("UIGradient", stroke)
+    strokeGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   C_ACCENT),
+        ColorSequenceKeypoint.new(0.5, C_PRIMARY),
+        ColorSequenceKeypoint.new(1,   C_ACCENT),
+    })
+    strokeGrad.Rotation = 45
 
-    -- Linea separadora debajo del header
+    -- ============================================================
+    -- CONTENIDO dentro del rect (empieza invisible, aparece luego)
+    -- ============================================================
+
+    -- Header — logo + nombre
+    local headerRow = Instance.new("Frame", rect)
+    headerRow.Size                   = UDim2.new(1, -20, 0, 44)
+    headerRow.Position               = UDim2.new(0, 10, 0, 10)
+    headerRow.BackgroundTransparency = 1
+    headerRow.BorderSizePixel        = 0
+    headerRow.ZIndex                 = 13
+
+    local logoLbl = Instance.new("TextLabel", headerRow)
+    logoLbl.Size                   = UDim2.new(0, 34, 1, 0)
+    logoLbl.Position               = UDim2.new(0, 0, 0, 0)
+    logoLbl.BackgroundTransparency = 1
+    logoLbl.Text                   = "◈"
+    logoLbl.TextColor3             = C_ACCENT
+    logoLbl.Font                   = Enum.Font.GothamBold
+    logoLbl.TextSize               = 26
+    logoLbl.TextXAlignment         = Enum.TextXAlignment.Center
+    logoLbl.TextYAlignment         = Enum.TextYAlignment.Center
+    logoLbl.TextTransparency       = 1
+    logoLbl.ZIndex                 = 14
+
+    local titleLbl = Instance.new("TextLabel", headerRow)
+    titleLbl.Size                   = UDim2.new(1, -44, 0.55, 0)
+    titleLbl.Position               = UDim2.new(0, 42, 0, 2)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text                   = "HIGHGRADE Z"
+    titleLbl.TextColor3             = C_TEXT
+    titleLbl.Font                   = Enum.Font.GothamBold
+    titleLbl.TextSize               = 18
+    titleLbl.TextXAlignment         = Enum.TextXAlignment.Left
+    titleLbl.TextTransparency       = 1
+    titleLbl.ZIndex                 = 14
+
+    local subLbl = Instance.new("TextLabel", headerRow)
+    subLbl.Size                   = UDim2.new(1, -44, 0.40, 0)
+    subLbl.Position               = UDim2.new(0, 42, 0.58, 0)
+    subLbl.BackgroundTransparency = 1
+    subLbl.Text                   = "VERSION 4.7.2  //  FREE"
+    subLbl.TextColor3             = C_SUBTEXT
+    subLbl.Font                   = Enum.Font.Gotham
+    subLbl.TextSize               = 10
+    subLbl.TextXAlignment         = Enum.TextXAlignment.Left
+    subLbl.TextTransparency       = 1
+    subLbl.ZIndex                 = 14
+
+    -- Divisor
     local divider = Instance.new("Frame", rect)
-    divider.Name                 = "Divider"
-    divider.Size                 = UDim2.new(1, -20, 0, 1)
-    divider.Position             = UDim2.new(0, 10, 0, 50)
-    divider.BackgroundColor3     = C_ACCENT
-    divider.BackgroundTransparency = 0.5
-    divider.BorderSizePixel      = 0
-    divider.ZIndex               = 12
+    divider.Size                   = UDim2.new(1, -20, 0, 1)
+    divider.Position               = UDim2.new(0, 10, 0, 58)
+    divider.BackgroundColor3       = C_PRIMARY
+    divider.BackgroundTransparency = 0.35
+    divider.BorderSizePixel        = 0
+    divider.ZIndex                 = 12
+    local divGrad = Instance.new("UIGradient", divider)
+    divGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   C_DARK),
+        ColorSequenceKeypoint.new(0.3, C_ACCENT),
+        ColorSequenceKeypoint.new(0.7, C_PRIMARY),
+        ColorSequenceKeypoint.new(1,   C_DARK),
+    })
 
-    -- Textos de carga (loading) y OK para cada paso
-    local loadingTexts = {
-        "Conectando...",
-        "Autenticando...",
-        "Cargando hub...",
-    }
-    local okTexts = {
-        "Connected to Server",
-        "No Key  -  Free Script  xD",
-        "Ready",
-    }
+    -- Filas de estado
+    -- v47: las filas reflejan los grupos de checks REALES de _G._ZQG.groups
+    local loadingTexts = { "Verificando entorno...", "Analizando el juego...", "Verificando el hub..." }
+    local okTexts      = { "Entorno OK", "Juego compatible", "Hub listo" }
 
     local rows = {}
     for i = 1, 3 do
         local row = Instance.new("Frame", rect)
-        row.Name                 = "Row" .. i
-        row.Size                 = UDim2.new(1, -24, 0, 36)
-        row.Position             = UDim2.new(0, 12, 0, 58 + (i-1) * 44)
+        row.Size                   = UDim2.new(1, -24, 0, 34)
+        row.Position               = UDim2.new(0, 12, 0, 64 + (i-1) * 40)
         row.BackgroundTransparency = 1
-        row.BorderSizePixel      = 0
-        row.ZIndex               = 11
+        row.BorderSizePixel        = 0
+        row.ZIndex                 = 11
 
-        -- Bolita indicadora izquierda
         local dot = Instance.new("Frame", row)
-        dot.Name                 = "Dot"
-        dot.Size                 = UDim2.new(0, 10, 0, 10)
-        dot.Position             = UDim2.new(0, 2, 0.5, -5)
-        dot.BackgroundColor3     = C_DIM
-        dot.BorderSizePixel      = 0
-        dot.ZIndex               = 13
-        local dotCorner = Instance.new("UICorner", dot)
-        dotCorner.CornerRadius = UDim.new(1, 0)
+        dot.Size                   = UDim2.new(0, 8, 0, 8)
+        dot.Position               = UDim2.new(0, 4, 0.5, -4)
+        dot.BackgroundColor3       = C_SUBTEXT
+        dot.BorderSizePixel        = 0
+        dot.ZIndex                 = 13
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
-        -- Check mark (inicialmente invisible)
         local check = Instance.new("TextLabel", row)
-        check.Name               = "Check"
-        check.Size               = UDim2.new(0, 28, 1, 0)
-        check.Position           = UDim2.new(0, 18, 0, 0)
+        check.Size                   = UDim2.new(0, 24, 1, 0)
+        check.Position               = UDim2.new(0, 18, 0, 0)
         check.BackgroundTransparency = 1
-        check.Text               = "?"
-        check.TextColor3         = C_CHECK
-        check.Font               = Enum.Font.GothamBold
-        check.TextSize           = 20
-        check.TextXAlignment     = Enum.TextXAlignment.Center
-        check.TextTransparency   = 1
-        check.ZIndex             = 12
+        check.Text                   = "✓"
+        check.TextColor3             = C_CHECK
+        check.Font                   = Enum.Font.GothamBold
+        check.TextSize               = 18
+        check.TextXAlignment         = Enum.TextXAlignment.Center
+        check.TextTransparency       = 1
+        check.ZIndex                 = 12
 
-        -- Texto del estado (MAS GRANDE: 16px)
         local txt = Instance.new("TextLabel", row)
-        txt.Name                 = "Txt"
-        txt.Size                 = UDim2.new(1, -52, 1, 0)
-        txt.Position             = UDim2.new(0, 50, 0, 0)
+        txt.Size                   = UDim2.new(1, -52, 1, 0)
+        txt.Position               = UDim2.new(0, 46, 0, 0)
         txt.BackgroundTransparency = 1
-        txt.Text                 = loadingTexts[i]
-        txt.TextColor3           = C_DIM
-        txt.Font                 = Enum.Font.GothamBold
-        txt.TextSize             = 16
-        txt.TextXAlignment       = Enum.TextXAlignment.Left
-        txt.TextTransparency     = 1  -- empieza invisible, fade in con la carta
-        txt.ZIndex               = 12
+        txt.Text                   = loadingTexts[i]
+        txt.TextColor3             = C_SUBTEXT
+        txt.Font                   = Enum.Font.Gotham
+        txt.TextSize               = 13
+        txt.TextXAlignment         = Enum.TextXAlignment.Left
+        txt.TextTransparency       = 1
+        txt.ZIndex                 = 12
 
-        -- Spinner animado solo para "Cargando hub..." (fila 3)
-        local spinner = nil
-        if i == 3 then
-            spinner = Instance.new("TextLabel", row)
-            spinner.Name               = "Spinner"
-            spinner.Size               = UDim2.new(0, 28, 1, 0)
-            spinner.Position           = UDim2.new(1, -30, 0, 0)
-            spinner.BackgroundTransparency = 1
-            spinner.Text               = "?"
-            spinner.TextColor3         = C_ACCENT
-            spinner.Font               = Enum.Font.GothamBold
-            spinner.TextSize           = 18
-            spinner.TextXAlignment     = Enum.TextXAlignment.Center
-            spinner.TextTransparency   = 1
-            spinner.ZIndex             = 13
-        end
-
-        rows[i] = {check=check, txt=txt, dot=dot, spinner=spinner}
+        rows[i] = { dot = dot, check = check, txt = txt }
     end
 
-    -- Barra de progreso inferior
+    -- Barra de progreso
     local progressBg = Instance.new("Frame", rect)
-    progressBg.Name              = "ProgressBg"
-    progressBg.Size              = UDim2.new(1, -24, 0, 6)
-    progressBg.Position          = UDim2.new(0, 12, 1, -22)
-    progressBg.BackgroundColor3  = C_BG_MID
-    progressBg.BorderSizePixel   = 0
-    progressBg.ZIndex            = 11
-    local pbCorner = Instance.new("UICorner", progressBg)
-    pbCorner.CornerRadius = UDim.new(1, 0)
+    progressBg.Size               = UDim2.new(1, -24, 0, 5)
+    progressBg.Position           = UDim2.new(0, 12, 1, -18)
+    progressBg.BackgroundColor3   = C_MID
+    progressBg.BackgroundTransparency = 0.55   -- v47
+    progressBg.BorderSizePixel    = 0
+    progressBg.ZIndex             = 11
+    Instance.new("UICorner", progressBg).CornerRadius = UDim.new(1, 0)
 
     local progressBar = Instance.new("Frame", progressBg)
-    progressBar.Name             = "ProgressFill"
-    progressBar.Size             = UDim2.new(0, 0, 1, 0)
-    progressBar.Position         = UDim2.new(0, 0, 0, 0)
-    progressBar.BackgroundColor3 = C_ACCENT
-    progressBar.BorderSizePixel  = 0
-    progressBar.ZIndex           = 12
-    local pfCorner = Instance.new("UICorner", progressBar)
-    pfCorner.CornerRadius = UDim.new(1, 0)
-
-    -- Texto "Copy Whitelist" debajo
-    local copyLbl = Instance.new("TextLabel", rect)
-    copyLbl.Size               = UDim2.new(1, 0, 0, 18)
-    copyLbl.Position           = UDim2.new(0, 0, 1, -40)
-    copyLbl.BackgroundTransparency = 1
-    copyLbl.Text               = "?  Copy Whitelist  ?"
-    copyLbl.TextColor3         = C_GLOW
-    copyLbl.Font               = Enum.Font.Gotham
-    copyLbl.TextSize           = 13
-    copyLbl.TextXAlignment     = Enum.TextXAlignment.Center
-    copyLbl.TextTransparency   = 1
-    copyLbl.ZIndex             = 12
+    progressBar.Size              = UDim2.new(0, 0, 1, 0)
+    progressBar.Position          = UDim2.new(0, 0, 0, 0)
+    progressBar.BackgroundColor3  = C_ACCENT
+    progressBar.BorderSizePixel   = 0
+    progressBar.ZIndex            = 12
+    Instance.new("UICorner", progressBar).CornerRadius = UDim.new(1, 0)
 
     -- ============================================================
-    -- ANIMACION DE ENTRADA FACHERA: escala + fade in + slide up
+    -- FUNCION: mostrar contenido interior con fade-in en cascada
     -- ============================================================
-    rect.Position = UDim2.new(0.5, -210, 0.5, -90)  -- empieza un poco mas abajo
-    local uiScale = Instance.new("UIScale", rect)
-    uiScale.Scale = 0.7  -- empieza peque?o
-
-    -- Loop de parpadeo del overlay (dentro del rect, confinado por ClipsDescendants)
-    local _loadBlinkActive = true
-    task.spawn(function()
-        task.wait(3)  -- primer parpadeo a los 3s (igual que en el hub principal)
-        while _loadBlinkActive and loadBlinkOverlay and loadBlinkOverlay.Parent do
-            -- Cerrar: fade in rapido
-            TweenService:Create(loadBlinkOverlay,
-                TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {ImageTransparency = 0}):Play()
-            task.wait(0.18)
-            -- Abrir: fade out suave
-            TweenService:Create(loadBlinkOverlay,
-                TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                {ImageTransparency = 1}):Play()
-            task.wait(0.12)
-            task.wait(5)  -- intervalo entre parpadeos
-        end
-    end)
-
-    task.spawn(function()
-        -- Fade in del backdrop
-        TweenService:Create(backdrop, TweenInfo.new(0.4, Enum.EasingStyle.Sine), {BackgroundTransparency = 0.55}):Play()
-        task.wait(0.15)
-
-        -- El rect aparece con: escala 0.7->1, posicion slide up, fade in, borde brilla
-        TweenService:Create(uiScale, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-        TweenService:Create(rect, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-            BackgroundTransparency = 0.08,
-            Position = UDim2.new(0.5, -210, 0.5, -110),
-        }):Play()
-        TweenService:Create(stroke, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {Transparency = 0.3}):Play()
-
-        -- Header y texto aparecen en cascada
-        task.wait(0.25)
-        TweenService:Create(headerLbl, TweenInfo.new(0.35, Enum.EasingStyle.Sine), {TextTransparency = 0}):Play()
-        task.wait(0.1)
-        TweenService:Create(copyLbl, TweenInfo.new(0.3, Enum.EasingStyle.Sine), {TextTransparency = 0.3}):Play()
-
-        -- Los textos de filas aparecen en cascada
+    local function _showContent()
+        TweenService:Create(logoLbl,  TweenInfo.new(0.35, Enum.EasingStyle.Sine), {TextTransparency = 0}):Play()
+        TweenService:Create(titleLbl, TweenInfo.new(0.35, Enum.EasingStyle.Sine), {TextTransparency = 0}):Play()
+        TweenService:Create(subLbl,   TweenInfo.new(0.35, Enum.EasingStyle.Sine), {TextTransparency = 0.30}):Play()
+        task.wait(0.12)
         for i = 1, 3 do
-            task.wait(0.08)
-            TweenService:Create(rows[i].txt, TweenInfo.new(0.3, Enum.EasingStyle.Sine), {TextTransparency = 0}):Play()
+            task.wait(0.07)
+            TweenService:Create(rows[i].txt, TweenInfo.new(0.28, Enum.EasingStyle.Sine), {TextTransparency = 0}):Play()
         end
+    end
 
-        task.wait(0.3)
+    -- ============================================================
+    -- ANIMACION PRINCIPAL
+    -- FASE 1: backdrop aparece
+    -- FASE 2: cuadradito cae desde arriba al centro (rápido, elástico)
+    -- FASE 3: se expande lentamente al tamaño final (como imagen 2)
+    -- FASE 4: contenido aparece, secuencia de checks
+    -- FASE 5: sale hacia arriba encogiendo
+    -- ============================================================
+    task.spawn(function()
 
-        -- ============================================================
-        -- SECUENCIA DE CHECKS con delay de 3 segundos cada uno
-        -- ============================================================
+        -- FASE 1: backdrop fade in
+        TweenService:Create(backdrop,
+            TweenInfo.new(0.35, Enum.EasingStyle.Sine),
+            {BackgroundTransparency = 0.70}):Play()   -- v47: backdrop mas transparente
 
-        -- Paso 1: Conectando (3s delay)
-        task.wait(3)
-        local r1 = rows[1]
-        r1.dot.BackgroundColor3 = C_CHECK
-        TweenService:Create(r1.check, TweenInfo.new(0.15), {TextTransparency = 0}):Play()
-        r1.txt.Text       = okTexts[1]
-        r1.txt.TextColor3 = C_CHECK
+        -- Pulso de borde mientras cae
         task.spawn(function()
-            TweenService:Create(r1.check, TweenInfo.new(0.1), {TextColor3 = C_WHITE}):Play()
-            task.wait(0.1)
-            TweenService:Create(r1.check, TweenInfo.new(0.25), {TextColor3 = C_CHECK}):Play()
+            while rect and rect.Parent do
+                TweenService:Create(stroke, TweenInfo.new(1.4, Enum.EasingStyle.Sine), {Transparency = 0.55}):Play()
+                task.wait(1.4)
+                TweenService:Create(stroke, TweenInfo.new(1.4, Enum.EasingStyle.Sine), {Transparency = 0.05}):Play()
+                task.wait(1.4)
+            end
         end)
-        TweenService:Create(progressBar, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-            {Size = UDim2.new(0.33, 0, 1, 0)}):Play()
 
-        -- Paso 2: Autenticando (3s delay)
-        task.wait(0.5)
-        rows[2].txt.Text = "Verificando licencia..."
-        task.wait(3)
-        local r2 = rows[2]
-        r2.dot.BackgroundColor3 = C_CHECK
-        TweenService:Create(r2.check, TweenInfo.new(0.15), {TextTransparency = 0}):Play()
-        r2.txt.Text       = okTexts[2]
-        r2.txt.TextColor3 = C_CHECK
-        task.spawn(function()
-            TweenService:Create(r2.check, TweenInfo.new(0.1), {TextColor3 = C_WHITE}):Play()
-            task.wait(0.1)
-            TweenService:Create(r2.check, TweenInfo.new(0.25), {TextColor3 = C_CHECK}):Play()
-        end)
-        TweenService:Create(progressBar, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-            {Size = UDim2.new(0.66, 0, 1, 0)}):Play()
+        task.wait(0.20)
 
-        -- Paso 3: Cargando hub... con SPINNER animado (3s delay)
-        task.wait(0.5)
-        rows[3].txt.Text = "Iniciando hub..."
+        -- FASE 2: el cuadradito cae desde arriba hasta el centro de la pantalla
+        -- Velocidad media, con bounce al llegar
+        TweenService:Create(rect,
+            TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            { Position = UDim2.new(0.5, 0, 0.5, 0) }
+        ):Play()
 
-        -- Mostrar y animar el spinner mientras espera
-        local r3 = rows[3]
-        if r3.spinner then
-            TweenService:Create(r3.spinner, TweenInfo.new(0.25), {TextTransparency = 0}):Play()
-            -- Animar spinner: rotar simbolos
-            local spinFrames = {"?","?","?","?","?","?","?","?"}
-            local spinActive = true
-            task.spawn(function()
-                local sf = 1
-                while spinActive do
-                    r3.spinner.Text = spinFrames[sf]
-                    sf = (sf % #spinFrames) + 1
-                    -- Pulso de color en el spinner
-                    TweenService:Create(r3.spinner, TweenInfo.new(0.18, Enum.EasingStyle.Sine),
-                        {TextColor3 = C_GLOW}):Play()
-                    task.wait(0.18)
-                    TweenService:Create(r3.spinner, TweenInfo.new(0.18, Enum.EasingStyle.Sine),
-                        {TextColor3 = C_ACCENT}):Play()
-                    task.wait(0.18)
-                end
-                -- Ocultar spinner al terminar
-                if r3.spinner and r3.spinner.Parent then
-                    TweenService:Create(r3.spinner, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
-                end
-            end)
+        task.wait(0.40)
 
-            task.wait(3)
-            spinActive = false
-        else
-            task.wait(3)
-        end
+        -- FASE 3: expansión LENTA al tamaño final (igual a imagen 2 — se va agrandando suave)
+        TweenService:Create(rect,
+            TweenInfo.new(0.90, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+            { Size = UDim2.new(0, FINAL_W, 0, FINAL_H) }
+        ):Play()
+        -- El borde brilla al expandirse
+        TweenService:Create(stroke,
+            TweenInfo.new(0.60, Enum.EasingStyle.Sine),
+            { Thickness = 3.5, Transparency = 0 }
+        ):Play()
 
-        r3.dot.BackgroundColor3 = C_CHECK
-        TweenService:Create(r3.check, TweenInfo.new(0.15), {TextTransparency = 0}):Play()
-        r3.txt.Text       = okTexts[3]
-        r3.txt.TextColor3 = C_CHECK
-        task.spawn(function()
-            TweenService:Create(r3.check, TweenInfo.new(0.1), {TextColor3 = C_WHITE}):Play()
-            task.wait(0.1)
-            TweenService:Create(r3.check, TweenInfo.new(0.25), {TextColor3 = C_CHECK}):Play()
-        end)
-        TweenService:Create(progressBar, TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-            {Size = UDim2.new(1, 0, 1, 0)}):Play()
-        -- Borde brilla intenso al completar
-        TweenService:Create(stroke, TweenInfo.new(0.3, Enum.EasingStyle.Sine), {Transparency = 0, Color = C_CHECK}):Play()
+        task.wait(0.65)
 
-        task.wait(0.7)
-
-        -- ============================================================
-        -- ANIMACION DE SALIDA FACHERA: escala up + fade out + slide up
-        -- ============================================================
-        TweenService:Create(uiScale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Scale = 1.08}):Play()
-        task.wait(0.15)
-        TweenService:Create(uiScale, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {Scale = 0.6}):Play()
-        TweenService:Create(rect, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-            BackgroundTransparency = 1,
-            Position = UDim2.new(0.5, -210, 0.5, -160),
-        }):Play()
-        TweenService:Create(stroke, TweenInfo.new(0.3), {Transparency = 1}):Play()
-        TweenService:Create(backdrop, TweenInfo.new(0.35, Enum.EasingStyle.Sine), {BackgroundTransparency = 1}):Play()
-        for _, r in ipairs(rows) do
-            TweenService:Create(r.check, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
-            TweenService:Create(r.txt,   TweenInfo.new(0.2), {TextTransparency = 1}):Play()
-        end
-        TweenService:Create(headerLbl, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
-        TweenService:Create(copyLbl,   TweenInfo.new(0.2), {TextTransparency = 1}):Play()
-
+        -- FASE 4: mostrar contenido interior
+        _showContent()
         task.wait(0.45)
 
-        _loadBlinkActive = false  -- detener loop de parpadeo antes de destruir
+        -- ============================================================
+        -- v47: CHECKS REALES (nada de adorno).
+        -- Cada fila es un grupo de verificaciones que se ejecutan de
+        -- verdad, una por una y despacio. Si falla un check fatal:
+        -- pantalla de error + expulsion del juego, y el hub NO se abre.
+        -- ============================================================
+        local _zqGroups = (_G._ZQG and _G._ZQG.groups) or {}
+        local _zqTotal  = 0
+        for _, grp in ipairs(_zqGroups) do _zqTotal = _zqTotal + #grp.checks end
+        if _zqTotal < 1 then _zqTotal = 1 end
+        local _zqDone   = 0
+        local _zqFailed = nil
+
+        for gi = 1, math.min(#_zqGroups, #rows) do
+            local grp = _zqGroups[gi]
+            local row = rows[gi]
+            row.txt.Text       = tostring(grp.label or "Verificando...")
+            row.txt.TextColor3 = C_TEXT
+            task.wait(0.35)
+
+            for _, chk in ipairs(grp.checks) do
+                local cName  = tostring(chk[1] or "check")
+                local cFatal = chk[2] and true or false
+                local cFn    = chk[3]
+
+                row.txt.Text       = cName .. " ..."
+                row.txt.TextColor3 = C_SUBTEXT
+                task.wait(0.45)                       -- ritmo lento y legible
+
+                local okRun, _r1, _r2 = pcall(cFn)
+                local okChk, detail
+                if okRun then
+                    okChk, detail = _r1, _r2
+                else
+                    okChk, detail = false, "excepcion: " .. tostring(_r1)
+                end
+
+                _zqDone = _zqDone + 1
+                TweenService:Create(progressBar,
+                    TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                    {Size = UDim2.new(math.min(1, _zqDone / _zqTotal), 0, 1, 0)}):Play()
+
+                if okChk then
+                    row.txt.Text       = cName .. "  -  ok"
+                    row.txt.TextColor3 = C_CHECK
+                    task.wait(0.30)
+                elseif cFatal then
+                    _zqFailed          = tostring(detail or cName)
+                    row.txt.Text       = cName .. "  -  FALLO"
+                    row.txt.TextColor3 = C_FAIL
+                    row.dot.BackgroundColor3 = C_FAIL
+                    break
+                else
+                    row.txt.Text       = cName .. "  -  aviso"
+                    row.txt.TextColor3 = C_WARN
+                    task.wait(0.30)
+                end
+            end
+
+            if _zqFailed then break end
+
+            row.dot.BackgroundColor3 = C_CHECK
+            TweenService:Create(row.check, TweenInfo.new(0.18), {TextTransparency = 0}):Play()
+            row.txt.Text       = tostring(grp.done or "OK")
+            row.txt.TextColor3 = C_CHECK
+            task.wait(0.40)
+        end
+
+        if _zqFailed then
+            -- Algo del juego o del hub no paso la verificacion:
+            -- pantalla de error personalizada + kick al primer toque.
+            TweenService:Create(stroke, TweenInfo.new(0.40, Enum.EasingStyle.Sine),
+                {Color = C_FAIL, Transparency = 0}):Play()
+            TweenService:Create(progressBar, TweenInfo.new(0.30),
+                {BackgroundColor3 = C_FAIL}):Play()
+            task.wait(1.10)
+            pcall(function() sg:Destroy() end)
+            if _G._ZQ_Fatal then
+                _G._ZQ_Fatal(_zqFailed)
+            end
+            return
+        end
+
+        TweenService:Create(progressBar,
+            TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+            {Size = UDim2.new(1, 0, 1, 0)}):Play()
+        TweenService:Create(stroke,
+            TweenInfo.new(0.35, Enum.EasingStyle.Sine),
+            {Color = C_CHECK, Transparency = 0}):Play()
+
+        task.wait(0.75)
+
+        -- ============================================================
+        -- FASE 5: SALIDA — se encoge hacia arriba y desaparece
+        -- ============================================================
+        -- Contenido fade out rápido
+        for _, r in ipairs(rows) do
+            TweenService:Create(r.check, TweenInfo.new(0.18), {TextTransparency = 1}):Play()
+            TweenService:Create(r.txt,   TweenInfo.new(0.18), {TextTransparency = 1}):Play()
+        end
+        TweenService:Create(titleLbl, TweenInfo.new(0.18), {TextTransparency = 1}):Play()
+        TweenService:Create(subLbl,   TweenInfo.new(0.18), {TextTransparency = 1}):Play()
+        TweenService:Create(logoLbl,  TweenInfo.new(0.18), {TextTransparency = 1}):Play()
+
+        task.wait(0.20)
+
+        -- El rect se encoge y sube (inverso a la entrada)
+        TweenService:Create(rect,
+            TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+            {
+                Size     = UDim2.new(0, START_W, 0, START_H),
+                Position = UDim2.new(0.5, 0, -0.12, 0),
+            }
+        ):Play()
+        TweenService:Create(stroke,   TweenInfo.new(0.35), {Transparency = 1}):Play()
+        TweenService:Create(backdrop, TweenInfo.new(0.40, Enum.EasingStyle.Sine), {BackgroundTransparency = 1}):Play()
+
+        task.wait(0.50)
         pcall(function() sg:Destroy() end)
+        -- v58: ya cargo todo. El cuadradito vuelve a caer de arriba de todo,
+        -- se ubica en el medio, se achata en la linea recta y la linea se
+        -- expande para arriba hasta el panel: asi se abre el hub.
         if type(onComplete) == "function" then
-            onComplete()
+            if _G._ZQ_MorphOpen then
+                _G._ZQ_MorphOpen(onComplete)
+            else
+                onComplete()
+            end
         end
     end)
 end
 
-_ZerqonLoadingScreen(function()
-    abrirHub()
-end)
+-- ================================================================
+-- v47: ARRANQUE CONTROLADO
+--  1) Si el hub esta en modo actualizacion y el usuario no esta en la
+--     whitelist -> pantalla de actualizacion + kick al primer toque.
+--     Los usuarios permitidos (lauchafc5 / baneado2003) no ven nada.
+--  2) Si esta liberado -> pantalla de carga con checks REALES.
+--  3) abrirHub() protegido: si tira error -> pantalla de error + kick.
+--  4) Verificacion post-apertura: la GUI tiene que existir de verdad.
+-- ================================================================
+do
+    local _zqUpd = false
+    if _G._ZQ_UpdateActive then
+        local ok, r = pcall(_G._ZQ_UpdateActive)
+        _zqUpd = ok and r and true or false
+    end
+    local _zqAllow = true
+    if _G._ZQ_IsAllowed then
+        local ok, r = pcall(_G._ZQ_IsAllowed)
+        _zqAllow = ok and r and true or false
+    end
+
+    -- v48: candado MM2 primero que nada. Si el juego no es Murder Mystery 2
+    -- se muestra la imagen de error y no se carga absolutamente nada mas.
+    local _zqMM2 = true
+    if _G._ZQ_MM2Guard then
+        local okM, rM = pcall(_G._ZQ_MM2Guard)
+        _zqMM2 = (okM and rM) and true or false
+    end
+
+    if not _zqMM2 then
+        -- bloqueo ya en pantalla: no se abre el hub ni la pantalla de carga
+    elseif _zqUpd and not _zqAllow then
+        if _G._ZQ_UpdateBlock then
+            _G._ZQ_UpdateBlock()
+        end
+    else
+        _ZerqonLoadingScreen(function()
+            local ok, err = pcall(abrirHub)
+            if not ok then
+                if _G._ZQ_Fatal then
+                    _G._ZQ_Fatal("El hub no pudo abrirse: " .. tostring(err))
+                end
+                return
+            end
+            if _G._ZQ_PostVerify then
+                task.spawn(function() pcall(_G._ZQ_PostVerify) end)
+            end
+        end)
+    end
+end
 
 
--- == FIX TEXTO OSCURO: asegurar visibilidad en labels de AuroraToggle sin pisar el gradiente cyan ==
+-- == FIX TEXTO OSCURO: asegurar visibilidad en labels de AuroraToggle sin pisar el gradiente dorado ==
 task.spawn(function()
     repeat task.wait(0.1) until _G._hubReady
     local _Players = game:GetService("Players")
@@ -63928,7 +67068,7 @@ task.spawn(function()
             local p = obj.Parent
             while p and p ~= _mainF do
                 if p.Name and #p.Name >= 16 and p.Name:sub(1,16) == "AuroraToggleRow_" then
-                    -- Solo forzar visibilidad, NO cambiar TextColor3 para preservar el gradiente cyan
+                    -- Solo forzar visibilidad, NO cambiar TextColor3 para preservar el gradiente dorado
                     obj.TextTransparency = 0
                     break
                 end
@@ -64665,16 +67805,41 @@ end)
 -- ============================================================================
 do
     local _MM2 = {
-        Blue        = Color3.fromRGB(46, 91, 190),
-        BlueBright  = Color3.fromRGB(73, 116, 218),
-        BlueDark    = Color3.fromRGB(18, 43, 101),
-        BluePanel   = Color3.fromRGB(38, 73, 151),
-        BlueSoft    = Color3.fromRGB(57, 91, 174),
-        Track       = Color3.fromRGB(65, 103, 190),
-        TrackOn     = Color3.fromRGB(73, 116, 218),
-        White       = Color3.fromRGB(244, 247, 255),
-        Sub         = Color3.fromRGB(194, 207, 235),
+        -- Cinema Dark Gold palette (reemplaza azules MM2 por ambar/carbon)
+        Blue        = Color3.fromRGB(160, 125,  60),  -- bronce (era Blue)
+        BlueBright  = Color3.fromRGB(220, 185, 100),  -- oro calido (era BlueBright)
+        BlueDark    = Color3.fromRGB( 22,  18,  12),  -- carbon oscuro (era BlueDark)
+        BluePanel   = Color3.fromRGB( 38,  32,  20),  -- carbon ambar (era BluePanel)
+        BlueSoft    = Color3.fromRGB(190, 145,  65),  -- ambar suave (era BlueSoft)
+        Track       = Color3.fromRGB(200, 160,  80),  -- ambar track (era Track)
+        TrackOn     = Color3.fromRGB(230, 195, 110),  -- oro brillante (era TrackOn)
+        White       = Color3.fromRGB(245, 238, 225),  -- blanco calido
+        Sub         = Color3.fromRGB(180, 155, 100),  -- oro suave subtitulos
     }
+
+    -- ZERQON SHAPE: asset solicitado para tarjetas, rectangulos y pestanas.
+    local _ZQ_SHAPE_ID = "rbxassetid://118465446710889"
+
+    local function _zqShape(parent, name, zIndex)
+        if not parent or not parent.Parent then return nil end
+        local img = parent:FindFirstChild(name)
+        if not img then
+            img = Instance.new("ImageLabel")
+            img.Name = name
+            img.Parent = parent
+            img.Position = UDim2.fromScale(0, 0)
+            img.Size = UDim2.fromScale(1, 1)
+            img.BackgroundTransparency = 1
+            img.BorderSizePixel = 0
+            img.ScaleType = Enum.ScaleType.Stretch
+            img.Active = false
+        end
+        img.Image = _ZQ_SHAPE_ID
+        img.ImageTransparency = 0
+        img.Visible = true
+        img.ZIndex = zIndex or (parent.ZIndex or 1)
+        return img
+    end
 
     local function _corner(o, r)
         local c = o:FindFirstChildOfClass("UICorner")
@@ -64701,8 +67866,38 @@ do
         pcall(function() o.TextStrokeTransparency = 1 end)
     end
 
+    -- FIX v6: sube por la jerarquia y devuelve true si el objeto vive
+    -- dentro de un contenedor de toggle o slider. Limite 6 niveles.
+    local function _insideToggleOrSlider(o)
+        local p = o and o.Parent
+        local depth = 0
+        while p and depth < 6 do
+            local pn = tostring(p.Name or ""):lower()
+            if pn:sub(1, 16) == "auroratogglerow_"
+                or pn:find("sliderwrapper_", 1, true)
+                or pn:find("sliderrow_", 1, true) then
+                return true
+            end
+            p = p.Parent
+            depth = depth + 1
+        end
+        return false
+    end
+
     local function _styleObject(o)
         if not o or not o.Parent then return end
+
+        -- FIX v6: nunca estilizar nada dentro de un toggle o slider.
+        -- _styleObject no tiene informacion del estado actual del toggle,
+        -- por lo que cualquier cambio que haga rompe el knob, pill, label, etc.
+        if _insideToggleOrSlider(o) then return end
+
+        -- Los assets ZQ son superficies intencionales: no ocultarlos.
+        if (o:IsA("ImageLabel") or o:IsA("ImageButton")) and
+            (o.Name == "ZQShape" or o.Name == "ZQTabShape" or o.Name == "ZQStatusShape") then
+            o.Visible = true
+            return
+        end
 
         -- Remove decorative image/emoji-like elements from the hub.
         if o:IsA("ImageLabel") or o:IsA("ImageButton") then
@@ -64710,7 +67905,7 @@ do
             return
         end
 
-        -- Remove gradients/nebulas/shimmer from the hub skin.
+        -- Remove gradients/zerqons/shimmer from the hub skin.
         if o:IsA("UIGradient") then
             o.Transparency = NumberSequence.new(1)
             return
@@ -64739,13 +67934,10 @@ do
             return
         end
 
-        -- Main content surface.
+        -- Main content surface: transparente, sin rectangulo gigante.
         if low == "contentcontainer" then
-            o.BackgroundColor3 = _MM2.BlueDark
-            o.BackgroundTransparency = 0.08
+            o.BackgroundTransparency = 1
             o.BorderSizePixel = 0
-            _corner(o, 8)
-            _stroke(o, _MM2.BlueBright, 1.5, 0.28)
             return
         end
 
@@ -64759,19 +67951,27 @@ do
         end
 
         -- Compact toggle row from the replica.
-        if low:sub(1, 15) == "auroratogglerow_" then
-            o.BackgroundColor3 = _MM2.BluePanel
-            o.BackgroundTransparency = 0.12
+        -- FIX v6: NO llamar _zqShape aqui. Agregar un ImageLabel hijo dispara
+        -- DescendantAdded -> _styleObject -> Visible=false en loop.
+        -- El toggle ya tiene su propio stroke desde CreateAuroraToggle.
+        if low:sub(1, 16) == "auroratogglerow_" then
+            o.BackgroundTransparency = 1
             o.BorderSizePixel = 0
             _corner(o, 7)
-            _stroke(o, _MM2.BlueBright, 1.2, 0.30)
+            -- Solo actualizar stroke si ya existe; no crear uno nuevo.
+            local _st = o:FindFirstChildOfClass("UIStroke")
+            if _st then
+                _st.Color = _MM2.BlueBright
+                _st.Thickness = 1.2
+                _st.Transparency = 0.30
+            end
             return
         end
 
         -- Toggle track.
         if low == "toggletrack" then
             o.BackgroundColor3 = _MM2.Track
-            o.BackgroundTransparency = 0
+            o.BackgroundTransparency = 0.45
             _corner(o, 4)
             _stroke(o, _MM2.BlueBright, 1, 0.35)
             return
@@ -64780,20 +67980,25 @@ do
         -- Toggle knob.
         if low == "toggleknob" or low == "knob" then
             o.BackgroundColor3 = _MM2.White
-            o.BackgroundTransparency = 0
+            o.BackgroundTransparency = 0.08
             _corner(o, 3)
             return
         end
 
         -- Slider wrappers/rows: turn the transparent sliders into blue rounded cards.
+        -- FIX v6: NO llamar _zqShape (mismo loop DescendantAdded que AuroraToggleRow).
         if low:find("sliderwrapper", 1, true) or low:find("sliderrow", 1, true)
             or low:find("predslider", 1, true) or low:find("gunslider", 1, true) then
             if o:IsA("Frame") then
-                o.BackgroundColor3 = _MM2.BluePanel
-                o.BackgroundTransparency = 0.10
+                o.BackgroundTransparency = 1
                 o.BorderSizePixel = 0
                 _corner(o, 8)
-                _stroke(o, _MM2.BlueBright, 1.3, 0.25)
+                local _st2 = o:FindFirstChildOfClass("UIStroke")
+                if _st2 then
+                    _st2.Color = _MM2.BlueBright
+                    _st2.Thickness = 1.3
+                    _st2.Transparency = 0.25
+                end
             end
             return
         end
@@ -64804,27 +68009,39 @@ do
                 -- Don't repaint the card if this is a text/section container.
                 if o.AbsoluteSize.Y <= 18 then
                     o.BackgroundColor3 = _MM2.Track
-                    o.BackgroundTransparency = 0
+                    o.BackgroundTransparency = 0.40
                     _corner(o, 4)
                 end
             end
         end
 
-        -- Value fields on sliders.
+        -- Value fields on sliders: mantener transparente (nuevo diseno sin fondo)
         if low:find("value", 1, true) or low:find("valbox", 1, true) then
             if o:IsA("Frame") or o:IsA("TextLabel") or o:IsA("TextBox") then
-                o.BackgroundColor3 = _MM2.BlueDark
-                o.BackgroundTransparency = 0.05
-                _corner(o, 6)
-                _stroke(o, _MM2.BlueBright, 1.3, 0.10)
-                _styleText(o, true)
+                -- Solo dar estilo al texto, NO poner fondo (el ValueFrame ahora es transparente)
+                o.BackgroundTransparency = 1
+                if o:IsA("TextLabel") or o:IsA("TextBox") then
+                    _styleText(o, true)
+                end
             end
         end
 
-        -- Default replica surface: replace legacy dark/teal card colors with the blue palette.
+        -- Default replica surface: never repaint toggle/slider containers opaque.
+        -- FIX v5: excluir internos de toggle/slider (knob, pill, accentbar, track*)
+        -- para que _styleObject no los corrompa.
         if (o:IsA("Frame") or o:IsA("TextButton") or o:IsA("TextBox"))
             and o ~= mainFrame and low ~= "header" and low ~= "contentcontainer" and low ~= "tabdock" and low ~= "docklist" then
-            if o.BackgroundTransparency < 1 then
+            local _isToggleOrSlider = low:find("toggle", 1, true) or low:find("slider", 1, true)
+            -- Proteger componentes internos de toggles/sliders: nunca forzar transparencia en ellos
+            local _isToggleInternal = low == "knob" or low == "togglepill"
+                or low == "accentbar" or low:find("thumb", 1, true)
+                or low:find("fill", 1, true) or low:find("trackfill", 1, true)
+            if _isToggleInternal then
+                -- No tocar: son partes activas del toggle/slider con su propio estado
+            elseif _isToggleOrSlider then
+                -- Solo el contenedor raiz del toggle/slider: fondo transparente esta bien
+                o.BackgroundTransparency = math.max(o.BackgroundTransparency, 0.45)
+            elseif o.BackgroundTransparency < 1 then
                 o.BackgroundColor3 = _MM2.BluePanel
                 if o:IsA("TextButton") then o.AutoButtonColor = false end
             end
@@ -64833,10 +68050,10 @@ do
         -- Section cards.
         if low:find("section", 1, true) or low:find("bordered", 1, true) then
             if o:IsA("Frame") then
-                o.BackgroundColor3 = _MM2.BluePanel
-                o.BackgroundTransparency = 0.16
+                o.BackgroundTransparency = 1
                 _corner(o, 8)
                 _stroke(o, _MM2.BlueBright, 1.2, 0.32)
+                _zqShape(o, "ZQShape", o.ZIndex or 1)
             end
         end
 
@@ -64845,11 +68062,13 @@ do
         -- click layer, so style both the frame and its visible text.
         if low:sub(-7) == "sidebtn" or (low:find("tab", 1, true) and o:IsA("TextButton")) then
             if o:IsA("GuiObject") then
-                o.BackgroundColor3 = _MM2.BluePanel
-                o.BackgroundTransparency = 0.06
+                o.BackgroundTransparency = 1
                 o.BorderSizePixel = 0
                 _corner(o, 8)
                 _stroke(o, _MM2.BlueBright, 1.5, 0.22)
+                if low:sub(-7) == "sidebtn" then
+                    _zqShape(o, "ZQTabShape", o.ZIndex or 13)
+                end
             end
             if o:IsA("TextButton") then o.AutoButtonColor = false end
         end
@@ -64870,7 +68089,7 @@ do
         -- Match the proportions of the reference while keeping the existing
         -- relative layout used by the hub.
         pcall(function()
-            mainFrame.Size = UDim2.new(0, 700, 0, 410)
+            mainFrame.Size = UDim2.new(0, 950, 0, 555)
         end)
 
         -- Force the reference layout: content left, tabs right.
@@ -64880,8 +68099,8 @@ do
                 header.Position = UDim2.new(0, 0, 0, 0)
             end
             if contentContainer then
-                contentContainer.Position = UDim2.new(0, 0, 0, 52)
-                contentContainer.Size = UDim2.new(0.65, 0, 1, -52)
+                contentContainer.Position = UDim2.new(0, 0, 0, 56)
+                contentContainer.Size = UDim2.new(1, 0, 1, -56)
             end
             if _G._hubTabDockFrame then
                 _G._hubTabDockFrame.Position = UDim2.new(0.65, 0, 0, 52)
@@ -64893,8 +68112,17 @@ do
         for i, btn in ipairs(sideButtons) do
             pcall(function()
                 btn.Size = UDim2.new(1, 0, 0, 70)
-                btn.BackgroundColor3 = (i == activeTabIdx) and _MM2.BlueBright or _MM2.BluePanel
-                btn.BackgroundTransparency = (i == activeTabIdx) and 0.04 or 0.16
+                local _shape = btn:FindFirstChild("ZQTabShape")
+                if not _shape then
+                    _shape = _zqShape(btn, "ZQTabShape", 13)
+                end
+                if _shape then
+                    _shape.Image = _ZQ_SHAPE_ID
+                    _shape.ImageTransparency = 0
+                    _shape.Visible = true
+                    _shape.BackgroundTransparency = 1
+                end
+                btn.BackgroundTransparency = 1
                 btn.BorderSizePixel = 0
                 local c = btn:FindFirstChildOfClass("UICorner") or Instance.new("UICorner", btn)
                 c.CornerRadius = UDim.new(0, 9)
@@ -64917,6 +68145,34 @@ do
             pcall(_styleObject, d)
         end
         _styleObject(mainFrame)
+
+        -- Seguridad: los assets personalizados permanecen visibles y sin fondo propio.
+        for _, d in ipairs(mainFrame:GetDescendants()) do
+            if d:IsA("ImageLabel") and
+                (d.Name == "ZQShape" or d.Name == "ZQTabShape" or d.Name == "ZQStatusShape") then
+                d.Image = _ZQ_SHAPE_ID
+                d.ImageTransparency = 0
+                d.Visible = true
+                d.BackgroundTransparency = 1
+                d.ZIndex = (d.Name == "ZQTabShape") and 13 or d.ZIndex
+            end
+        end
+
+        -- Seguridad visual: quitar bloques oscuros de CONTENEDORES raiz de toggles/sliders.
+        -- FIX v5: NO tocar internos (knob, pill, accentBar, trackFill, etc.)
+        -- Solo los frames raiz de fila que no deben tener fondo opaco.
+        for _, d in ipairs(mainFrame:GetDescendants()) do
+            if d:IsA("Frame") then
+                local low = tostring(d.Name or ""):lower()
+                -- Solo el contenedor raiz (AuroraToggleRow_ / SliderWrapper_)
+                if low:find("auroratogglerow_", 1, true)
+                    or low:find("sliderwrapper_", 1, true)
+                    or low:find("sliderrow_", 1, true) then
+                    d.BackgroundTransparency = 1
+                end
+                -- No tocar knob, pill, accentbar, fill, thumb ni ninguna parte interna
+            end
+        end
     end
 
     -- Apply after all cached tabs have had a chance to build.
@@ -64928,19 +68184,25 @@ do
     end)
 
     -- Keep newly-created/cached tab contents in the same appearance.
+    -- FIX v6: ignorar cualquier objeto que viva dentro de un toggle o slider.
+    -- _styleObject ya tiene el guard _insideToggleOrSlider, pero evitamos
+    -- incluso la llamada para no disparar _zqShape innecesariamente y crear
+    -- un loop DescendantAdded -> _zqShape -> ImageLabel -> DescendantAdded.
     pcall(function()
         mainFrame.DescendantAdded:Connect(function(obj)
             task.defer(function()
-                if obj and obj.Parent then
-                    _styleObject(obj)
-                    local p = obj.Parent
-                    if p and p:IsA("Frame") then
-                        local pn = tostring(p.Name or ""):lower()
-                        if pn:find("sliderwrapper", 1, true) or pn:find("predslider", 1, true) then
-                            _styleObject(p)
-                        end
-                    end
+                if not (obj and obj.Parent) then return end
+                -- Skip: el objeto vive dentro de un toggle o slider
+                if _insideToggleOrSlider(obj) then return end
+                -- Skip: el objeto ES el contenedor raiz de un toggle/slider
+                -- (ya fue estilizado al ser creado por CreateAuroraToggle/CreateSlider)
+                local objLow = tostring(obj.Name or ""):lower()
+                if objLow:sub(1, 16) == "auroratogglerow_"
+                    or objLow:find("sliderwrapper_", 1, true)
+                    or objLow:find("sliderrow_", 1, true) then
+                    return
                 end
+                _styleObject(obj)
             end)
         end)
     end)
