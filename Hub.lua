@@ -1063,6 +1063,20 @@ local function _toggleFileName(nombre)
     return _TOGGLE_DIR .. "/" .. safe .. "_" .. _UID_STR .. ".txt"
 end
 
+-- v60: los dos caches se declaran ACA, antes de _saveToggleFile. Estaban
+-- declarados 20 lineas mas abajo, asi que las dos lineas de cache al final de
+-- _saveToggleFile no veian estos locals: leian dos globales nil. La segunda
+-- (_toggleFileStates[path] = enabled) tiraba "attempt to index a nil value"
+-- adentro del pcall que envuelve todo el cuerpo, y el pcall se lo comia.
+-- Resultado: el .txt SI se escribia (writefile va antes del error) pero los
+-- caches quedaban con el valor viejo toda la sesion, y el barrido de
+-- auto-restore lee _readToggleFile como veto -> apagaba toggles recien
+-- prendidos. Ese era el "no anda" de la auto activacion.
+-- Tabla por path de los .txt que estan en disco (la precarga con listfiles).
+local _toggleFileStates = {}
+-- Cache por nombre del toggle: nombre -> true/false/nil.
+local _toggleFileCache  = {}
+
 -- Guardar estado de un toggle individual en su propio .txt
 local function _saveToggleFile(nombre, enabled)
     pcall(function()
@@ -1080,13 +1094,9 @@ local function _saveToggleFile(nombre, enabled)
     end)
 end
 
--- Tabla de nombres de toggles que tienen archivo .txt guardado como true
--- FIX: declarada ANTES de _readToggleFile para evitar "attempt to index nil"
-local _toggleFileStates = {}
-
 -- Leer estado de un toggle individual desde su .txt
 -- FIX LAG: usa el cache precargado (_toggleFileStates) en lugar de hacer I/O en cada llamada.
-local _toggleFileCache = {}  -- cache por nombre: nombre -> true/false/nil
+-- v60: los dos caches ahora se declaran arriba de _saveToggleFile.
 local function _readToggleFile(nombre)
     -- 1. Cache por nombre (hit mas comun)
     if _toggleFileCache[nombre] ~= nil then
@@ -1134,6 +1144,12 @@ pcall(function()
                 local isOn = (content:lower():find("true") ~= nil)
                 -- Guardar por path para lookup rapido
                 _toggleFileStates[fpath] = isOn
+                -- v60: listfiles devuelve el path con el separador del sistema
+                -- (rex_toggles_1\Fly_1.txt) y _toggleFileName arma el suyo con
+                -- barra normal, asi que el lookup por path nunca pegaba y los
+                -- 172 toggles caian al fallback de disco en cada arranque.
+                -- Guardar tambien la forma normalizada carpeta/archivo.
+                _toggleFileStates[_TOGGLE_DIR .. "/" .. fname] = isOn
             end
         end
     end
@@ -1330,7 +1346,12 @@ end
 -- FIX AUTO-SAFE: siempre iniciar en true para garantizar que _saveConfig funcione
 -- desde el primer tick. Si el usuario lo apago manualmente, se restaura desde disco
 -- cuando CreateAuroraToggle("Auto Save") se crea en el tab Settings.
-_G._autoSaveEnabled = false  -- auto-save desactivado por defecto
+-- v60: ARRANCA EN TRUE. Con false, _saveConfig() y _saveConfigThrottled()
+-- salian en su primera linea, asi que el JSON de config NUNCA se escribia
+-- y al reabrir no habia estados para restaurar: eso era todo el "no anda"
+-- de la auto activacion. Si el usuario apaga Auto Save en Settings, el
+-- valor guardado lo vuelve a poner en false mas abajo, en _loadConfig().
+_G._autoSaveEnabled = true
 
 
 -- Toggles que NUNCA se guardan ni se restauran del disco
@@ -1499,7 +1520,7 @@ if not _G._hubSettings then
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = false,  -- FIX v39: hub fijo, no movible
+        allowHubDrag       = true,   -- v60: hub movible arrastrando el TopBar
         hubOpacity         = 0,
         hubScale           = 70,   -- valor por defecto: 70% (todos los dispositivos)
         hubLayoutMode      = 1,
@@ -1524,6 +1545,11 @@ _G._hubSettings.doubleColumn = true
 -- FIX SCALE: forzar hubScale = 70 siempre, ignorar lo que haya en el archivo guardado
 _G._hubSettings = _G._hubSettings or {}
 _G._hubSettings.hubScale = 70
+
+-- v60: HUB MOVIBLE. Se fuerza igual que hubScale porque el default vino en
+-- false desde v39 y ese false quedo guardado en el JSON de cualquiera que ya
+-- haya abierto el hub: cambiar solo el default no alcanzaba.
+_G._hubSettings.allowHubDrag = true
 
 -- Forzar a false TODOS los toggles de _neverRestoreToggles
 -- (_saveConfig los excluye igual, as? que escribir aqu? no los persiste en disco)
@@ -1578,17 +1604,89 @@ do
         -- se cargan del JSON y se restauran al re-ejecutar.
     }
     -- Forzar a false solo los peligrosos (los de _autoRestoreOnReexec se cargan del disco)
+    _G._ZQ_NoRestore = _G._ZQ_NoRestore or {}
     for _, name in ipairs(_killTogglesToReset) do
         if not _autoRestoreOnReexec[name] then
             _G._toggleStates[name] = false
+            -- v60: queda anotado que este NO puede volver desde un .txt.
+            _G._ZQ_NoRestore[name] = true
         end
     end
+end
+
+-- ==================================================================
+-- == v60: QUIEN PUEDE AUTO-ACTIVARSE
+-- Un solo lugar decide si un toggle guardado en disco puede volver
+-- prendido y ejecutar su accion. Lo usan el arranque (CreateAuroraToggle,
+-- que ahora lee el .txt) y el re-armado al reaparecer. Asi los peligrosos
+-- (fling, bang, kill all...) y los Premium sin verificar quedan afuera de
+-- los dos caminos con una sola lista.
+-- ==================================================================
+function _G._ZQ_CanRestore(nombre)
+    if type(nombre) ~= "string" then return false end
+    if _neverRestoreToggles and _neverRestoreToggles[nombre] then return false end
+    if _G._ZQ_NoRestore and _G._ZQ_NoRestore[nombre] then return false end
+    if nombre:find("%(Premium%)") and not _G._discordPremiumVerified then return false end
+    return true
 end
 
 -- Guardar tambien al cerrar/salir del juego
 game:GetService("Players").LocalPlayer.AncestryChanged:Connect(function()
     _saveConfig()
 end)
+
+-- ==================================================================
+-- == v60: RE-ARMADO AL REAPARECER
+-- Si el personaje muere y vuelve, lo que vive PEGADO al personaje (fly,
+-- noclip, saltos, anti fling) se queda colgado: la tabla dice true pero
+-- el efecto quedo en el cuerpo viejo. Aca se re-arma solo: callback(false)
+-- y despues callback(true), asi arranca de cero en el cuerpo nuevo.
+-- Solo la lista de abajo, no todos los toggles: el hub ya tiene 82
+-- CharacterAdded propios y la mayoria de las funciones (aimbot, esp,
+-- loops de farm) no se rompen al reaparecer. Re-armar todo cada ronda de
+-- MM2 seria un tiron de lag y efectos duplicados por gusto.
+-- ==================================================================
+do
+    local _REARM = {
+        ["Fly (WASD + Space/Ctrl + Shift boost)"] = true,
+        ["Noclip"]                                = true,
+        ["Noclip (Button)"]                       = true,
+        ["Noclip (Keybind Active)"]               = true,
+        ["Infinite Jump"]                         = true,
+        ["Infinity Jump"]                         = true,
+        ["Auto Jump"]                             = true,
+        ["Always speed"]                          = true,
+        ["Power Jump/Always"]                     = true,
+        ["Anti Fling"]                            = true,
+        ["Anti Void"]                             = true,
+        ["Anti AFK"]                              = true,
+    }
+    _G._ZQ_ReArmOnSpawn = _REARM
+    local _plr = game:GetService("Players").LocalPlayer
+    if _plr and not _G._ZQ_RespawnHook then
+        _G._ZQ_RespawnHook = true
+        _plr.CharacterAdded:Connect(function()
+            task.delay(1.5, function()
+                local st = _G._toggleStates
+                local cb = _G._toggleCallbacks
+                if not (st and cb) then return end
+                -- callar las notificaciones mientras re-arma, igual que hace el
+                -- auto-restore del arranque: si no, tira todos los avisos juntos.
+                local _origNotif = CreateCustomNotification
+                pcall(function() CreateCustomNotification = function() end end)
+                for nombre, on in pairs(st) do
+                    if on == true and _REARM[nombre] and cb[nombre]
+                    and (not _G._ZQ_CanRestore or _G._ZQ_CanRestore(nombre)) then
+                        pcall(cb[nombre], false)
+                        task.wait(0.05)
+                        pcall(cb[nombre], true)
+                    end
+                end
+                CreateCustomNotification = _origNotif
+            end)
+        end)
+    end
+end
 
 local TweenService = game:GetService("TweenService")
 
@@ -1983,7 +2081,16 @@ function CreatePremiumToggle(parent, titleText, subtitleText, callback, defaultS
     _G._toggleStates = _G._toggleStates or {}
     local _ptKey = "PT_" .. titleText
     local savedPT = _G._toggleStates[_ptKey]
-    local isToggled = (savedPT ~= nil) and savedPT or (defaultState or false)
+    -- v60: if explicito. Con "(savedPT ~= nil) and savedPT or (defaultState or
+    -- false)" un savedPT guardado en FALSE se perdia: true and false da false y
+    -- el or devolvia defaultState. Los toggles que arrancan en ON por defecto no
+    -- podian quedar apagados entre sesiones.
+    local isToggled
+    if savedPT ~= nil then
+        isToggled = savedPT
+    else
+        isToggled = defaultState or false
+    end
 
     local C_STROKE_OFF  = Color3.fromRGB(160, 125, 60)
     local C_STROKE_ON   = Color3.fromRGB(190, 145, 65)
@@ -13746,6 +13853,144 @@ do
                     task.wait(1.8)
                 end
             end
+        end)
+    end
+end
+
+-- ==================================================================
+-- == v60: TOGGLES QUE RESPIRAN
+-- El mismo latido del marco del hub, pero en los bordes de las filas de
+-- toggle. Un SOLO loop para todas las filas (hay decenas): cada fila se
+-- anota en el registro y el loop las tweenea juntas, asi que no hay una
+-- corrutina ni un GetPropertyChangedSignal por fila.
+-- El pulso toca Thickness y Transparency nada mas; el Color de la fila
+-- lo sigue manejando el ciclo _ZQRGB (o el color manual del usuario), y
+-- la capa de resplandor COPIA el color de su fila, asi andan los dos.
+-- Mientras el hub esta cerrado no tweenea: si no, el pulso le ganaba al
+-- fade de cierre y el borde quedaba prendido sobre el hub apagado.
+-- ==================================================================
+do
+    local _TSp = game:GetService("TweenService")
+    local _P = {
+        row     = { thDim = 1.15, thBright = 2.20, tDim = 0.42, tBright = 0.06 },
+        rowhalo = { thDim = 0.80, thBright = 1.70, tDim = 0.80, tBright = 0.30 },
+    }
+    _G._ZQ_PulseCfg  = _P
+    _G._ZQ_PulseList = _G._ZQ_PulseList or {}
+
+    -- stroke: el que late. kind: clave de _P. src: de quien copiar el Color
+    -- (nil = no tocarle el Color).
+    function _G._ZQ_PulseAdd(stroke, kind, src)
+        if not stroke then return end
+        if not _P[kind or ""] then return end
+        local L = _G._ZQ_PulseList
+        for _, e in ipairs(L) do
+            if e.s == stroke then return end
+        end
+        L[#L + 1] = { s = stroke, kind = kind, src = src }
+    end
+
+    if not _G._ZQ_PulseRunning then
+        _G._ZQ_PulseRunning = true
+        task.spawn(function()
+            local _dur = 2.0
+            local _inf = TweenInfo.new(_dur, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+            local _up  = true
+            while true do
+                if not _G._hubHidden then
+                    local L = _G._ZQ_PulseList or {}
+                    for _i = #L, 1, -1 do
+                        local e  = L[_i]
+                        local ok = false
+                        pcall(function() ok = (e.s.Parent ~= nil) end)
+                        if not ok then
+                            table.remove(L, _i)
+                        else
+                            local cfg = _P[e.kind]
+                            if cfg then
+                                pcall(function()
+                                    local goal = {
+                                        Thickness    = _up and cfg.thBright or cfg.thDim,
+                                        Transparency = _up and cfg.tBright  or cfg.tDim,
+                                    }
+                                    if e.src and e.src.Parent then goal.Color = e.src.Color end
+                                    _TSp:Create(e.s, _inf, goal):Play()
+                                end)
+                            end
+                        end
+                    end
+                    _up = not _up
+                end
+                task.wait(_dur)
+            end
+        end)
+    end
+end
+
+-- == v60: TRASPARENCIA EN TODOS LOS CIERRES ==
+-- El cierre del hub ya se apagaba con fade (v8 + el snapshot de v56), pero los
+-- otros dos cierres que se ven todo el tiempo no: al salir de una pestania el
+-- frame del tab desaparecia de golpe (Visible = false) mientras el contenedor si
+-- hacia fade, y el cuadradito flotante se destruia sin apagarse.
+--
+-- _ZQ_FadeTree apaga un arbol entero y, si restore = true, DEVUELVE cada valor
+-- despues de ocultarlo. Eso ultimo no es un detalle: dejarlos en Transparency 1
+-- es exactamente el bug de v25, el cache de la pestania se guardaba invisible y
+-- al reabrirla no se veia una sola opcion.
+do
+    local _TSf = game:GetService("TweenService")
+
+    local function _grab(list, o, prop)
+        local ok, v = pcall(function() return o[prop] end)
+        if ok and type(v) == "number" and v < 0.98 then
+            list[#list + 1] = { o = o, p = prop, v = v }
+        end
+    end
+
+    local function _collect(root)
+        local list = {}
+        if root:IsA("GuiObject") then _grab(list, root, "BackgroundTransparency") end
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("UIStroke") then
+                _grab(list, d, "Transparency")
+            elseif d:IsA("GuiObject") then
+                _grab(list, d, "BackgroundTransparency")
+                if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                    _grab(list, d, "TextTransparency")
+                    _grab(list, d, "TextStrokeTransparency")
+                elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+                    _grab(list, d, "ImageTransparency")
+                end
+            end
+        end
+        return list
+    end
+
+    function _G._ZQ_FadeTree(root, dur, restore, onDone)
+        if not (root and root.Parent) then
+            if onDone then pcall(onDone) end
+            return
+        end
+        local _d   = dur or 0.30
+        local list = _collect(root)
+        local _ti  = TweenInfo.new(_d, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+        for _, e in ipairs(list) do
+            pcall(function() _TSf:Create(e.o, _ti, { [e.p] = 1 }):Play() end)
+        end
+        task.delay(_d + 0.02, function()
+            if onDone then pcall(onDone) end
+            if restore then
+                for _, e in ipairs(list) do
+                    pcall(function() if e.o.Parent then e.o[e.p] = e.v end end)
+                end
+            end
+        end)
+    end
+
+    function _G._ZQ_FadeOutAndDestroy(root, dur)
+        if not (root and root.Parent) then return end
+        _G._ZQ_FadeTree(root, dur or 0.26, false, function()
+            pcall(function() root:Destroy() end)
         end)
     end
 end
@@ -33056,7 +33301,32 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
 
     _G._toggleStates = _G._toggleStates or {}
     local savedState = _G._toggleStates[nombre]
-    local estado = (savedState ~= nil) and savedState or (initialValue or false)
+    -- v60 (auto activacion): si el JSON no dice nada de este toggle, mirar
+    -- su .txt individual. Los .txt se escribian en cada click desde siempre,
+    -- pero nadie los leia como FUENTE: solo servian de veto en el auto-restore.
+    -- Por eso un toggle que quedaba prendido en la sesion anterior arrancaba
+    -- en OFF y su accion nunca se auto-ejecutaba. Fly era el unico que hacia
+    -- esta lectura, a mano; ahora la hacen los 172 toggles.
+    -- _readToggleFile pega en el cache precargado con listfiles: no es I/O.
+    if savedState == nil and _G._ZQ_CanRestore and _G._ZQ_CanRestore(nombre) then
+        local _fileState = _readToggleFile(nombre)
+        if type(_fileState) == "boolean" then savedState = _fileState end
+    end
+    -- v60: if explicito, mismo motivo que en CreatePremiumToggle: el idioma
+    -- "(savedState ~= nil) and savedState or (initialValue or false)" convertia
+    -- un false guardado en el default. Con la lectura del .txt que agrego v60
+    -- eso se volvio grave: apagar Anti Fling / Anti Void / Anti AFK (default ON)
+    -- no sobrevivia a salir del juego, volvian solos prendidos.
+    local estado
+    if savedState ~= nil then
+        estado = savedState
+    else
+        estado = initialValue or false
+    end
+    -- v60: anotar el estado resuelto. El auto-restore barre _G._toggleStates
+    -- buscando los true para ejecutar su callback, asi que un toggle que no
+    -- estaba anotado ahi simplemente no existia para ese barrido.
+    _G._toggleStates[nombre] = estado
 
     if callback then
         _G._toggleCallbacks = _G._toggleCallbacks or {}
@@ -33100,6 +33370,34 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
     -- v47: el borde de la fila entra al ciclo RGB con la paleta del hub.
     -- El hover sigue funcionando: pisa el color un instante y el ciclo lo retoma.
     if _G._ZQRGB_add then _G._ZQRGB_add(_contStroke, "row") end
+    -- v60: la fila respira igual que el marco del hub. La capa de
+    -- resplandor va hacia ADENTRO (inset 3) porque la columna recorta a
+    -- los costados y las filas van pegadas: hacia afuera se cortaba y
+    -- pisaba a la de al lado. Maximo grosor de la capa 1.70 <= 3, asi que
+    -- nunca se sale del inset. Active=false y fondo transparente para no
+    -- comerse el click de la fila (clickRow esta en ZIndex 30).
+    if _G._ZQ_PulseAdd then
+        local _hInset = 3
+        local _halo = Instance.new("Frame")
+        _halo.Name                   = "ZQRowHalo"
+        _halo.AnchorPoint            = Vector2.new(0.5, 0.5)
+        _halo.Position               = UDim2.new(0.5, 0, 0.5, 0)
+        _halo.Size                   = UDim2.new(1, -_hInset * 2, 1, -_hInset * 2)
+        _halo.BackgroundTransparency = 1
+        _halo.BorderSizePixel        = 0
+        _halo.Active                 = false
+        _halo.ZIndex                 = 21
+        _halo.Parent                 = container
+        Instance.new("UICorner", _halo).CornerRadius = UDim.new(0, 8 - _hInset)
+        local _haloStroke = Instance.new("UIStroke", _halo)
+        _haloStroke.Name            = "ZQRowHaloRing"
+        _haloStroke.Color           = C_STROKE
+        _haloStroke.Thickness       = 0.8
+        _haloStroke.Transparency    = 0.80
+        _haloStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        _G._ZQ_PulseAdd(_contStroke,  "row")
+        _G._ZQ_PulseAdd(_haloStroke, "rowhalo", _contStroke)
+    end
 
     -- Barra de acento izquierda (como en Zerqon Core option cards)
     local accentBar = Instance.new("Frame", container)
@@ -33220,10 +33518,13 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         TweenService:Create(container, _ti, {
             BackgroundTransparency = 1,  -- FIX: SIEMPRE transparente
         }):Play()
+        -- v60: por ARRIBA del pico del latido (2.20 / 0.06). Con los
+        -- valores viejos (1.4 / 0.10) el hover quedaba mas apagado que la
+        -- respiracion y parecia que el hover no andaba.
         TweenService:Create(_contStroke, _ti, {
             Color       = C_TRACK_ON,
-            Thickness   = 1.4,
-            Transparency = 0.10,
+            Thickness   = 2.9,
+            Transparency = 0.02,
         }):Play()
         TweenService:Create(accentBar, _ti, {
             Size = UDim2.fromScale(0.012, 0.72),
@@ -33233,10 +33534,12 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         TweenService:Create(container, _ti, {
             BackgroundTransparency = 1,  -- FIX: SIEMPRE transparente al salir hover
         }):Play()
+        -- v60: volver al piso del latido (1.15 / 0.42) para que el pulso
+        -- lo retome sin salto.
         TweenService:Create(_contStroke, _ti, {
             Color       = C_STROKE,
-            Thickness   = 1.2,
-            Transparency = 0.20,
+            Thickness   = 1.15,
+            Transparency = 0.42,
         }):Play()
         TweenService:Create(accentBar, _ti, {
             Size = estado and UDim2.fromScale(0.008, 0.72) or UDim2.fromScale(0.008, 0.55),
@@ -33252,7 +33555,9 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         _G._toggleStates[nombre] = estado
         ApplyState(estado, true)
         PlayToggleSound(estado)
-        pcall(_saveConfigThrottled)
+        -- v60: guardado INMEDIATO (el metodo pedido). Antes salia por el
+        -- throttle de 1.5 s: si el juego se cerraba antes, el cambio se perdia.
+        pcall(_flushConfig)
         pcall(function() _saveToggleFile(nombre, estado) end)
         if callback then
             task.spawn(function() pcall(callback, estado) end)
@@ -35333,72 +35638,25 @@ function CreateWorldUI_QuickFlingButtons()
                 _sgBind.gui = sg
                 -- FIX: capturar frame para SetActiveState
                 local _sgFrame = MakeCapyBindableFrame(sg, "STEAL\nGUN", function()
-                    -- FIX BINDABLE: usar _G._qfStateRef en vez del _qfState local del closure
-                    -- El closure captura el _qfState de la instancia de CreateWorldUI_QuickFlingButtons
-                    -- que creo este toggle. Si el World tab se reconstruye, se crea un nuevo _qfState
-                    -- local pero el bindable (en CoreGui) todavia referencia el viejo. Usar el ref
-                    -- global garantiza que siempre apuntamos al _qfState activo.
-                    local _qs = _G._qfStateRef or _qfState
-                    if _qs.stealGunActive then
-                        -- Desactivar
-                        _qs.stealGunActive = false
-                        StealGunSystem.enabled  = false
-                        _flingActive = false; _flingReturning = false
-                        if StealGunSystem._sgCacheConn  then pcall(function() StealGunSystem._sgCacheConn:Disconnect()  end) StealGunSystem._sgCacheConn  = nil end
-                        if StealGunSystem._sgRemoveConn then pcall(function() StealGunSystem._sgRemoveConn:Disconnect() end) StealGunSystem._sgRemoveConn = nil end
-                        -- FIX VISUAL: reflejar estado inactivo
-                        pcall(function() if _sgBind.frame then _sgBind.frame:SetActiveState(false) end end)
-                        CreateCustomNotification("STEAL GUN", "Desactivado", 2)
-                    else
-                        -- Detectar portador de gun
-                        -- FIX: usar el _qfStopAll del ref global si el local ya no es valido
-                        if _G._qfStateRef then
-                            _G._qfStateRef.flingAllActive    = false
-                            _G._qfStateRef.flingMurderActive = false
-                            _G._qfStateRef.stealGunActive    = false
-                            FlingSystem.flingAll       = false
-                            FlingSystem.flingMurder    = false
-                            FlingSystem.flingSheriff   = false
-                            FlingSystem.flingInnocent  = false
-                            FlingSystem.specificTarget = nil
-                            _flingActive    = false
-                            _flingReturning = false
-                            if FlingSystem.active then
-                                pcall(StopFlingSystem)
-                                FlingSystem.active = false
-                            end
-                        else
-                            _qfStopAll()
-                        end
-                        StealGunSystem.sheriffOriginalFound = nil
-                        StealGunSystem.sheriffDeadDetected  = false
-                        StealGunSystem.roleCheckDisabled    = false
-                        StealGunSystem.gunInBackpackMode    = false
-                        StealGunSystem._roundToken = (StealGunSystem._roundToken or 0) + 1
-                        _roleCache.lastUpdate = 0
-                        _refreshRoleCache()
-                        local holder = nil
-                        if _roleCache.sheriff and _roleCache.sheriff.Character then
-                            local sh = _roleCache.sheriff.Character:FindFirstChildOfClass("Humanoid")
-                            if sh and sh.Health > 0 then holder = _roleCache.sheriff end
-                        end
-                        if not holder and _roleCache.hero and _roleCache.hero.Character then
-                            local hh = _roleCache.hero.Character:FindFirstChildOfClass("Humanoid")
-                            if hh and hh.Health > 0 then holder = _roleCache.hero end
-                        end
-                        if not holder then
-                            CreateCustomNotification("STEAL GUN", "No se detecto portador de gun", 4)
-                            return
-                        end
-                        _flingActive = false; _flingReturning = false
-                        _qs.stealGunActive                  = true
-                        StealGunSystem.enabled              = true
-                        StealGunSystem.sheriffOriginalFound = holder
-                        -- FIX VISUAL: reflejar estado activo
-                        pcall(function() if _sgBind.frame then _sgBind.frame:SetActiveState(true) end end)
-                        CreateCustomNotification("STEAL GUN", "Flingeando a " .. holder.Name .. " por 5s...", 3)
-                        task.spawn(StealGunLoop)
+                    -- v60: ahora usa EXACTAMENTE la logica del boton ">> STEAL GUN".
+                    -- Antes tenia una copia recortada: detectaba solo sheriff/hero
+                    -- (sin el scan visual de quien tiene la gun), no guardaba la
+                    -- posicion segura, no escuchaba el drop de la gun, no hacia el
+                    -- sticky fling de 5 s ni el TP de vuelta al mapa, y llamaba a
+                    -- StealGunLoop, que es OTRO sistema. De ahi el "no anda".
+                    local _press = _G._ZQ_StealGunPress
+                    if type(_press) ~= "function" then
+                        CreateCustomNotification("STEAL GUN", "Abri el tab GAMEPLAY una vez y volve a probar", 4)
+                        return
                     end
+                    _press()
+                    -- reflejar en el boton flotante el estado que dejo la logica normal
+                    local _qs = _G._qfStateRef or _qfState
+                    pcall(function()
+                        if _sgBind.frame then
+                            _sgBind.frame:SetActiveState((_qs and _qs.stealGunActive) == true)
+                        end
+                    end)
                 end)
                 _sgBind.frame = _sgFrame
                 -- FIX: exponer al global para que StealGunLoop pueda resetear el visual
@@ -35410,7 +35668,12 @@ function CreateWorldUI_QuickFlingButtons()
     -- BOTON: STEAL GUN (fling al sheriff/portador de gun por 5s, luego TP al mapa)
     -- FIX TP INVOLUNTARIO: token de sesion para invalidar spawns acumulados de presses anteriores
     local _sgBtnToken = 0
-    CreateButton(leftColumn, ">> STEAL GUN", ThemeColors.Aurora4, function()
+    -- v60: el cuerpo pasa a ser una funcion con nombre y se expone en
+    -- _G._ZQ_StealGunPress, asi el boton bindable ejecuta EXACTAMENTE esto
+    -- en vez de su copia recortada. Se reasigna en cada build del tab, asi
+    -- que el bindable nunca queda apuntando a un closure viejo.
+    local _sgNormalPress
+    _sgNormalPress = function()
         if _qfState.stealGunActive then
             -- Cancelar activo: incrementar token para invalidar el spawn en curso
             _sgBtnToken = _sgBtnToken + 1
@@ -35693,7 +35956,9 @@ function CreateWorldUI_QuickFlingButtons()
                 end
             end)
         end)
-    end)
+    end
+    _G._ZQ_StealGunPress = _sgNormalPress
+    CreateButton(leftColumn, ">> STEAL GUN", ThemeColors.Aurora4, _sgNormalPress)
 end
 -- FIN QUICK FLING BUTTONS
 
@@ -43957,7 +44222,7 @@ function CreateExclusiveTab()
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = false,  -- FIX v39: hub fijo, no movible
+        allowHubDrag       = true,   -- v60: hub movible arrastrando el TopBar
         hubOpacity         = 0,   -- 0-95 (porcentaje de opacidad del fondo)
         hubScale           = 70,   -- 70-130 (escala del hub en %)
         hubLayoutMode      = 1,    -- 1=SidebarIzq 2=BarraTop 3=SidebarDer 4=BarraBot 5=MiniIzq
@@ -60294,7 +60559,11 @@ function abrirHub()
             local _getHubSizeFn = (type(_getHubSize) == "function" and _getHubSize) or nil
             local _ns = (_getHubSizeFn and _getHubSizeFn()) or UDim2.new(0, 1100, 0, 640)
             if _G._setHubFrameSize then _G._setHubFrameSize(_ns) else mainFrame.Size = _ns end
-            mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+            -- v60: volver a fijar la posicion en el guardian (el cierre la libero)
+            -- y respetar el lugar donde el usuario dejo el hub arrastrandolo.
+            _G._hubPosFree = false
+            local _rp = _G._hubUserPos or UDim2.new(0.5, 0, 0.5, 0)
+            if _G._setHubFramePos then _G._setHubFramePos(_rp) else mainFrame.Position = _rp end
             mainFrame.BackgroundTransparency = 1
             pcall(function() local bg = mainFrame:FindFirstChild("HubBackground"); if bg then bg.ImageTransparency = 0 end end)
             local _uiSc = mainFrame:FindFirstChildOfClass("UIScale")
@@ -60487,7 +60756,10 @@ do
     mainFrame:GetPropertyChangedSignal("Position"):Connect(function()
         if _guardBusy then return end
         -- HUB MOVIBLE v28: si el hub esta siendo arrastrado, actualizar _guardPos
-        if _G._hubDragging then
+        -- v60: _hubPosFree hace lo mismo durante el fade de cierre, que tambien
+        -- mueve el hub y hasta ahora quedaba pisado por este guardian cuadro
+        -- por cuadro (el "sube levemente al cerrarse" no se veia nunca).
+        if _G._hubDragging or _G._hubPosFree then
             _guardPos = mainFrame.Position
             return
         end
@@ -60669,19 +60941,29 @@ do
     -- velocidad: cada mitad sigue durando 2 s (Sine InOut, ciclo de 4 s) pero
     -- ahora va de 1.6 px casi apagado a 3.0 px de oro claro. Las dos capas de
     -- resplandor (ZQBorderHalo) se calculan de estos mismos valores.
+    -- v60: el pulso ahora CEDE el borde en dos casos, porque sus tweens duran
+    -- 2 s y le ganaban a cualquier animacion mas corta:
+    --   _hubHidden    -> esta corriendo el fade de cierre y el borde tiene que
+    --                    llegar a Transparency 1 sin que este loop lo reencienda.
+    --   _ZQ_HubHold   -> el usuario mantiene el click encima del hub y el borde
+    --                    tiene que quedarse ancho hasta que suelte.
     task.spawn(function()
         while glowBorder and glowBorder.Parent do
-            TweenService:Create(glowBorder, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                Color = Color3.fromRGB(255, 215, 130),
-                Thickness = 3.0,
-                Transparency = 0.02,
-            }):Play()
+            if not (_G._hubHidden or _G._ZQ_HubHold) then
+                TweenService:Create(glowBorder, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                    Color = Color3.fromRGB(255, 215, 130),
+                    Thickness = 3.0,
+                    Transparency = 0.02,
+                }):Play()
+            end
             task.wait(2.0)
-            TweenService:Create(glowBorder, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                Color = Color3.fromRGB(170, 132,  58),
-                Thickness = 1.6,
-                Transparency = 0.42,
-            }):Play()
+            if not (_G._hubHidden or _G._ZQ_HubHold) then
+                TweenService:Create(glowBorder, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                    Color = Color3.fromRGB(170, 132,  58),
+                    Thickness = 1.6,
+                    Transparency = 0.42,
+                }):Play()
+            end
             task.wait(2.0)
         end
     end)
@@ -60771,6 +61053,121 @@ do
     _G._ZQ_HaloRings = _rings
 end
 
+-- == v60: BORDES QUE RESPIRAN -- version reusable del truco de v59
+-- El marco del hub (v59) resolvio esto a mano: un pulso sobre el UIStroke que ya
+-- existe, mas capas de resplandor que NO se animan solas sino que se CALCULAN del
+-- stroke por GetPropertyChangedSignal. Aca queda empaquetado para reusarlo en los
+-- botones y en los toggles sin repetir el codigo ni tocar sus call sites: el
+-- hover, el click, el ciclo de color del reopener y los cambios de tema siguen
+-- mandando sobre el stroke, y el resplandor los acompania gratis.
+-- Diferencia con el marco: aca las capas van hacia AFUERA (out > 0). mainFrame
+-- tiene ClipsDescendants = true y por eso alla habia que ir hacia adentro; ni el
+-- boton flotante ni el contenedor del boton de cerrar recortan.
+do
+    local _TS = game:GetService("TweenService")
+
+    local function _clamp01(v)
+        if v < 0 then return 0 end
+        if v > 1 then return 1 end
+        return v
+    end
+
+    -- cfg = {
+    --   stroke   = UIStroke que respira (obligatorio)
+    --   host     = de quien cuelgan las capas (default: stroke.Parent)
+    --   name     = prefijo de los Frames de resplandor
+    --   zindex   = ZIndex de las capas
+    --   corner   = radio en px del host; nil = circulo (UDim.new(1, 0))
+    --   dur      = segundos por mitad del pulso (default 2)
+    --   thDim/thBright, tDim/tBright = extremos del pulso
+    --   rings    = { { out = px, thMul = n, tAdd = n, tMul = n }, ... }
+    -- }
+    -- tAdd/tMul se eligen para que Transparency 1 del stroke de exactamente 1 en
+    -- la capa: borde apagado -> resplandor apagado.
+    local function _breathe(cfg)
+        if type(cfg) ~= "table" then return end
+        local st = cfg.stroke
+        if not (st and st.Parent) then return end
+        local host  = cfg.host or st.Parent
+        local nm    = tostring(cfg.name or "ZQBreathe")
+        local rings = {}
+
+        for i, r in ipairs(cfg.rings or {}) do
+            local f = Instance.new("Frame")
+            f.Name                   = nm .. tostring(i)
+            f.AnchorPoint            = Vector2.new(0.5, 0.5)
+            f.Position               = UDim2.new(0.5, 0, 0.5, 0)
+            f.Size                   = UDim2.new(1, r.out * 2, 1, r.out * 2)
+            f.BackgroundTransparency = 1
+            f.BorderSizePixel        = 0
+            f.Active                 = false   -- que no se coma el toque del boton
+            f.ZIndex                 = cfg.zindex or 90
+            f.Parent                 = host
+            local c = Instance.new("UICorner", f)
+            if type(cfg.corner) == "number" then
+                c.CornerRadius = UDim.new(0, cfg.corner + r.out)
+            else
+                c.CornerRadius = UDim.new(1, 0)
+            end
+            local s = Instance.new("UIStroke", f)
+            s.Name            = nm .. "Ring"
+            s.Color           = st.Color
+            s.Thickness       = 0
+            s.Transparency    = 1
+            s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            rings[#rings + 1] = { s = s, thMul = r.thMul, tAdd = r.tAdd, tMul = r.tMul }
+        end
+
+        local function _sync()
+            if not (st and st.Parent) then return end
+            local bt  = st.Transparency
+            local bth = st.Thickness
+            local bc  = st.Color
+            for _, r in ipairs(rings) do
+                if r.s.Parent then
+                    r.s.Color        = bc
+                    r.s.Thickness    = math.max(0, bth * r.thMul)
+                    r.s.Transparency = _clamp01(r.tAdd + bt * r.tMul)
+                end
+            end
+        end
+        for _, prop in ipairs({ "Transparency", "Thickness", "Color" }) do
+            pcall(function()
+                st:GetPropertyChangedSignal(prop):Connect(_sync)
+            end)
+        end
+        _sync()
+
+        -- El pulso: dos mitades de dur segundos, Sine InOut, igual que el marco.
+        -- No toca Color a proposito: el reopener ya cicla su paleta y los toggles
+        -- pintan el color segun ON/OFF. Solo grosor y transparencia.
+        local dur = tonumber(cfg.dur) or 2.0
+        task.spawn(function()
+            while st and st.Parent do
+                pcall(function()
+                    _TS:Create(st, TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                        Thickness    = cfg.thBright,
+                        Transparency = cfg.tBright,
+                    }):Play()
+                end)
+                task.wait(dur)
+                if not (st and st.Parent) then return end
+                pcall(function()
+                    _TS:Create(st, TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                        Thickness    = cfg.thDim,
+                        Transparency = cfg.tDim,
+                    }):Play()
+                end)
+                task.wait(dur)
+            end
+        end)
+
+        return _sync, rings
+    end
+
+    _G._ZQ_BreatheBorder = _breathe
+end
+
 -- Helper global: siempre 750x420 (UIScale se encarga de la escala)
 _getHubSize = function()
     return UDim2.new(0, 950, 0, 555)
@@ -60803,8 +61200,12 @@ _getTargetScale = function()
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
     else
-        -- Replica canvas: 700x410 at native PC scale.
-        return 1.0
+        -- v60: la gui bajo un poco de tamanio (pedido "achica un poco la
+        -- gui"). Se toca SOLO aca: mainFrame sigue midiendo 950x555 y todo
+        -- lo demas (el marco, Settings, las reaperturas) lee esta funcion,
+        -- asi que el layout interno no se mueve ni un pixel. El celu no se
+        -- toca: tiene su propio calculo mas arriba.
+        return 0.92
     end
 end
 -- FIX v24: registrar en _G para que el guard de re-ejecucion la encuentre
@@ -61628,31 +62029,25 @@ particles = {}
     do
         -- Estado de drag en upvalues locales (no closures anidadas)
         local _dragActive    = false
+        local _dragArmed     = false  -- v60: presionado en el header, todavia sin mover
         local _dragStartMouse = nil   -- Vector3
         local _dragStartFrame = nil   -- Vector2 (top-left del frame al iniciar)
 
         -- Helpers
 
-        local function _resolveFrameTopLeft()
-            -- FIX: usar AbsolutePosition directamente (ya tiene en cuenta AnchorPoint,
-            -- Scale, Offset y GuiInset de Roblox). Es la forma m?s confiable en m?vil.
-            local ap = mainFrame.AbsolutePosition
-            return Vector2.new(ap.X, ap.Y)
-        end
-
         local function _mouseOverHeader(p2d)
-            -- Drag desde CUALQUIER parte del hub manteniendo presionado
-            local fPos = mainFrame.AbsolutePosition
-            local fSiz = mainFrame.AbsoluteSize
+            -- v60: HUB MOVIBLE. Esto devolvia true en CUALQUIER parte del hub, asi
+            -- que el arrastre arrancaba tambien tocando un toggle o un slider; por
+            -- eso v38/v39 termino apagando el drag entero en vez de arreglarlo.
+            -- Ahora se arrastra del TopBar, como cualquier ventana.
+            local ref  = (header and header.Parent) and header or mainFrame
+            local fPos = ref.AbsolutePosition
+            local fSiz = ref.AbsoluteSize
             return p2d.X >= fPos.X and p2d.X <= fPos.X + fSiz.X
                and p2d.Y >= fPos.Y and p2d.Y <= fPos.Y + fSiz.Y
         end
 
         -- Drag desde cualquier parte del frame (no solo borde)
-        local function _mouseOverBorder(p2d)
-            return false
-        end
-
         -- Efectos visuales al arrastrar / soltar
         local function _activateDragEffect()
             _G._hubDragging = true
@@ -61684,44 +62079,31 @@ particles = {}
             }):Play()
         end
 
-        -- Estado de hold (el drag requiere mantener presionado en el header)
-        local _holdPending   = false   -- mouse/touch est? presionado en el header
-        local _holdStartPos  = nil     -- posicion al presionar
-        local _holdThread    = nil     -- coroutine del delay de hold
-
         -- DRAG INSTANTANEO: sin delay de hold, se activa apenas se presiona en cualquier parte del hub
         local MOVE_THRESHOLD = 3  -- pixeles minimos para que cuente como drag (evita click accidental)
 
-        -- Inicio de drag inmediato desde cualquier parte del mainFrame
+        -- v60: presionar solo ARMA el drag. Recien cuenta como arrastre cuando el
+        -- puntero se movio MOVE_THRESHOLD pixeles (la constante existia y no se
+        -- usaba), asi un click en el header -- o en la X, que queda encima -- no
+        -- mueve el hub ni prende el efecto de arrastre.
         local function _startDrag(inputPos2D)
-            -- HUB MOVIBLE v28: drag activado
             if _G._hubSettings and _G._hubSettings.allowHubDrag == false then return end
-            if _dragActive then return end  -- ya dragging, no re-iniciar
-            -- Verificar que el click sea dentro del hub
+            if _dragActive or _dragArmed then return end
+            if not _mouseOverHeader(inputPos2D) then return end
+            -- El AnchorPoint se queda en (0.5, 0.5). Cambiarlo a (0,0) era lo que
+            -- rompia el drag: el guardian de AnchorPoint lo revertia en el mismo
+            -- cuadro y el hub saltaba medio frame al primer movimiento. Se trabaja
+            -- con el CENTRO del frame, que es a lo que apunta Position con ese anchor.
             local fPos = mainFrame.AbsolutePosition
             local fSiz = mainFrame.AbsoluteSize
-            if inputPos2D.X < fPos.X or inputPos2D.X > fPos.X + fSiz.X then return end
-            if inputPos2D.Y < fPos.Y or inputPos2D.Y > fPos.Y + fSiz.Y then return end
-            -- FIX: usar AbsolutePosition como top-left real (confiable en m?vil con cualquier AnchorPoint)
-            local tl = Vector2.new(fPos.X, fPos.Y)
-            -- Normalizar a AnchorPoint(0,0) para que el drag sea predecible
-            mainFrame.AnchorPoint = Vector2.new(0, 0)
-            mainFrame.Position    = UDim2.new(0, tl.X, 0, tl.Y)
-            _dragActive     = true
+            _dragArmed      = true
             _dragStartMouse = Vector2.new(inputPos2D.X, inputPos2D.Y)
-            _dragStartFrame = tl
-            if leftColumn then pcall(function() leftColumn.ScrollingEnabled = false end) end
-            _activateDragEffect()
+            _dragStartFrame = Vector2.new(fPos.X + fSiz.X / 2, fPos.Y + fSiz.Y / 2)
         end
 
         -- _onHeaderPress ahora activa drag inmediatamente sin esperar hold
         local function _onHeaderPress(inputPos2D)
             _startDrag(inputPos2D)
-        end
-
-        -- Soltar: terminar drag
-        local function _onRelease()
-            -- noop: el estado se limpia en InputEnded abajo
         end
 
         -- InputBegan: activar drag inmediatamente al presionar
@@ -61732,11 +62114,6 @@ particles = {}
             elseif inp.UserInputType == Enum.UserInputType.Touch then
                 _onHeaderPress(Vector2.new(inp.Position.X, inp.Position.Y))
             end
-        end)
-
-        -- InputChanged: sin logica de hold, solo movimiento real del drag activo
-        _safeConnect(UserInputService.InputChanged, function(inp)
-            -- no se necesita logica extra aqui: el drag activo lo maneja el bloque de abajo
         end)
 
         -- dragIcon: compatibilidad con executors que no exponen UIS correctamente
@@ -61752,11 +62129,19 @@ particles = {}
         -- la barra de status de Roblox en celular (~36px arriba).
         -- Sin esto el hub no puede subirse m?s all? del inset (barrera invisible).
         _safeConnect(UserInputService.InputChanged, function(input)
-            if not _dragActive then return end
+            if not (_dragActive or _dragArmed) then return end
             if _G._sliderDragging then return end
             if input.UserInputType ~= Enum.UserInputType.MouseMovement
             and input.UserInputType ~= Enum.UserInputType.Touch then return end
             local delta = Vector2.new(input.Position.X, input.Position.Y) - _dragStartMouse
+            if not _dragActive then
+                -- armado: pasa a arrastre real solo si se movio de verdad
+                if math.abs(delta.X) < MOVE_THRESHOLD
+               and math.abs(delta.Y) < MOVE_THRESHOLD then return end
+                _dragActive = true
+                if leftColumn then pcall(function() leftColumn.ScrollingEnabled = false end) end
+                _activateDragEffect()
+            end
             local vp    = workspace.CurrentCamera.ViewportSize
             local fw    = mainFrame.AbsoluteSize.X
             local fh    = mainFrame.AbsoluteSize.Y
@@ -61767,9 +62152,16 @@ particles = {}
                 local inset = gs:GetGuiInset()
                 _insetTop = inset.Y  -- tipicamente 36px en movil
             end)
-            mainFrame.Position = UDim2.new(0,
-                math.clamp(_dragStartFrame.X + delta.X, 0, vp.X - fw), 0,
-                math.clamp(_dragStartFrame.Y + delta.Y, _insetTop, vp.Y - fh))
+            -- Position apunta al CENTRO (AnchorPoint 0.5), asi que los limites
+            -- llevan medio frame de margen a cada lado. Se escribe por
+            -- _setHubFramePos para que el guardian acompanie en vez de revertir.
+            local _hw, _hh = fw / 2, fh / 2
+            local _cx = math.clamp(_dragStartFrame.X + delta.X, _hw, math.max(_hw, vp.X - _hw))
+            local _cy = math.clamp(_dragStartFrame.Y + delta.Y, _insetTop + _hh,
+                                   math.max(_insetTop + _hh, vp.Y - _hh))
+            local _np = UDim2.new(0, _cx, 0, _cy)
+            if _G._setHubFramePos then _G._setHubFramePos(_np) else mainFrame.Position = _np end
+            _G._hubUserPos = _np   -- reabrir el hub lo devuelve donde lo dejaron
             -- Sincronizar estela si existe
             task.defer(function()
                 local trailSG = hubGui and hubGui:FindFirstChild("EstelaContainer")
@@ -61784,7 +62176,7 @@ particles = {}
         _safeConnect(UserInputService.InputEnded, function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
-                _onRelease()  -- cancelar hold pendiente siempre
+                _dragArmed = false
                 if _dragActive then
                     _dragActive = false
                     if leftColumn then pcall(function() leftColumn.ScrollingEnabled = true end) end
@@ -61821,6 +62213,99 @@ particles = {}
         end)
     end -- cierra do drag
 
+    -- == v60: MANTENER PRESIONADO ENSANCHA EL BORDE ==
+    -- Mientras el click o el dedo siguen apretados encima del hub, el marco se
+    -- abre a 5.4 px de oro pleno; al soltar vuelve a la base del pulso con un
+    -- tween lento de 1.2 s.
+    --
+    -- El borde (glowBorder) ya tenia tres duenios: el pulso de 4 s, el hover del
+    -- header y el efecto de arrastre. Para no pelearse con ninguno:
+    --   * el pulso CEDE mientras _G._ZQ_HubHold este prendido (sus tweens duran
+    --     2 s y le ganaban a cualquier animacion mas corta),
+    --   * el valor del hold queda por arriba del pico del pulso (3.0) y del
+    --     hover (3.4), asi se nota aunque justo coincidan,
+    --   * el tween de soltar aterriza EXACTO en el piso del pulso (1.6 / 0.42 /
+    --     RGB 170,132,58), asi cuando el pulso retoma no hay escalon.
+    -- Las dos capas de resplandor (ZQBorderHalo) no se tocan: se calculan de
+    -- glowBorder por _haloSync, asi que se abren y se cierran solas.
+    do
+        local HOLD_TH = 5.4
+        local BASE_TH = 1.6
+        local BASE_T  = 0.42
+        local _growTI = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local _slowTI = TweenInfo.new(1.20, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local _held   = false
+        local _relSeq = 0
+
+        local function _overHub(p2d)
+            if _G._hubHidden then return false end
+            if not (mainFrame and mainFrame.Parent) then return false end
+            if hubGui and hubGui.Enabled == false then return false end
+            local fp = mainFrame.AbsolutePosition
+            local fs = mainFrame.AbsoluteSize
+            if fs.X <= 0 or fs.Y <= 0 then return false end
+            -- el borde sobresale del rect, se le da un margen para que tocar
+            -- justo el marco tambien cuente
+            local m = 6
+            return p2d.X >= fp.X - m and p2d.X <= fp.X + fs.X + m
+               and p2d.Y >= fp.Y - m and p2d.Y <= fp.Y + fs.Y + m
+        end
+
+        local function _hold()
+            if _held then return end
+            _held = true
+            _G._ZQ_HubHold = true
+            if glowBorder and glowBorder.Parent then
+                pcall(function()
+                    TweenService:Create(glowBorder, _growTI, {
+                        Thickness    = HOLD_TH,
+                        Transparency = 0.0,
+                        Color        = Color3.fromRGB(255, 226, 150),
+                    }):Play()
+                end)
+            end
+        end
+
+        local function _release()
+            if not _held then return end
+            _held   = false
+            _relSeq = _relSeq + 1
+            local _mine = _relSeq
+            if _G._hubHidden then
+                -- se solto sobre la X: manda el fade de cierre, no reencender nada
+                _G._ZQ_HubHold = false
+                return
+            end
+            if glowBorder and glowBorder.Parent then
+                pcall(function()
+                    TweenService:Create(glowBorder, _slowTI, {
+                        Thickness    = BASE_TH,
+                        Transparency = BASE_T,
+                        Color        = Color3.fromRGB(170, 132, 58),
+                    }):Play()
+                end)
+            end
+            -- el pulso recien vuelve a tomar el borde cuando termino el tween lento
+            task.delay(1.25, function()
+                if _mine == _relSeq and not _held then _G._ZQ_HubHold = false end
+            end)
+        end
+
+        _safeConnect(UserInputService.InputBegan, function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                if _overHub(UserInputService:GetMouseLocation()) then _hold() end
+            elseif inp.UserInputType == Enum.UserInputType.Touch then
+                if _overHub(Vector2.new(inp.Position.X, inp.Position.Y)) then _hold() end
+            end
+        end)
+        _safeConnect(UserInputService.InputEnded, function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+                _release()
+            end
+        end)
+    end
+
     -- -- BOTON CERRAR (rbxassetid://73160772224057) -- esquina superior derecha DENTRO del hub --
     -- v6: contenedor mas grande, imagen centrada con padding, sin stretch
     local _CLOSE_BTN_SZ = 48  -- agrandado para mejor visibilidad
@@ -61850,6 +62335,22 @@ particles = {}
     _closeBtnBgStroke.Thickness = 1.5
     _closeBtnBgStroke.Transparency = 0.35
     _closeBtnBgStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+    -- v60: el borde del boton de cerrar respira como el marco del hub.
+    -- Una sola capa de resplandor y de solo 2 px hacia afuera: el boton vive a
+    -- 6 px del borde de mainFrame, que SI recorta a sus hijos, asi que una capa
+    -- mas grande se cortaria en las esquinas de arriba y de la derecha.
+    if _G._ZQ_BreatheBorder then
+        pcall(_G._ZQ_BreatheBorder, {
+            stroke   = _closeBtnBgStroke,
+            host     = _closeBtnBg,
+            name     = "ZQCloseHalo",
+            zindex   = 9999,      -- arriba del fondo (9998), abajo del icono (10000)
+            thDim    = 1.2,  thBright = 3.0,
+            tDim     = 0.50, tBright = 0.10,
+            rings    = { { out = 2, thMul = 0.55, tAdd = 0.40, tMul = 0.60 } },
+        })
+    end
 
     -- Glow (mantenido oculto, igual que antes)
     local _closeBtnGlow = Instance.new("ImageLabel", _closeBtnContainer)
@@ -62819,8 +63320,22 @@ particles = {}
             local _exitDuration = 0.35
             local _activeFrame = _tabCache and _tabCache[activeTabIdx]
             if _activeFrame and _activeFrame.Parent then
-                _activeFrame.Visible = false
-                _activeFrame.Position = UDim2.new(0, 0, 0, 0)
+                -- v60: antes se ocultaba de golpe mientras el contenedor hacia
+                -- fade, y el corte se notaba. Ahora se apaga con el, y los
+                -- valores vuelven despues de ocultarlo (ver _ZQ_FadeTree: si
+                -- quedaran en 1 se repite el bug de v25 con el cache del tab).
+                local _af = _activeFrame
+                if _G._ZQ_FadeTree then
+                    _G._ZQ_FadeTree(_af, _exitDuration, true, function()
+                        if _af and _af.Parent then
+                            _af.Visible  = false
+                            _af.Position = UDim2.new(0, 0, 0, 0)
+                        end
+                    end)
+                else
+                    _activeFrame.Visible = false
+                    _activeFrame.Position = UDim2.new(0, 0, 0, 0)
+                end
             end
 
             -- Animacion de salida del contentContainer
@@ -63006,6 +63521,10 @@ particles = {}
         end
         local _hubGuiRef    = hubGui
         local _mainFrameRef = mainFrame
+        -- v60: el fade de cierre mueve el hub un poco hacia arriba, asi que se
+        -- libera el guardian de posicion hasta que una reapertura lo vuelva a
+        -- fijar. Sin esto el guardian revertia el tween en el mismo cuadro.
+        _G._hubPosFree = true
         pcall(function() if _G._stopWeapon then _G._stopWeapon() end end)
         pcall(function() if _G._stopKnife  then _G._stopKnife()  end end)
         -- ANIMACION DE CIERRE v8: lenta, suave, tranquila
@@ -63026,9 +63545,14 @@ particles = {}
                 -- Fade out suave del hub (sin escalar, sin deformar)
                 _fsNum(_mainFrameRef, "BackgroundTransparency")
                 _fsNum(_mainFrameRef, "Position")
+                -- v60: el destino era fijo (0.5 / 0.44). Con el hub movible eso lo
+                -- teletransportaba al centro justo al cerrarlo, asi que ahora sube
+                -- 26 px DESDE donde este, sea el centro o donde lo dejo el usuario.
+                local _cp   = _mainFrameRef.Position
+                local _upTo = UDim2.new(_cp.X.Scale, _cp.X.Offset, _cp.Y.Scale, _cp.Y.Offset - 26)
                 _fsPlay(TweenService:Create(_mainFrameRef, _closeTI, {
                     BackgroundTransparency = 1,
-                    Position = UDim2.new(0.5, 0, 0.44, 0),  -- sube levemente mientras desaparece
+                    Position = _upTo,
                 }))
                 -- Fade del borde
                 local _gbRef = _mainFrameRef:FindFirstChild("HubGlowBorder")
@@ -63159,6 +63683,28 @@ particles = {}
                 end)
             end
 
+            -- v60: el borde del cuadrado respira igual que el marco del hub.
+            -- El pulso NO toca Color a proposito: el ciclo de la paleta de arriba
+            -- sigue siendo el dueno del color y el resplandor lo copia solo, por
+            -- GetPropertyChangedSignal. Aca las capas SI salen para afuera: ni
+            -- skullMF2 ni el ScreenGui recortan, asi que el resplandor se ve
+            -- de verdad alrededor del boton.
+            if _G._ZQ_BreatheBorder then
+                pcall(_G._ZQ_BreatheBorder, {
+                    stroke   = _rBtn2Stroke,
+                    host     = rBtn2,
+                    name     = "ZQReopenHalo",
+                    zindex   = 99,       -- abajo del logo (103), arriba del fondo
+                    corner   = 22,       -- mismo radio que el UICorner de rBtn2
+                    thDim    = 2.8,  thBright = 5.6,
+                    tDim     = 0.32, tBright = 0.0,
+                    rings    = {
+                        { out =  6, thMul = 1.10, tAdd = 0.42, tMul = 0.58 },
+                        { out = 14, thMul = 1.70, tAdd = 0.66, tMul = 0.34 },
+                    },
+                })
+            end
+
             -- v42: eliminadas las 4 lineas trazadas que rodeaban el icono.
             -- Se conserva la imagen rbx id de base (la capsula), oculta como estaba.
             local _rBtn2Img = Instance.new("ImageLabel", skullMF2)
@@ -63267,7 +63813,16 @@ particles = {}
                 if _rBtn2Clicked then return end
                 _rBtn2Clicked = true
                 task.delay(0.1, function()
-                    pcall(function() rGui2:Destroy() end)
+                    -- v60: el cuadradito se apaga con fade en vez de desaparecer
+                    -- de un cuadro al otro. El hub sigue abriendose enseguida:
+                    -- el Destroy queda dentro del helper, al final del fade.
+                    pcall(function()
+                        if _G._ZQ_FadeOutAndDestroy then
+                            _G._ZQ_FadeOutAndDestroy(rGui2, 0.24)
+                        else
+                            rGui2:Destroy()
+                        end
+                    end)
                     -- FIX: buscar hub en PlayerGui, CoreGui Y gethui() para no llamar abrirHub() innecesariamente
                     local existingHub = LocalPlayer.PlayerGui:FindFirstChild("f")
                                      or game:GetService("CoreGui"):FindFirstChild("f")
@@ -63283,7 +63838,14 @@ particles = {}
                         if uiScaleR then uiScaleR.Scale = _tgtSc * 0.75 end
                         if mainFrame and mainFrame.Parent then
                             mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-                            mainFrame.Position    = UDim2.new(0.5, 0, 0.5, 0)
+                            -- v60: igual que el otro camino de reapertura
+                            _G._hubPosFree = false
+                            local _rp2 = _G._hubUserPos or UDim2.new(0.5, 0, 0.5, 0)
+                            if _G._setHubFramePos then
+                                _G._setHubFramePos(_rp2)
+                            else
+                                mainFrame.Position = _rp2
+                            end
                         end
                         existingHub.Enabled = true
                         _G._hubHidden = false
