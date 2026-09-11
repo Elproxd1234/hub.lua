@@ -1675,7 +1675,7 @@ if not _G._hubSettings then
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = true,   -- v60: hub movible arrastrando el TopBar
+        allowHubDrag       = false,  -- DESACTIVADO: hub no movible
         hubOpacity         = 0,
         hubScale           = 70,   -- valor por defecto: 70% (todos los dispositivos)
         hubLayoutMode      = 1,
@@ -1708,7 +1708,7 @@ _G._hubSettings.hubScale = 70
 -- v60: HUB MOVIBLE. Se fuerza igual que hubScale porque el default vino en
 -- false desde v39 y ese false quedo guardado en el JSON de cualquiera que ya
 -- haya abierto el hub: cambiar solo el default no alcanzaba.
-_G._hubSettings.allowHubDrag = true
+_G._hubSettings.allowHubDrag = false  -- DESACTIVADO: hub fijo, no movible
 
 -- Forzar a false TODOS los toggles de _neverRestoreToggles
 -- (_saveConfig los excluye igual, as? que escribir aqu? no los persiste en disco)
@@ -8160,19 +8160,14 @@ function _KnifeSA_setupKnife(knife)
     end)
     addConn(knifeNoCollideConn)
 
-    -- -- THROW (LMB INVERTIDO) -- click IZQUIERDO lanza el knife (CLICKS INVERTIDOS) --------
-    -- MODIFICADO: clicks invertidos por solicitud.
-    -- LMB (MouseButton1) ahora ejecuta THROW (antes era slash).
-    -- RMB (MouseButton2) ahora ejecuta SLASH (antes era throw).
-    -- Touch (celu) no cambia: sigue siendo tap = slash y su propio boton de throw.
-    -- FIX BUG #2 MOBILE SLASH: Touch is intentionally EXCLUDED here.
-    -- On mobile a tap fires as Touch; desktop (MouseButton1) handles throw now.
-    -- Ademas en PC: al disparar el throw se ejecutan ThrowCharge y ThrowKnife del KnifeClient con delay.
+    -- -- THROW (RMB) -- click DERECHO lanza el knife ----------------------------------
+    -- Slash en LMB, Throw en RMB. Touch (celu) sin cambios.
+    -- En PC: ThrowCharge arranca al presionar, ThrowKnife se ejecuta al final con delay.
     local lmbThrowTime = -999
     addConn(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not equipped then return end
-        -- INVERTIDO: ahora MouseButton1 (LMB) dispara el throw en desktop
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        -- RMB (MouseButton2) dispara el throw en desktop
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then
             if not KnifeSAState.enabled then return end  -- FIX: salir si SA fue desactivado
             lmbThrowTime = os.clock()
             
@@ -8466,8 +8461,7 @@ function _KnifeSA_setupKnife(knife)
                 end
             end)
 
-            -- MODIFICADO: reproducir ThrowCharge y ThrowKnife del KnifeClient nativo con delay (solo PC)
-            -- Esto reproduce las animaciones del cliente nativo como capa visual extra
+            -- MODIFICADO: ThrowCharge arranca primero, delay de 1s, ThrowKnife se ejecuta AL FINAL (solo PC)
             local _isMobileDevice = false
             pcall(function()
                 _isMobileDevice = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
@@ -8483,25 +8477,25 @@ function _KnifeSA_setupKnife(knife)
                         if _kc then
                             local _kcScript = _kc:FindFirstChild("KnifeClient")
                             if _kcScript then
-                                -- ThrowCharge primero
-                                local _tcAnim = _kcScript:FindFirstChild("ThrowCharge")
-                                if _tcAnim and _tcAnim:IsA("Animation") then
-                                    local _animator = LocalPlayer.Character
-                                        and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                                        and LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
-                                    if _animator then
+                                local _animator = LocalPlayer.Character
+                                    and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                                    and LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
+                                if _animator then
+                                    -- 1) ThrowCharge arranca primero (sin detenerlo, deja que corra)
+                                    local _tcAnim = _kcScript:FindFirstChild("ThrowCharge")
+                                    if _tcAnim and _tcAnim:IsA("Animation") then
                                         local _track = _animator:LoadAnimation(_tcAnim)
                                         _track:Play(0.05)
-                                        task.wait(0.18)  -- delay entre ThrowCharge y ThrowKnife
-                                        _track:Stop(0.05)
-                                        -- ThrowKnife despues del delay
-                                        local _tkAnim = _kcScript:FindFirstChild("ThrowKnife")
-                                        if _tkAnim and _tkAnim:IsA("Animation") then
-                                            local _track2 = _animator:LoadAnimation(_tkAnim)
-                                            _track2:Play(0.05)
-                                            task.wait(0.22)
-                                            _track2:Stop(0.05)
-                                        end
+                                    end
+                                    -- 2) Delay de 1 segundo
+                                    task.wait(1)
+                                    -- 3) ThrowKnife se ejecuta AL FINAL, despues del delay completo
+                                    local _tkAnim = _kcScript:FindFirstChild("ThrowKnife")
+                                    if _tkAnim and _tkAnim:IsA("Animation") then
+                                        local _track2 = _animator:LoadAnimation(_tkAnim)
+                                        _track2:Play(0.05)
+                                        task.wait(0.5)
+                                        _track2:Stop(0.05)
                                     end
                                 end
                             end
@@ -8713,14 +8707,12 @@ function _KnifeSA_setupKnife(knife)
         end) -- end task.spawn touch throw
     end)) -- end TouchTapInWorld callback + addConn
 
-    -- -- STAB (RMB INVERTIDO) -- click DERECHO = golpe cuerpo a cuerpo (CLICKS INVERTIDOS) -------
-    -- MODIFICADO: clicks invertidos. RMB (MouseButton2) ahora hace slash en desktop.
-    -- Touch queda EXACTAMENTE igual que antes (tap = slash en celu).
+    -- -- SLASH (LMB) -- click IZQUIERDO = golpe cuerpo a cuerpo ------------------
+    -- Slash en LMB (MouseButton1). Touch sigue igual en celu.
     local stabPressTime = -999
     addConn(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not equipped then return end
-        -- INVERTIDO: RMB (MouseButton2) para slash en desktop; Touch sigue igual en celu
-        if input.UserInputType == Enum.UserInputType.MouseButton2
+        if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             stabPressTime = os.clock()
         end
@@ -8750,8 +8742,8 @@ function _KnifeSA_setupKnife(knife)
 
     addConn(UserInputService.InputEnded:Connect(function(input)
         if not equipped or stabbing then return end
-        -- Desktop: INVERTIDO -> ahora RMB (MouseButton2) hace slash en desktop
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        -- Desktop: LMB (MouseButton1) hace slash
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
             if os.clock() - stabPressTime > 0.5 then return end
             task.spawn(_doSlash)
             return
@@ -47043,7 +47035,7 @@ function CreateExclusiveTab()
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = true,   -- v60: hub movible arrastrando el TopBar
+        allowHubDrag       = false,  -- DESACTIVADO: hub fijo
         hubOpacity         = 0,   -- 0-95 (porcentaje de opacidad del fondo)
         hubScale           = 70,   -- 70-130 (escala del hub en %)
         hubLayoutMode      = 1,    -- 1=SidebarIzq 2=BarraTop 3=SidebarDer 4=BarraBot 5=MiniIzq
@@ -64512,11 +64504,14 @@ _getTargetScale = function()
     -- DEBUG: imprimir valores reales para diagnosticar
     _log("SCALE DEBUG VP=", tostring(_vpNow.X), "x", tostring(_vpNow.Y), "isMobile=", tostring(_isMobileNow))
     if _isMobileNow then
-        -- Calcular escala exacta para que el frame entre en pantalla con margen reducido
-        -- MODIFICADO: divisores mas grandes y clamp menor para que ocupe menos pantalla en celu
-        local _scaleByW = (_vpNow.X - 32) / 1300
-        local _scaleByH = (_vpNow.Y - 32) / 620
-        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.22, 0.58)
+        -- MAS ANCHO Y MAS CHICO: escala por ancho (casi llena la pantalla),
+        -- pero la altura se limita fuerte para que no ocupe tanto vertical.
+        -- _scaleByW: que el frame de 950px ocupe casi todo el ancho disponible (margen 8px c/lado)
+        -- _scaleByH: que el frame de 555px no pase del 52% del alto de pantalla
+        local _scaleByW = (_vpNow.X - 16) / 950   -- casi ancho completo
+        local _scaleByH = (_vpNow.Y * 0.52) / 555  -- maximo 52% del alto
+        -- Se usa el menor de los dos para que no se corte, pero con clamp bajo en alto
+        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.20, 0.72)
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
     else
@@ -65606,14 +65601,8 @@ particles = {}
         -- FIX DRAG BORDER BUG: si UIDragDetector es compatible (_ddSupported), NO usar el
         -- fallback. El fallback competia con UIDragDetector causando el salto a la esquina.
         UserInputService.InputBegan:Connect(function(inp)
-            -- Solo activar fallback manual si UIDragDetector NO esta disponible
-            if _ddActive or _ddSupported then return end
-            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                local mp = UserInputService:GetMouseLocation()
-                _onHeaderPress(Vector2.new(mp.X, mp.Y))
-            elseif inp.UserInputType == Enum.UserInputType.Touch then
-                _onHeaderPress(Vector2.new(inp.Position.X, inp.Position.Y))
-            end
+            -- DRAG DESACTIVADO: hub fijo para PC y celu
+            return
         end)
 
         -- dragIcon: compatibilidad con executors que no exponen UIS correctamente
