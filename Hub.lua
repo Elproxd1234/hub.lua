@@ -64761,7 +64761,9 @@ end)
 _G._isMobileHub = _isMobileHub
 
 -- Tama?o base fijo: UIScale se encarga de ajustar segun dispositivo
-_G._ZQHubBaseSize = _isMobileHub and UDim2.new(0, 1080, 0, 500) or UDim2.new(0, 950, 0, 555)
+-- v81 MOBILE COMPACT: tamaño base reducido 1080x500 -> 920x430 para que
+-- el hub ocupe menos pantalla en celular sin romper el layout interno.
+_G._ZQHubBaseSize = _isMobileHub and UDim2.new(0, 920, 0, 430) or UDim2.new(0, 950, 0, 555)
 mainFrame.Size = _G._ZQHubBaseSize
 
 -- ================================================================
@@ -65253,12 +65255,12 @@ _getTargetScale = function()
     end)
     _log("SCALE DEBUG VP=", tostring(_vpNow.X), "x", tostring(_vpNow.Y), "isMobile=", tostring(_isMobileNow))
     if _isMobileNow then
-        -- v83: escala movil recalculada para ocupar mejor la pantalla del celu.
-        -- Base 1080x500: dividir por el ancho real de pantalla con margen minimo.
-        -- Clamp subido a 0.72 (antes 0.54) para que en pantallas grandes entre bien.
-        local _scaleByW = (_vpNow.X - 8) / 1080
-        local _scaleByH = (_vpNow.Y - 16) / 500
-        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.25, 0.72)
+        -- v81 MOBILE COMPACT: base reducida a 920x430 (antes 1080x500).
+        -- Clamp max bajado de 0.72 a 0.60 para que el hub ocupe menos
+        -- pantalla en celular y no tape el joystick/botones del juego.
+        local _scaleByW = (_vpNow.X - 8) / 920
+        local _scaleByH = (_vpNow.Y - 16) / 430
+        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.25, 0.60)
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
     else
