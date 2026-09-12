@@ -1,3 +1,32 @@
+-- ZERQON v79 (MASTER AUDIT): auditoria arquitectonica completa sobre v78.
+-- Cambios de esta pasada, todos sobre el codigo existente y sin tocar features:
+--   * Motion core: baseline/restore con lista de propiedades cacheada por
+--     ClassName y un solo pcall por objeto (antes 12 pcall + 12 closures).
+--   * Build de pestania: una sola pasada de GetDescendants (baseline +
+--     ScrollingFrames + fuente) en vez de tres barridos del mismo arbol.
+--   * Navegacion: el repintado de los botones de pestania pasa de 8 botones
+--     (~40 tweens) por click a solo el que sale y el que entra.
+--   * Animaciones: la entrada escalonada de los botones, el hover/press del
+--     boton de cierre y el bob del icono activo pasan al gestor central con
+--     un unico dueno por propiedad -> se elimina la causa de los elementos
+--     que quedaban invisibles al clickear durante una animacion.
+--   * Lifecycle: se eliminan los task.wait bloqueantes de ShowTabs /
+--     ShowServerPanel (ahora delay con guarda de estado) y el bob infinito
+--     del icono se apaga al cerrar el hub.
+--   * Loops: se retiran dos hilos permanentes que no producian nada (loop de
+--     shimmer con registro siempre vacio y watchdog de GC que solo loggeaba
+--     con _DEBUG=false).
+-- ZERQON v77: startup por fases, autoactivacion con presupuesto de frame, bindables idempotentes,
+-- BATTLE cacheada y hub movil fijo/compacto.
+-- ZERQON HUB — GUI LIFECYCLE OPTIMIZED / POLISHED / RELEASE-READY
+-- UI architecture pass v3 (9 tabs): centralized interruptible page transitions,
+-- root-only fade/slide/micro-scale, exact final-state commits, deterministic scroll restore,
+-- standalone cached EMOTES page, and rapid-switch generation invalidation.
+-- GUI lifecycle pass v2: O(1) restore queue, scoped tab resets and deterministic scroll,
+-- reopen-safe tab connection ownership, generation-safe close completion,
+-- hidden-worker removal, and consolidated Home telemetry polling.
+-- Source baseline SHA-256: ac81232ccc65f3d9d1183393a10ea02736e6dc729f922c3fc479746d0038801b
+
 -- ================================================================
 -- == COMPAT SHIM v18 - FIX "attempt to call a nil value" (Line 1)
 -- Algunos executors mobiles (Delta, Arceus X, Fluxus) no exponen
@@ -56,6 +85,526 @@ local Debris            = game:GetService("Debris")
 local TeleportService   = game:GetService("TeleportService")
 local StarterGui        = game:GetService("StarterGui")
 local GuiService        = game:GetService("GuiService")
+
+-- ================================================================
+-- == ZQ MOTION CORE v2 -- MOTOR CENTRAL DE ANIMACIONES DEL HUB
+-- ----------------------------------------------------------------
+-- Reemplaza al SAFE UI TWEEN MANAGER v1 y mantiene TODA su API
+-- (_ZQSafeTween / _ZQCancelTween / _ZQCancelObjectTweens /
+-- _ZQSetVisualState) para no romper ningun call site existente.
+--
+-- Lo que agrega, que es lo que faltaba para que la UI sea DETERMINISTA:
+--
+--   * Un solo dueno POR PROPIEDAD (antes era por grupo de propiedades).
+--     Dos tweens ya no pueden pelearse por Position/Transparency.
+--   * Al pisar un tween viejo, las propiedades que ese tween manejaba y
+--     el nuevo no toca se escriben en su valor FINAL. Nunca queda algo
+--     a mitad de camino.
+--   * BASELINE: el estado visual bueno de cada objeto se fotografia UNA
+--     sola vez y no se sobreescribe nunca. Restaurar = escribir esa foto.
+--     Ya no se depende de "como termino el tween anterior". Esto es lo
+--     que mata el bug de entrar -> salir -> volver a entrar y ver las
+--     opciones invisibles.
+--   * GENERACIONES por objeto: un callback viejo (un fade o un
+--     task.delay que quedo en vuelo) no puede tocar un arbol que ya
+--     fue re-mostrado.
+--   * Maquina de estados del hub: CLOSED / OPENING / OPEN / CLOSING.
+--   * Duraciones y easings unicos para todo el hub (_ZQD / _ZQTI).
+-- ================================================================
+do
+    local TS = TweenService
+
+    _G._ZQMotion = _G._ZQMotion or {
+        own    = setmetatable({}, {__mode = "k"}),  -- [obj][prop] = entry
+        base   = setmetatable({}, {__mode = "k"}),  -- [obj] = snapshot
+        gen    = setmetatable({}, {__mode = "k"}),  -- [obj] = generacion
+        serial = 0,
+    }
+    local M = _G._ZQMotion
+
+    -- Propiedades visuales que el hub anima. Se leen con pcall: si el
+    -- objeto no la tiene, simplemente no entra en la foto.
+    local ALL_PROPS = {
+        "BackgroundTransparency", "TextTransparency", "TextStrokeTransparency",
+        "ImageTransparency", "GroupTransparency", "Transparency",
+        "Position", "Size", "Rotation", "Scale", "Thickness", "AnchorPoint",
+    }
+    -- Las de transparencia son las unicas que se restauran en TODO el
+    -- arbol. La geometria de los hijos no se toca nunca al restaurar:
+    -- el knob de un toggle o el knob de un slider tienen una posicion
+    -- que depende del ESTADO LOGICO, no de la animacion.
+    local T_SET = {
+        BackgroundTransparency = true, TextTransparency = true,
+        TextStrokeTransparency = true, ImageTransparency = true,
+        GroupTransparency = true, Transparency = true,
+    }
+
+    -- ---------------------------------------------------------------
+    -- DURACIONES / EASINGS UNICOS
+    -- ---------------------------------------------------------------
+    _G._ZQD = {
+        hover  = 0.13,
+        press  = 0.10,
+        toggle = 0.18,
+        drop   = 0.20,
+        tab    = 0.24,
+        open   = 0.32,
+        close  = 0.28,
+    }
+
+    function _G._ZQTI(dur, style, dir)
+        return TweenInfo.new(
+            dur or 0.20,
+            style or Enum.EasingStyle.Quad,
+            dir or Enum.EasingDirection.Out
+        )
+    end
+    -- Entradas: Out. Transiciones generales: InOut. Sin Back/Elastic/Bounce.
+    function _G._ZQTIOut(dur)  return TweenInfo.new(dur or 0.20, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)   end
+    function _G._ZQTISoft(dur) return TweenInfo.new(dur or 0.24, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)   end
+    function _G._ZQTIIO(dur)   return TweenInfo.new(dur or 0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut) end
+    function _G._ZQTIIn(dur)   return TweenInfo.new(dur or 0.22, Enum.EasingStyle.Quad,  Enum.EasingDirection.In)    end
+
+    -- ---------------------------------------------------------------
+    -- GENERACIONES
+    -- ---------------------------------------------------------------
+    function _G._ZQBumpGen(obj)
+        if not obj then return 0 end
+        local n = (M.gen[obj] or 0) + 1
+        M.gen[obj] = n
+        return n
+    end
+    function _G._ZQGen(obj)
+        if not obj then return 0 end
+        return M.gen[obj] or 0
+    end
+    function _G._ZQGenOk(obj, token)
+        return _G._ZQGen(obj) == token
+    end
+
+    -- ---------------------------------------------------------------
+    -- BASELINE (foto del estado visual bueno; se toma UNA sola vez)
+    -- ---------------------------------------------------------------
+    -- v79 PERF: que propiedades de ALL_PROPS existen se resuelve UNA vez por
+    -- ClassName y se cachea. Antes cada objeto pagaba 12 pcall + 12 closures
+    -- nuevas; con arboles de 3000-6000 descendientes (BATTLE) eso eran decenas
+    -- de miles de closures por build y era la causa REAL del micro-lag de
+    -- inicio y del stutter la primera vez que se entraba a una pestania.
+    local _propsByClass = {}
+    local function _propsFor(obj)
+        local cn
+        if not pcall(function() cn = obj.ClassName end) or not cn then return nil end
+        local list = _propsByClass[cn]
+        if list then return list end
+        list = {}
+        for i = 1, #ALL_PROPS do
+            local p = ALL_PROPS[i]
+            local ok, v = pcall(function() return obj[p] end)
+            if ok and v ~= nil then list[#list + 1] = p end
+        end
+        _propsByClass[cn] = list
+        return list
+    end
+
+    function _G._ZQBaselineCapture(obj)
+        if not obj then return nil end
+        local b = M.base[obj]
+        if b then return b end
+        local props = _propsFor(obj)
+        if not props then return nil end
+        b = {}
+        -- Un solo pcall para todo el objeto en vez de uno por propiedad.
+        if not pcall(function()
+            for i = 1, #props do
+                local p = props[i]
+                b[p] = obj[p]
+            end
+        end) then b = {} end
+        M.base[obj] = b
+        return b
+    end
+
+    local function _isAnimatable(d)
+        return d:IsA("GuiObject") or d:IsA("UIStroke")
+            or d:IsA("UIScale")   or d:IsA("UIGradient")
+    end
+
+    function _G._ZQBaselineTree(root)
+        if not root then return end
+        pcall(function()
+            _G._ZQBaselineCapture(root)
+            for _, d in ipairs(root:GetDescendants()) do
+                if _isAnimatable(d) then _G._ZQBaselineCapture(d) end
+            end
+        end)
+    end
+
+    -- ---------------------------------------------------------------
+    -- CANCELACION SEGURA
+    -- ---------------------------------------------------------------
+    local function _forget(entry)
+        local own = M.own[entry.obj]
+        if not own then return end
+        for prop in pairs(entry.goals) do
+            if own[prop] == entry then own[prop] = nil end
+        end
+    end
+
+    -- Cancelar NO deja el objeto en el estado final por si solo: por eso
+    -- aca se escribe explicitamente el valor final de cada propiedad que
+    -- el tween cancelado manejaba y que el tween nuevo no va a manejar.
+    local function _kill(entry, newGoals, snapFinal)
+        if entry.dead then return end
+        entry.dead = true
+        -- Disconnect before Cancel(): Cancel fires Completed(Cancelled) synchronously
+        -- on some executors. Owning the connection prevents stale completion closures.
+        if entry.doneConn then
+            pcall(function() entry.doneConn:Disconnect() end)
+            entry.doneConn = nil
+        end
+        pcall(function() entry.tween:Cancel() end)
+        _forget(entry)
+        if snapFinal then
+            for prop, target in pairs(entry.goals) do
+                if (newGoals == nil) or (newGoals[prop] == nil) then
+                    pcall(function() entry.obj[prop] = target end)
+                end
+            end
+        end
+    end
+
+    function _G._ZQCancelTween(obj, prop, snapFinal)
+        local own = obj and M.own[obj]
+        if not own then return end
+        local entry = own[tostring(prop)] or own[prop]
+        if entry then _kill(entry, nil, snapFinal ~= false) end
+    end
+
+    function _G._ZQCancelObjectTweens(obj, snapFinal)
+        local own = obj and M.own[obj]
+        if not own then return end
+        local list = {}
+        for _, entry in pairs(own) do list[#list + 1] = entry end
+        for i = 1, #list do _kill(list[i], nil, snapFinal ~= false) end
+        M.own[obj] = nil
+    end
+
+    function _G._ZQCancelTree(root, snapFinal)
+        if not root then return end
+        pcall(function()
+            _G._ZQCancelObjectTweens(root, snapFinal)
+            for _, d in ipairs(root:GetDescendants()) do
+                if _isAnimatable(d) then _G._ZQCancelObjectTweens(d, snapFinal) end
+            end
+        end)
+    end
+
+    -- ---------------------------------------------------------------
+    -- TWEEN SEGURO
+    -- ---------------------------------------------------------------
+    -- El 4to parametro (key) se sigue aceptando por compatibilidad con
+    -- los call sites viejos, pero ya no hace falta: el dueno ahora se
+    -- calcula por propiedad, que es mas fino y mas seguro.
+    function _G._ZQSafeTween(obj, info, goals, key)
+        if not obj or type(goals) ~= "table" then return nil end
+        local alive = false
+        pcall(function() alive = (obj.Parent ~= nil) end)
+        if not alive then return nil end
+
+        _G._ZQBaselineCapture(obj)
+
+        local own = M.own[obj]
+        if not own then own = {}; M.own[obj] = own end
+
+        -- Pisar al dueno anterior de cada propiedad que vamos a animar.
+        for prop in pairs(goals) do
+            local prev = own[prop]
+            if prev then _kill(prev, goals, true) end
+        end
+
+        local tween
+        local ok = pcall(function() tween = TS:Create(obj, info, goals) end)
+        if not ok or not tween then
+            -- Sin tween no dejamos la UI a medias: estado final directo.
+            for prop, v in pairs(goals) do pcall(function() obj[prop] = v end) end
+            return nil
+        end
+
+        M.serial = M.serial + 1
+        local entry = {
+            obj = obj, tween = tween, goals = goals,
+            dead = false, id = M.serial,
+        }
+        for prop in pairs(goals) do own[prop] = entry end
+
+        entry.doneConn = tween.Completed:Connect(function(state)
+            if entry.dead then return end
+            entry.dead = true
+            _forget(entry)
+            local doneConn = entry.doneConn
+            entry.doneConn = nil
+            if doneConn then pcall(function() doneConn:Disconnect() end) end
+            -- Garantia de estado final EXACTO (nunca 0.0001 de sobra).
+            if state == Enum.PlaybackState.Completed then
+                for prop, v in pairs(goals) do pcall(function() obj[prop] = v end) end
+            end
+        end)
+        tween:Play()
+        return tween
+    end
+
+    -- Estado visual instantaneo y deterministico.
+    function _G._ZQSetVisualState(obj, props)
+        if not obj or type(props) ~= "table" then return end
+        _G._ZQCancelObjectTweens(obj, false)
+        _G._ZQBaselineCapture(obj)
+        for prop, value in pairs(props) do
+            pcall(function() obj[prop] = value end)
+        end
+    end
+    _G._ZQSetVisibleInstant = function(obj, visible)
+        if not obj then return end
+        _G._ZQCancelObjectTweens(obj, false)
+        pcall(function() obj.Visible = visible and true or false end)
+    end
+
+    -- ---------------------------------------------------------------
+    -- RESTAURAR EL ESTADO FINAL DE UN ARBOL
+    -- ---------------------------------------------------------------
+    -- Escribe la foto guardada. No mira tweens, no espera nada y no
+    -- depende de que el objeto siga parentado en el momento exacto en
+    -- que se dispara un delay. Un arbol restaurado NO puede quedar con
+    -- Visible = true y Transparency = 1.
+    function _G._ZQRestoreTree(root, rootGeometry)
+        if not root then return end
+        _G._ZQBumpGen(root)   -- invalida fades / delays en vuelo
+        -- v79 PERF: una escritura por objeto dentro de un unico pcall. El
+        -- restore se ejecuta en cada cambio de pestania, asi que un pcall por
+        -- propiedad multiplicaba por 6 el costo de navegar.
+        local function apply(obj, geo)
+            local b = M.base[obj]
+            if not b then return end
+            _G._ZQCancelObjectTweens(obj, false)
+            pcall(function()
+                for p, v in pairs(b) do
+                    if T_SET[p] or geo then obj[p] = v end
+                end
+            end)
+        end
+        pcall(function()
+            apply(root, rootGeometry ~= false)
+            for _, d in ipairs(root:GetDescendants()) do
+                if _isAnimatable(d) then apply(d, false) end
+            end
+        end)
+    end
+
+    -- ---------------------------------------------------------------
+    -- CICLO DE VIDA DE UNA PAGINA / PESTANIA
+    -- ---------------------------------------------------------------
+    -- HIDDEN -> RESET INITIAL -> ANIMATION -> FINAL, siempre en ese
+    -- orden. Nunca se anima sobre un estado desconocido.
+    function _G._ZQResetPage(frame)
+        if not frame then return end
+        local alive = false
+        pcall(function() alive = (frame.Parent ~= nil) end)
+        if not alive then return end
+        _G._ZQBaselineTree(frame)
+        _G._ZQRestoreTree(frame, true)
+        pcall(function()
+            frame.Visible = true
+            frame.Position = UDim2.new(0, 0, 0, 0)
+            local sc = frame:FindFirstChildOfClass("UIScale")
+            if sc then
+                _G._ZQCancelObjectTweens(sc, false)
+                sc.Scale = 1
+            end
+        end)
+    end
+
+    -- Centralized page lifecycle used by all nine tabs. Only the page root is
+    -- animated, so toggle knobs, dropdown contents, labels and layouts never
+    -- have their own transparency/geometry overwritten by navigation.
+    local function _pageScale(frame)
+        local sc = frame and frame:FindFirstChild("ZQPageScale")
+        if not sc and frame then
+            sc = Instance.new("UIScale")
+            sc.Name = "ZQPageScale"
+            sc.Scale = 1
+            sc.Parent = frame
+        end
+        return sc
+    end
+
+    function _G._ZQFinalizePage(frame, visible)
+        if not frame then return end
+        _G._ZQCancelObjectTweens(frame, false)
+        local sc = _pageScale(frame)
+        if sc then _G._ZQCancelObjectTweens(sc, false); sc.Scale = 1 end
+        pcall(function()
+            frame.Position = UDim2.new(0, 0, 0, 0)
+            frame.BackgroundTransparency = 1
+            if frame:IsA("CanvasGroup") then frame.GroupTransparency = 0 end
+            frame.Visible = visible == true
+        end)
+    end
+
+    function _G._ZQTransitionPageIn(frame, token, tokenIsCurrent)
+        if not frame then return end
+        _G._ZQResetPage(frame)
+        local sc = _pageScale(frame)
+        local noAnim = _G._hubSettings and _G._hubSettings.noTabAnimations
+        frame.Visible = true
+        frame.BackgroundTransparency = 1
+        if noAnim then
+            _G._ZQFinalizePage(frame, true)
+            return
+        end
+
+        -- Premium but restrained: 8 px slide, 0.985 micro-scale, 10% root fade.
+        frame.Position = UDim2.new(0, 0, 0, 8)
+        if frame:IsA("CanvasGroup") then frame.GroupTransparency = 0.10 end
+        if sc then sc.Scale = 0.985 end
+        local ti = _G._ZQTISoft(_G._ZQD.tab)
+        local goals = { Position = UDim2.new(0, 0, 0, 0) }
+        if frame:IsA("CanvasGroup") then goals.GroupTransparency = 0 end
+        _G._ZQSafeTween(frame, ti, goals, "page-root")
+        if sc then _G._ZQSafeTween(sc, ti, { Scale = 1 }, "page-scale") end
+
+        -- Commit exact final values only if this transition still owns the UI.
+        task.delay(_G._ZQD.tab + 0.025, function()
+            if not frame or not frame.Parent then return end
+            if type(tokenIsCurrent) == "function" and not tokenIsCurrent(token) then return end
+            _G._ZQFinalizePage(frame, true)
+        end)
+    end
+
+    -- Sincroniza el visual de TODOS los toggles con su estado LOGICO.
+    -- La logica manda; la animacion solo la representa. Con esto un
+    -- toggle que arranca prendido se ve prendido sin necesidad de
+    -- entrar a su pestania, y ninguna transicion lo puede dejar
+    -- pintado al reves.
+    function _G._ZQResyncToggles(tabIdx)
+        local apply = _G._toggleApplyStates
+        if type(apply) ~= "table" then return end
+        local states = _G._toggleStates or {}
+        -- Tab switches only resync controls belonging to the entering page.
+        -- Reopen/startup may omit tabIdx to perform the intentional full pass.
+        local names = tabIdx and _G._toggleApplyByTab and _G._toggleApplyByTab[tabIdx]
+        if names then
+            for name in pairs(names) do
+                local fn = apply[name]
+                if type(fn) == "function" then pcall(fn, states[name] == true, false) end
+            end
+            return
+        end
+        for name, fn in pairs(apply) do
+            if type(fn) == "function" then pcall(fn, states[name] == true, false) end
+        end
+    end
+
+    -- Registro de selectores/dropdowns abiertos. Cambiar de pestania o
+    -- cerrar el hub con un selector desplegado tiene que dejarlo en un
+    -- estado conocido, no flotando sobre otra pagina ni a medio camino.
+    _G._ZQOpenDrops = _G._ZQOpenDrops or setmetatable({}, {__mode = "k"})
+
+    function _G._ZQCloseAllDrops()
+        local reg = _G._ZQOpenDrops
+        if type(reg) ~= "table" then return end
+        for frame, fn in pairs(reg) do
+            local alive = false
+            pcall(function() alive = (frame and frame.Parent ~= nil) end)
+            if not alive then
+                reg[frame] = nil
+            elseif type(fn) == "function" then
+                pcall(fn)
+            end
+        end
+    end
+
+    -- ---------------------------------------------------------------
+    -- MICROINTERACCIONES
+    -- ---------------------------------------------------------------
+    -- Hover y click nunca pueden alterar de forma permanente Position,
+    -- Size ni AnchorPoint: el UIScale vuelve siempre a su base exacta.
+    function _G._ZQScaleOf(obj)
+        if not obj then return nil end
+        local sc = obj:FindFirstChildOfClass("UIScale")
+        if not sc then
+            local ok = pcall(function()
+                sc = Instance.new("UIScale")
+                sc.Scale = 1
+                sc.Parent = obj
+            end)
+            if not ok then return nil end
+        end
+        return sc
+    end
+
+    function _G._ZQHoverScale(obj, target, dur)
+        local sc = _G._ZQScaleOf(obj)
+        if not sc then return end
+        _G._ZQSafeTween(sc, _G._ZQTIOut(dur or _G._ZQD.hover), { Scale = target or 1 })
+    end
+
+    function _G._ZQPress(obj, base, down)
+        local sc = _G._ZQScaleOf(obj)
+        if not sc then return end
+        local b = base or 1
+        _G._ZQCancelObjectTweens(sc, false)
+        pcall(function() sc.Scale = b * (down or 0.965) end)
+        _G._ZQSafeTween(sc, _G._ZQTIOut(_G._ZQD.press), { Scale = b })
+    end
+
+    -- ---------------------------------------------------------------
+    -- MAQUINA DE ESTADOS DEL HUB
+    -- ---------------------------------------------------------------
+    -- CLOSED / OPENING / OPEN / CLOSING. Nunca OPENING y CLOSING a la
+    -- vez: cada cambio de estado invalida el token del anterior, asi
+    -- que la animacion vieja se corta sola en su proximo callback.
+    _G._ZQHub = _G._ZQHub or { state = "CLOSED", token = 0 }
+
+    function _G._ZQHubState() return _G._ZQHub.state end
+
+    -- v79: un solo punto para detener la animacion permanente del icono de
+    -- la pestania activa. Se llama al cerrar el hub: con el hub oculto ese
+    -- tween infinito seguia corriendo para siempre sin que nadie lo viera.
+    function _G._ZQStopTabIconBob()
+        local st = _G._tabIconBob
+        if type(st) ~= "table" then return end
+        if st.tween then pcall(function() st.tween:Cancel() end) end
+        if st.icon and st.baseY ~= nil then
+            pcall(function()
+                local p = st.icon.Position
+                st.icon.Position = UDim2.new(p.X.Scale, p.X.Offset, st.baseY, st.baseOff or 0)
+            end)
+        end
+        st.tween = nil
+        st.icon  = nil
+        st.baseY = nil
+    end
+
+    function _G._ZQHubSetState(s)
+        _G._ZQHub.state = s
+        _G._ZQHub.token = _G._ZQHub.token + 1
+        return _G._ZQHub.token
+    end
+
+    function _G._ZQHubToken() return _G._ZQHub.token end
+    function _G._ZQHubTokenOk(t) return _G._ZQHub.token == t end
+
+    -- true si la transicion pedida tiene sentido desde el estado actual.
+    function _G._ZQHubBeginOpen()
+        local st = _G._ZQHub.state
+        if st == "OPENING" or st == "OPEN" then return false end
+        return true
+    end
+    function _G._ZQHubBeginClose()
+        local st = _G._ZQHub.state
+        if st == "CLOSING" or st == "CLOSED" then return false end
+        return true
+    end
+end
 -- ================================================================
 
 -- FIX #1: _DEBUG flag - silencia todos los warn/print identificables en produccion
@@ -779,14 +1328,10 @@ do
             -- cada minuto y medio. El GC de Luau ya es incremental y automatico;
             -- aca solo se loguea el uso de memoria. El boton "Force GC" sigue
             -- disponible para cuando el usuario lo pida a mano.
-            while true do
-                task.wait(90)
-                pcall(function()
-                    if gcinfo then
-                        _log("Memoria Lua:", math.floor(gcinfo() / 1024), "KB")
-                    end
-                end)
-            end
+            -- v79: este loop solo llamaba a _log, que con _DEBUG=false es un
+            -- no-op. Era un hilo despertandose cada 90 s de por vida para
+            -- descartar su propio resultado. El GC de Luau ya es incremental
+            -- y el boton "Force GC" sigue intacto.
         end)
     end
 end
@@ -819,6 +1364,8 @@ _G._autoRestoreNotifShown = false
 -- anterior muere sola sin dejar threads zombie.
 -- ================================================================
 _G._ZQ_AutoQ   = {}  -- cola de auto-activaciones pendientes
+_G._ZQ_AutoQHead = 1 -- indice O(1); evita table.remove(q, 1) y sus corrimientos
+_G._ZQ_AutoQTail = 0
 _G._ZQ_AQToken = (_G._ZQ_AQToken or 0) + 1  -- mata el thread anterior
 local _ZQ_AQMyToken = _G._ZQ_AQToken
 
@@ -889,38 +1436,47 @@ local _ZQ_HEAVY_TOGGLES = {
 -- Encolar un callback de auto-activacion
 local function _ZQ_enqueue(fn, heavy)
     if type(fn) ~= "function" then return end
-    table.insert(_G._ZQ_AutoQ, {fn = fn, heavy = heavy})
+    local tail = (_G._ZQ_AutoQTail or 0) + 1
+    _G._ZQ_AutoQTail = tail
+    _G._ZQ_AutoQ[tail] = {fn = fn, heavy = heavy}
 end
 
--- Thread drenador: arranca despues de que el hub es visible
+-- Drenador por presupuesto de frame: espera READY y luego usa Heartbeat.
+-- No introduce pausas artificiales largas; reparte el trabajo sin bloquear render.
 task.spawn(function()
     local _tok = _ZQ_AQMyToken
-    -- Esperar a que el hub este listo (visible y con animacion terminada)
-    local _waited = 0
-    while not _G._hubReady and _waited < 25 do
-        task.wait(0.1)
-        _waited = _waited + 0.1
-    end
-    -- Gracia extra: dejar que el hub termine de renderizar completamente
-    task.wait(0.25)
-    -- Procesar la cola hasta vaciarse, luego idle
-    while _G._ZQ_AQToken == _tok do
-        local q = _G._ZQ_AutoQ
-        if not q or #q == 0 then
-            task.wait(0.15)  -- idle: revisar cada 150ms si llega algo nuevo
-        else
-            local item = table.remove(q, 1)
+    while _G._ZQ_AQToken == _tok and not _G._hubReady do task.wait() end
+    if _G._ZQ_AQToken ~= _tok then return end
+
+    local _drainConn
+    _drainConn = RunService.Heartbeat:Connect(function()
+        if _G._ZQ_AQToken ~= _tok then
+            if _drainConn then _drainConn:Disconnect(); _drainConn = nil end
+            return
+        end
+        local frameStart = os.clock()
+        local budget = 0.0025 -- ~2.5 ms por frame para restauraciones ligeras
+        local heavyRan = false
+        while os.clock() - frameStart < budget do
+            local q = _G._ZQ_AutoQ
+            local head = _G._ZQ_AutoQHead or 1
+            local tail = _G._ZQ_AutoQTail or 0
+            if not q or head > tail then
+                if q and head > 1 then
+                    _G._ZQ_AutoQ = {}; _G._ZQ_AutoQHead = 1; _G._ZQ_AutoQTail = 0
+                end
+                break
+            end
+            local item = q[head]
+            if item and item.heavy and heavyRan then break end
+            q[head] = nil
+            _G._ZQ_AutoQHead = head + 1
             if item and type(item.fn) == "function" then
                 pcall(item.fn)
-                -- Separacion: pesado=80ms, ligero=1 frame
-                if item.heavy then
-                    task.wait(0.08)
-                else
-                    task.wait(0.016)
-                end
+                if item.heavy then heavyRan = true; break end
             end
         end
-    end
+    end)
 end)
 -- ================================================================
 -- == FIN OPT v_QUEUE
@@ -1542,8 +2098,8 @@ local _neverRestoreToggles = {
     -- Custom Crosshair: al auto-restaurar solo aparece la mira sola (sin rotacion activa)
     ["Rotate Crosshair"] = true,
     -- Cham Dead Only: sub-toggles no se auto-restauran (el principal Cham Dead Only si lo hace)
-    ["Tracer Dead Only"] = true,
-    ["Skeleton Dead Only"] = true,
+    ["Head Tracer Dead Only"] = true,
+    ["Head Tracer Dead Only"] = true,
 }
 
 -- =======================================================================
@@ -1675,7 +2231,7 @@ if not _G._hubSettings then
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = false,  -- DESACTIVADO: hub no movible
+        allowHubDrag       = false,  -- hub fijo: no se permite arrastrar
         hubOpacity         = 0,
         hubScale           = 70,   -- valor por defecto: 70% (todos los dispositivos)
         hubLayoutMode      = 1,
@@ -1708,7 +2264,7 @@ _G._hubSettings.hubScale = 70
 -- v60: HUB MOVIBLE. Se fuerza igual que hubScale porque el default vino en
 -- false desde v39 y ese false quedo guardado en el JSON de cualquiera que ya
 -- haya abierto el hub: cambiar solo el default no alcanzaba.
-_G._hubSettings.allowHubDrag = false  -- DESACTIVADO: hub fijo, no movible
+_G._hubSettings.allowHubDrag = false
 
 -- Forzar a false TODOS los toggles de _neverRestoreToggles
 -- (_saveConfig los excluye igual, as? que escribir aqu? no los persiste en disco)
@@ -1873,7 +2429,10 @@ local function RegisterShimmer(gradObj, speed, offset)  -- MODIFICADO: shimmers 
 end
 
 -- FIX LAG: singleton ? un solo loop de shimmer aunque el script se re-ejecute N veces
-if not _G._shimmerLoopRunning then
+-- v79: RegisterShimmer esta desactivado (if false), asi que _shimmerRegistry
+-- nunca recibe entradas y este hilo despertaba cada 1.0 s para siempre a no
+-- hacer nada. Se arranca solo si realmente hay algo registrado.
+if _shimmerRegistry[1] ~= nil and not _G._shimmerLoopRunning then
     _G._shimmerLoopRunning = true
     task.spawn(function()
         while true do
@@ -6558,7 +7117,7 @@ Settings = {
         enabled = { Everyone = false, MurdererOnly = false, SheriffOnly = false, HeroOnly = false, AssassinOnly = false, DeadOnly = false, SurvivorOnly = false, ZombieOnly = false, KnifeOnly = false },
         objects = {}
     },
-    skeleton = {
+    headTracer = {
         enabled = { Everyone = false, MurdererOnly = false, SheriffOnly = false, HeroOnly = false, AssassinOnly = false, DeadOnly = false, SurvivorOnly = false, ZombieOnly = false, KnifeOnly = false },
         connections = {}
     },
@@ -8160,13 +8719,15 @@ function _KnifeSA_setupKnife(knife)
     end)
     addConn(knifeNoCollideConn)
 
-    -- -- THROW (RMB) -- click DERECHO lanza el knife ----------------------------------
-    -- Slash en LMB, Throw en RMB. Touch (celu) sin cambios.
-    -- En PC: ThrowCharge arranca al presionar, ThrowKnife se ejecuta al final con delay.
+    -- -- THROW (RMB) -- click DERECHO lanza el knife (ThrowKnife = RMB, Slash = LMB) --------
+    -- v78: ThrowKnife con RMB (MouseButton2), Slash con LMB (MouseButton1).
+    -- Touch (celu) no cambia: sigue siendo tap = slash y su propio boton de throw.
+    -- FIX BUG #2 MOBILE SLASH: Touch is intentionally EXCLUDED here.
+    -- Ademas en PC: al disparar el throw se ejecutan ThrowCharge y ThrowKnife del KnifeClient con delay.
     local lmbThrowTime = -999
     addConn(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not equipped then return end
-        -- RMB (MouseButton2) dispara el throw en desktop
+        -- v78: MouseButton2 (RMB) dispara el throw en desktop
         if input.UserInputType == Enum.UserInputType.MouseButton2 then
             if not KnifeSAState.enabled then return end  -- FIX: salir si SA fue desactivado
             lmbThrowTime = os.clock()
@@ -8461,7 +9022,8 @@ function _KnifeSA_setupKnife(knife)
                 end
             end)
 
-            -- MODIFICADO: ThrowCharge arranca primero, delay de 1s, ThrowKnife se ejecuta AL FINAL (solo PC)
+            -- MODIFICADO: reproducir ThrowCharge y ThrowKnife del KnifeClient nativo con delay (solo PC)
+            -- Esto reproduce las animaciones del cliente nativo como capa visual extra
             local _isMobileDevice = false
             pcall(function()
                 _isMobileDevice = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
@@ -8477,25 +9039,25 @@ function _KnifeSA_setupKnife(knife)
                         if _kc then
                             local _kcScript = _kc:FindFirstChild("KnifeClient")
                             if _kcScript then
-                                local _animator = LocalPlayer.Character
-                                    and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                                    and LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
-                                if _animator then
-                                    -- 1) ThrowCharge arranca primero (sin detenerlo, deja que corra)
-                                    local _tcAnim = _kcScript:FindFirstChild("ThrowCharge")
-                                    if _tcAnim and _tcAnim:IsA("Animation") then
+                                -- ThrowCharge primero
+                                local _tcAnim = _kcScript:FindFirstChild("ThrowCharge")
+                                if _tcAnim and _tcAnim:IsA("Animation") then
+                                    local _animator = LocalPlayer.Character
+                                        and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                                        and LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
+                                    if _animator then
                                         local _track = _animator:LoadAnimation(_tcAnim)
                                         _track:Play(0.05)
-                                    end
-                                    -- 2) Delay de 1 segundo
-                                    task.wait(1)
-                                    -- 3) ThrowKnife se ejecuta AL FINAL, despues del delay completo
-                                    local _tkAnim = _kcScript:FindFirstChild("ThrowKnife")
-                                    if _tkAnim and _tkAnim:IsA("Animation") then
-                                        local _track2 = _animator:LoadAnimation(_tkAnim)
-                                        _track2:Play(0.05)
-                                        task.wait(0.5)
-                                        _track2:Stop(0.05)
+                                        task.wait(0.18)  -- delay entre ThrowCharge y ThrowKnife
+                                        _track:Stop(0.05)
+                                        -- ThrowKnife despues del delay
+                                        local _tkAnim = _kcScript:FindFirstChild("ThrowKnife")
+                                        if _tkAnim and _tkAnim:IsA("Animation") then
+                                            local _track2 = _animator:LoadAnimation(_tkAnim)
+                                            _track2:Play(0.05)
+                                            task.wait(0.22)
+                                            _track2:Stop(0.05)
+                                        end
                                     end
                                 end
                             end
@@ -8707,11 +9269,13 @@ function _KnifeSA_setupKnife(knife)
         end) -- end task.spawn touch throw
     end)) -- end TouchTapInWorld callback + addConn
 
-    -- -- SLASH (LMB) -- click IZQUIERDO = golpe cuerpo a cuerpo ------------------
-    -- Slash en LMB (MouseButton1). Touch sigue igual en celu.
+    -- -- STAB (RMB INVERTIDO) -- click DERECHO = golpe cuerpo a cuerpo (CLICKS INVERTIDOS) -------
+    -- v78: LMB (MouseButton1) hace slash en desktop; RMB hace ThrowKnife.
+    -- Touch queda EXACTAMENTE igual que antes (tap = slash en celu).
     local stabPressTime = -999
     addConn(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not equipped then return end
+        -- v78: LMB (MouseButton1) para slash en desktop; Touch sigue igual en celu
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             stabPressTime = os.clock()
@@ -8742,7 +9306,7 @@ function _KnifeSA_setupKnife(knife)
 
     addConn(UserInputService.InputEnded:Connect(function(input)
         if not equipped or stabbing then return end
-        -- Desktop: LMB (MouseButton1) hace slash
+        -- v78: LMB (MouseButton1) hace slash en desktop
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             if os.clock() - stabPressTime > 0.5 then return end
             task.spawn(_doSlash)
@@ -9367,7 +9931,7 @@ do
 
     local function _blCreateLines()
         _blLines = {}
-        for i = 1, #SKELETON_PAIRS do
+        for i = 1, #_HEADTRACER_UNUSED_PAIRS do
             local ln = Drawing.new("Line")
             ln.Visible   = false
             ln.Thickness = 1.5
@@ -11193,8 +11757,17 @@ function MakeCapyBindableFrame(guiParent, labelText, callback, optPosX, optPosY)
         end
     end
 
-    -- Destruir instancia anterior si existe
+    -- Reutilizacion idempotente: un bindable activo no se destruye ni reconecta.
     local _prevSg = _G._capyBindRegistry and _G._capyBindRegistry[labelText]
+    if _prevSg and _prevSg.Parent then
+        local _prevBg = _prevSg:FindFirstChild("CapyBindBtn", true)
+        if _prevBg then
+            if guiParent and guiParent ~= _prevSg and guiParent.Parent and #guiParent:GetChildren() == 0 then
+                pcall(function() guiParent:Destroy() end)
+            end
+            return _prevBg
+        end
+    end
     if _prevSg then pcall(function() _prevSg:Destroy() end) end
     pcall(function()
         for _, g in ipairs(_coreGui:GetChildren()) do
@@ -12712,8 +13285,11 @@ function CreateZerqonSelector(parent, titulo, opciones, default, callback)
     --  Layout push-down: la lista empuja los elementos inferiores.
     --  Fila cabecera: Titulo izquierda | Badge pill con opcion + "v"
     -- ==============================================================
-    local TWEEN_OPEN  = TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-    local TWEEN_CLOSE = TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+    -- v70: dropdown dentro del rango pedido (0.16-0.25s) y easing suave.
+    local SEL_OPEN_DUR  = (_G._ZQD and _G._ZQD.drop) or 0.20
+    local SEL_CLOSE_DUR = 0.18
+    local TWEEN_OPEN  = TweenInfo.new(SEL_OPEN_DUR,  Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+    local TWEEN_CLOSE = TweenInfo.new(SEL_CLOSE_DUR, Enum.EasingStyle.Quad,  Enum.EasingDirection.In)
 
     local ROW_H    = 30
     local HEADER_H = _G._ZQFLAT.SELECTOR_H  -- v63: 44 (era 58); toda la
@@ -12878,77 +13454,105 @@ function CreateZerqonSelector(parent, titulo, opciones, default, callback)
             local rowLbl  = row:FindFirstChild("OptionLabel")
             local active  = (wrapper.Name == selectedValue)
             -- Activo: color Primary del hub; inactivo: Background del hub
-            TweenService:Create(row, TweenInfo.new(0.18), {
+            _G._ZQSafeTween(row, TweenInfo.new(0.18), {
                 BackgroundColor3       = active and ThemeColors.Aurora1 or ThemeColors.Background,
                 BackgroundTransparency = active and 0.45 or 1.0,
-            }):Play()
+            })
             if stroke then
-                TweenService:Create(stroke, TweenInfo.new(0.18), {
+                _G._ZQSafeTween(stroke, TweenInfo.new(0.18), {
                     Color        = active and ThemeColors.Primary or ThemeColors.Aurora3,
                     Transparency = active and 0 or 0.55,
                     Thickness    = active and 1.6 or 0.8,
-                }):Play()
+                })
             end
             if rowLbl then
-                TweenService:Create(rowLbl, TweenInfo.new(0.18), {
+                _G._ZQSafeTween(rowLbl, TweenInfo.new(0.18), {
                     TextColor3 = active and ThemeColors.TextPrimary or ThemeColors.TextSecondary,
-                }):Play()
+                })
             end
         end
     end
 
+    -- ==============================================================
+    -- DROPDOWN v70: interrumpible y deterministico.
+    --
+    -- Antes un _animating de 0.55s / 0.42s se COMIA el click: abrir ->
+    -- cerrar -> abrir rapido no hacia nada y el usuario quedaba varado.
+    -- Peor: el task.delay del cierre ocultaba la lista sin comprobar si
+    -- ya se habia vuelto a abrir, asi que la apertura N+1 podia quedar
+    -- invisible o con el alto a mitad de camino.
+    --
+    -- Ahora: cada apertura parte de un estado conocido, el gestor central
+    -- pisa al tween anterior de cada propiedad, y un token de sesion
+    -- decide quien tiene derecho a ocultar la lista.
+    -- ==============================================================
+    local _selBaseZ   = masterFrame.ZIndex
+    local _selSession = 0
+
     local function openList()
-        if _animating then return end
-        _animating = true
-        isOpen = true
-        arrow.Text = "^"
-        listFrame.Visible = true
-        -- Fondo full transparente al abrir (solo el borde es visible)
-        listFrame.BackgroundTransparency = 1.0
+        _selSession = _selSession + 1
+        isOpen      = true
+        _animating  = false
+        arrow.Text  = "^"
+
         local targetH = listOpenHeight()
-        -- masterFrame crece para empujar layout
-        TweenService:Create(masterFrame, TWEEN_OPEN, {
-            Size = UDim2.new(1, 0, 0, HEADER_H + GAP + targetH),
-            BackgroundTransparency = 0.60,   -- mas transparente al abrir
-        }):Play()
-        TweenService:Create(listFrame, TWEEN_OPEN, {
-            Size = UDim2.new(1, 0, 0, targetH)
-        }):Play()
-        TweenService:Create(tStroke, TWEEN_OPEN, {Transparency = 0.0, Thickness = 2.0, Color = ThemeColors.Accent}):Play()
-        TweenService:Create(triggerBtn, TWEEN_OPEN, {BackgroundTransparency = 0.10}):Play()
-        task.delay(0.55, function() _animating = false end)
+
+        -- Estado inicial conocido en CADA apertura.
+        listFrame.Visible                = true
+        listFrame.BackgroundTransparency = 1.0
+        if listFrame.Size.Y.Offset > targetH then
+            listFrame.Size = UDim2.new(1, 0, 0, targetH)
+        end
+        -- La lista abierta pasa por encima de las filas de abajo: un
+        -- dropdown no puede quedar detras de otro panel.
+        pcall(function() masterFrame.ZIndex = _selBaseZ + 30 end)
+
+        _G._ZQSafeTween(masterFrame, TWEEN_OPEN, {
+            Size                   = UDim2.new(1, 0, 0, HEADER_H + GAP + targetH),
+            BackgroundTransparency = 0.60,
+        })
+        _G._ZQSafeTween(listFrame,  TWEEN_OPEN, { Size = UDim2.new(1, 0, 0, targetH) })
+        _G._ZQSafeTween(tStroke,    TWEEN_OPEN, { Transparency = 0.0, Thickness = 2.0, Color = ThemeColors.Accent })
+        _G._ZQSafeTween(triggerBtn, TWEEN_OPEN, { BackgroundTransparency = 0.10 })
     end
 
     local function closeList()
-        if _animating then return end
-        _animating = true
-        isOpen = false
-        arrow.Text = "v"
-        TweenService:Create(masterFrame, TWEEN_CLOSE, {
-            Size = UDim2.new(1, 0, 0, HEADER_H),
+        _selSession = _selSession + 1
+        local mySes = _selSession
+        isOpen      = false
+        _animating  = false
+        arrow.Text  = "v"
+
+        _G._ZQSafeTween(masterFrame, TWEEN_CLOSE, {
+            Size                   = UDim2.new(1, 0, 0, HEADER_H),
             BackgroundTransparency = 0.45,
-        }):Play()
-        TweenService:Create(listFrame, TWEEN_CLOSE, {
-            Size = UDim2.new(1, 0, 0, 0)
-        }):Play()
-        TweenService:Create(tStroke, TWEEN_CLOSE, {Transparency = 0.20, Thickness = 1.4, Color = ThemeColors.Primary}):Play()
-        TweenService:Create(triggerBtn, TWEEN_CLOSE, {BackgroundTransparency = 0.30}):Play()
-        task.delay(0.42, function()
-            listFrame.Visible = false
-            _animating = false
+        })
+        _G._ZQSafeTween(listFrame,  TWEEN_CLOSE, { Size = UDim2.new(1, 0, 0, 0) })
+        _G._ZQSafeTween(tStroke,    TWEEN_CLOSE, { Transparency = 0.20, Thickness = 1.4, Color = ThemeColors.Primary })
+        _G._ZQSafeTween(triggerBtn, TWEEN_CLOSE, { BackgroundTransparency = 0.30 })
+
+        task.delay(SEL_CLOSE_DUR + 0.02, function()
+            -- Solo la ultima sesion de cierre puede ocultar. Si el usuario
+            -- ya reabrio, este callback no toca nada.
+            if mySes ~= _selSession or isOpen then return end
+            if listFrame and listFrame.Parent then
+                listFrame.Visible = false
+                listFrame.Size    = UDim2.new(1, 0, 0, 0)
+            end
+            pcall(function() masterFrame.ZIndex = _selBaseZ end)
         end)
     end
 
     -- Hover del boton selector (estilo USE)
     triggerBtn.MouseEnter:Connect(function()
-        TweenService:Create(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.05, BackgroundColor3 = Color3.fromRGB(24, 28, 36)}):Play()
-        TweenService:Create(tStroke, TweenInfo.new(0.15), {Color = ThemeColors.Accent, Thickness = 2.0, Transparency = 0.0}):Play()
-        TweenService:Create(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+        _G._ZQSafeTween(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.05, BackgroundColor3 = Color3.fromRGB(24, 28, 36)})
+        _G._ZQSafeTween(tStroke, TweenInfo.new(0.15), {Color = ThemeColors.Accent, Thickness = 2.0, Transparency = 0.0})
+        _G._ZQSafeTween(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(255, 255, 255)})
     end)
     triggerBtn.MouseLeave:Connect(function()
-        TweenService:Create(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.30, BackgroundColor3 = Color3.fromRGB(24, 28, 36)}):Play()
-        TweenService:Create(tStroke, TweenInfo.new(0.15), {Color = ThemeColors.Primary, Thickness = 1.4, Transparency = 0.15}):Play()
-        TweenService:Create(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(220, 25, 61)}):Play()
+        _G._ZQSafeTween(triggerBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.30, BackgroundColor3 = Color3.fromRGB(24, 28, 36)})
+        _G._ZQSafeTween(tStroke, TweenInfo.new(0.15), {Color = ThemeColors.Primary, Thickness = 1.4, Transparency = 0.15})
+        _G._ZQSafeTween(selectedText, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(220, 25, 61)})
     end)
 
     -- FIX MOBILE: usar Activated en vez de MouseButton1Click para que funcione en touch
@@ -12956,6 +13560,26 @@ function CreateZerqonSelector(parent, titulo, opciones, default, callback)
         if _locked then return end
         if isOpen then closeList() else openList() end
     end)
+
+    -- v70: si la pestania se cierra o cambia con el selector abierto, se
+    -- cierra sin animacion y queda en un estado conocido para la proxima
+    -- apertura. Sin esto, la lista sobrevivia flotando sobre otra pagina.
+    _G._ZQOpenDrops = _G._ZQOpenDrops or {}
+    _G._ZQOpenDrops[masterFrame] = function()
+        if not isOpen then return end
+        _selSession = _selSession + 1
+        isOpen      = false
+        _animating  = false
+        arrow.Text  = "v"
+        pcall(function()
+            _G._ZQCancelObjectTweens(masterFrame, false)
+            _G._ZQCancelObjectTweens(listFrame, false)
+            masterFrame.Size  = UDim2.new(1, 0, 0, HEADER_H)
+            masterFrame.ZIndex = _selBaseZ
+            listFrame.Size    = UDim2.new(1, 0, 0, 0)
+            listFrame.Visible = false
+        end)
+    end
 
     -- Construir opciones
     local function buildOptions(opts)
@@ -13007,22 +13631,22 @@ function CreateZerqonSelector(parent, titulo, opciones, default, callback)
 
             row.MouseEnter:Connect(function()
                 if name ~= selectedValue then
-                    TweenService:Create(row, TweenInfo.new(0.12), {
+                    _G._ZQSafeTween(row, TweenInfo.new(0.12), {
                         BackgroundColor3       = Color3.fromRGB(22, 23, 32),
                         BackgroundTransparency = 0.60,
-                    }):Play()
-                    TweenService:Create(cardStroke, TweenInfo.new(0.12), {Transparency = 0.20, Thickness = 1.4}):Play()
-                    TweenService:Create(lbl, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(186, 133, 198)}):Play()
+                    })
+                    _G._ZQSafeTween(cardStroke, TweenInfo.new(0.12), {Transparency = 0.20, Thickness = 1.4})
+                    _G._ZQSafeTween(lbl, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(186, 133, 198)})
                 end
             end)
             row.MouseLeave:Connect(function()
                 if name ~= selectedValue then
-                    TweenService:Create(row, TweenInfo.new(0.12), {
+                    _G._ZQSafeTween(row, TweenInfo.new(0.12), {
                         BackgroundColor3       = ThemeColors.Aurora4,
                         BackgroundTransparency = 1.0,
-                    }):Play()
-                    TweenService:Create(cardStroke, TweenInfo.new(0.12), {Transparency = 0.55, Thickness = 0.8}):Play()
-                    TweenService:Create(lbl, TweenInfo.new(0.12), {TextColor3 = ThemeColors.TextSecondary}):Play()
+                    })
+                    _G._ZQSafeTween(cardStroke, TweenInfo.new(0.12), {Transparency = 0.55, Thickness = 0.8})
+                    _G._ZQSafeTween(lbl, TweenInfo.new(0.12), {TextColor3 = ThemeColors.TextSecondary})
                 end
             end)
 
@@ -13041,6 +13665,14 @@ function CreateZerqonSelector(parent, titulo, opciones, default, callback)
     end
 
     buildOptions(opciones)
+
+    masterFrame.AncestryChanged:Connect(function(_, newParent)
+        if newParent == nil and _G._ZQOpenDrops then
+            _G._ZQOpenDrops[masterFrame] = nil
+            _selSession = _selSession + 1
+            pcall(function() _G._ZQCancelTree(masterFrame, false) end)
+        end
+    end)
 
     return {
         frame        = masterFrame,
@@ -13243,18 +13875,18 @@ function CreatePredSelector(parent, titulo, opciones, default, callback)
             dropFrame.Size     = UDim2.fromOffset(dropW, 0)
             dropFrame.Position = UDim2.fromOffset(dropX, dropY)
             dropFrame.Visible  = true
-            TweenService:Create(dropFrame, TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                {Size = UDim2.fromOffset(dropW, dropH)}):Play()
+            _G._ZQSafeTween(dropFrame, _G._ZQTISoft(_G._ZQD.drop),
+                {Size = UDim2.fromOffset(dropW, dropH)})
         end
         arrowLbl.Text = "v"
     end
 
     local function _closeDrop()
         local dropW = math.max(dropFrame.AbsoluteSize.X, 10)
-        TweenService:Create(dropFrame, TweenInfo.new(0.38, Enum.EasingStyle.Quint),
-            {Size = UDim2.fromOffset(dropW, 0)}):Play()
+        _G._ZQSafeTween(dropFrame, _G._ZQTIIn(0.18),
+            {Size = UDim2.fromOffset(dropW, 0)})
         arrowLbl.Text = "^"
-        task.delay(0.40, function()
+        task.delay(0.20, function()
             if not isOpen then
                 dropFrame.Visible = false
                 dropFrame.Parent      = headerFrame
@@ -14079,7 +14711,7 @@ end
 
 -- OPT LAG: pares de huesos del esqueleto. Antes esta tabla (14 subtablas) se
 -- re-creaba en CADA tick de CADA jugador. Ahora es una constante de archivo.
-local _SKELETON_PAIRS = {
+local SKELETON_PAIRS = {
     {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"}, {"UpperTorso", "LeftUpperArm"},
     {"UpperTorso", "RightUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, {"RightUpperArm", "RightLowerArm"},
     {"LeftLowerArm", "LeftHand"}, {"RightLowerArm", "RightHand"}, {"LowerTorso", "LeftUpperLeg"},
@@ -14087,105 +14719,7 @@ local _SKELETON_PAIRS = {
     {"LeftLowerLeg", "LeftFoot"}, {"RightLowerLeg", "RightFoot"}
 }
 
-function CreateSkeleton(player)
-    if player == LocalPlayer then return end
-
-    local skeletonConnections = {}
-    local skeletonConnection = nil
-    local characterConnection = nil
-    local _skBuiltChar = nil  -- OPT: personaje para el que ya se construyo el esqueleto
-
-    local function _skClear()
-        for _, conn in pairs(skeletonConnections) do
-            pcall(function() if conn then conn:Destroy() end end)
-        end
-        table.clear(skeletonConnections)
-    end
-
-    function updateSkeleton()
-        if not player or not player.Parent then return end
-
-        local character = player.Character
-        if not character or not character.Parent then
-            _skClear()
-            _skBuiltChar = nil
-            return
-        end
-
-        local color = Color3.fromRGB(255, 255, 255)
-        local shouldShow = false
-
-        if Settings.skeleton.enabled.Everyone then
-            shouldShow = true
-        end
-
-        if not shouldShow then
-            _skClear()
-            _skBuiltChar = nil
-            return
-        end
-
-        -- OPT LAG: antes se destruian y recreaban los 14 beams + 28 attachments en
-        -- CADA tick (~0.6s) por jugador aunque nada cambiara -> mucha basura para
-        -- el GC. Los beams siguen a sus attachments solos, asi que ahora solo se
-        -- (re)construye cuando cambia el personaje o si los beams se destruyeron.
-        if _skBuiltChar == character and skeletonConnections[1] and skeletonConnections[1].Parent then
-            return
-        end
-
-        -- (Re)construir: limpiar lo viejo primero
-        _skClear()
-
-        for _, pair in pairs(_SKELETON_PAIRS) do
-            pcall(function()
-                local part1 = character:FindFirstChild(pair[1])
-                local part2 = character:FindFirstChild(pair[2])
-
-                if part1 and part1.Parent and part2 and part2.Parent then
-                    local beam = Instance.new("Beam")
-                    local att1 = Instance.new("Attachment", part1)
-                    local att2 = Instance.new("Attachment", part2)
-                    beam.Attachment0 = att1
-                    beam.Attachment1 = att2
-                    beam.Color = ColorSequence.new(color)
-                    beam.Width0 = 0.1
-                    beam.Width1 = 0.1
-                    beam.FaceCamera = true
-                    beam.Parent = part1
-                    table.insert(skeletonConnections, beam)
-                    table.insert(skeletonConnections, att1)
-                    table.insert(skeletonConnections, att2)
-                end
-            end)
-        end
-        _skBuiltChar = character
-    end
-
-    -- LAG FIX: skeleton solo corre si la feature esta activa
-    local _hbTskeleton = 0
-    skeletonConnection = RunService.Heartbeat:Connect(function()
-        _hbTskeleton=_hbTskeleton+1; if _hbTskeleton<36 then return end; _hbTskeleton=0  -- OPT: 30?36 frames
-        local _vsk = VisualState and VisualState.skeleton
-        if not (_vsk and (_vsk.everyone or _vsk.murderer or _vsk.sheriff)) then return end
-        pcall(updateSkeleton)
-    end)
-
-    characterConnection = player.CharacterAdded:Connect(function(character)
-        task.wait(0.5)
-        pcall(updateSkeleton)
-    end)
-
-    player.AncestryChanged:Connect(function()
-        if not player.Parent then
-            if skeletonConnection then skeletonConnection:Disconnect() end
-            if characterConnection then characterConnection:Disconnect() end
-            for _, conn in pairs(skeletonConnections) do
-                pcall(function() if conn then conn:Destroy() end end)
-            end
-            table.clear(skeletonConnections)
-        end
-    end)
-end
+-- LEGACY ESP SKELETON REMOVED: replaced by Head Tracer.
 
 function ApplyAllESPToPlayer(player)
     -- FIX: El sistema viejo (per-player loops) causaba que los jugadores
@@ -15641,71 +16175,106 @@ do
     end
 end
 
--- == v60: TRASPARENCIA EN TODOS LOS CIERRES ==
--- El cierre del hub ya se apagaba con fade (v8 + el snapshot de v56), pero los
--- otros dos cierres que se ven todo el tiempo no: al salir de una pestania el
--- frame del tab desaparecia de golpe (Visible = false) mientras el contenedor si
--- hacia fade, y el cuadradito flotante se destruia sin apagarse.
+-- == v70: FADE DE ARBOL DETERMINISTICO (reemplaza al de v60) ==
+-- El fade de v60 tomaba la foto de las transparencias EN EL MOMENTO de
+-- apagar y las devolvia con un task.delay. Eso tenia dos agujeros que
+-- son exactamente el bug de "entro, salgo, vuelvo y no se ve nada":
 --
--- _ZQ_FadeTree apaga un arbol entero y, si restore = true, DEVUELVE cada valor
--- despues de ocultarlo. Eso ultimo no es un detalle: dejarlos en Transparency 1
--- es exactamente el bug de v25, el cache de la pestania se guardaba invisible y
--- al reabrirla no se veia una sola opcion.
+--   1. El restore vivia dentro de un `if root.Parent` evaluado 0.9s
+--      despues. Si en ese instante el arbol no estaba parentado, el
+--      restore NO corria y las transparencias quedaban en 1 PARA
+--      SIEMPRE dentro del cache de la pestania.
+--   2. Si el usuario volvia a entrar antes de que terminara el fade, la
+--      proxima salida fotografiaba VALORES INTERMEDIOS (0.53, 0.71...)
+--      y los guardaba como si fueran los buenos. La pestania se iba
+--      degradando sola en cada visita.
+--
+-- Ahora el valor bueno sale del BASELINE del Motion Core, que se toma
+-- una unica vez por objeto y no se sobreescribe nunca, y el restore lo
+-- hace _ZQRestoreTree escribiendo esa foto sin depender de ningun
+-- estado intermedio. La generacion del arbol invalida los callbacks
+-- viejos, asi que un fade que quedo en vuelo no puede apagar una
+-- pestania que ya se volvio a mostrar.
 do
-    local _TSf = TweenService
-
-    local function _grab(list, o, prop)
-        local ok, v = pcall(function() return o[prop] end)
-        if ok and type(v) == "number" and v < 0.98 then
-            list[#list + 1] = { o = o, p = prop, v = v }
-        end
-    end
-
     local function _collect(root)
         local list = {}
-        if root:IsA("GuiObject") then _grab(list, root, "BackgroundTransparency") end
-        for _, d in ipairs(root:GetDescendants()) do
-            if d:IsA("UIStroke") then
-                _grab(list, d, "Transparency")
-            elseif d:IsA("GuiObject") then
-                _grab(list, d, "BackgroundTransparency")
-                if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
-                    _grab(list, d, "TextTransparency")
-                    _grab(list, d, "TextStrokeTransparency")
-                elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
-                    _grab(list, d, "ImageTransparency")
-                end
+        local function grab(o, prop)
+            local ok, v = pcall(function() return o[prop] end)
+            if ok and type(v) == "number" and v < 0.98 then
+                list[#list + 1] = { o = o, p = prop }
             end
         end
+        pcall(function()
+            if root:IsA("GuiObject") then grab(root, "BackgroundTransparency") end
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("UIStroke") then
+                    grab(d, "Transparency")
+                elseif d:IsA("GuiObject") then
+                    grab(d, "BackgroundTransparency")
+                    if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                        grab(d, "TextTransparency")
+                        grab(d, "TextStrokeTransparency")
+                    elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+                        grab(d, "ImageTransparency")
+                    end
+                end
+            end
+        end)
         return list
     end
 
+    -- Firma identica a la de v60: (root, dur, restore, onDone).
     function _G._ZQ_FadeTree(root, dur, restore, onDone)
-        if not (root and root.Parent) then
+        local alive = false
+        pcall(function() alive = (root and root.Parent ~= nil) end)
+        if not alive then
             if onDone then pcall(onDone) end
             return
         end
-        local _d   = dur or 0.30
+
+        -- La foto buena se toma ANTES de tocar nada, y solo la primera
+        -- vez que este arbol se anima en toda la sesion.
+        _G._ZQBaselineTree(root)
+
+        local gen  = _G._ZQBumpGen(root)
+        local _d   = dur or _G._ZQD.close
+        local _ti  = _G._ZQTIIn(_d)
         local list = _collect(root)
-        local _ti  = TweenInfo.new(_d, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
-        for _, e in ipairs(list) do
-            pcall(function() _TSf:Create(e.o, _ti, { [e.p] = 1 }):Play() end)
+
+        for i = 1, #list do
+            local e = list[i]
+            _G._ZQSafeTween(e.o, _ti, { [e.p] = 1 })
         end
+
         task.delay(_d + 0.02, function()
-            if onDone then pcall(onDone) end
+            -- Si el arbol se volvio a mostrar, esta sesion de fade ya no
+            -- manda: ni restaura ni oculta nada.
+            if not _G._ZQGenOk(root, gen) then return end
             if restore then
-                for _, e in ipairs(list) do
-                    pcall(function() if e.o.Parent then e.o[e.p] = e.v end end)
-                end
+                -- Devuelve el baseline, no un intermedio. Y corre exista
+                -- o no el Parent en este instante.
+                _G._ZQRestoreTree(root, false)
             end
+            if onDone then pcall(onDone) end
         end)
     end
 
     function _G._ZQ_FadeOutAndDestroy(root, dur)
-        if not (root and root.Parent) then return end
-        _G._ZQ_FadeTree(root, dur or 0.26, false, function()
+        local alive = false
+        pcall(function() alive = (root and root.Parent ~= nil) end)
+        if not alive then return end
+        _G._ZQ_FadeTree(root, dur or 0.22, false, function()
             pcall(function() root:Destroy() end)
         end)
+    end
+
+    -- Entrada suave y reversible de un arbol ya reseteado.
+    -- Se usa despues de _ZQResetPage: RESET -> ANIMATE IN -> FINAL.
+    function _G._ZQ_FadeTreeIn(root, dur)
+        local alive = false
+        pcall(function() alive = (root and root.Parent ~= nil) end)
+        if not alive then return end
+        _G._ZQRestoreTree(root, false)
     end
 end
 
@@ -15760,9 +16329,9 @@ do
         SELECTOR_H   = 44,
         TAB_X        = 0.037,   -- columna unica a la izquierda
         TAB_W        = 0.207,
-        TAB_H        = 0.088,
-        TAB_Y0       = 0.115,
-        TAB_STEP     = 0.106,
+        TAB_H        = 0.074,
+        TAB_Y0       = 0.105,
+        TAB_STEP     = 0.096,
         TAB_TEXT_SZ  = 12,
         CONTENT_X    = 0.258,   -- el contenido empieza despues de la columna
         CONTENT_W    = 0.732,
@@ -25643,22 +26212,52 @@ function CreateMainTab()
             end)
         end, _mp.avConn ~= nil)
 
-        -- -- Anti AFK --
+        -- -- Anti AFK v78 (mejorado) --
         CreateAuroraToggle(_protSection, "Anti AFK", function(on)
-            if _mp.afkThread then pcall(function() pcall(function() coroutine.close(_mp.afkThread) end) end); _mp.afkThread = nil end
+            if _mp.afkThread then
+                pcall(function() pcall(function() coroutine.close(_mp.afkThread) end) end)
+                _mp.afkThread = nil
+            end
             if not on then return end
             local vu = game:GetService("VirtualUser")
             _mp.afkThread = _sp(function()
+                local _afkStep = 0
                 while _G._mainProt and _mp.afkThread do
-                    pcall(function() vu:ClickButton2(Vector2.new(0,0)) end)
+                    _afkStep = _afkStep + 1
                     pcall(function()
-                        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                        if hum then hum:ChangeState(hum:GetState()) end
+                        -- 1) VirtualUser click para prevenir kick de inactividad
+                        vu:ClickButton2(Vector2.new(0, 0))
+                        -- 2) Simular movimiento del mouse aleatoriamente
+                        local rx = math.random(-5, 5)
+                        local ry = math.random(-3, 3)
+                        vu:MoveMouse(Vector2.new(rx, ry))
                     end)
-                    _w(25)
+                    -- 3) Cada 2 ciclos: mover el personaje levemente para que el server lo cuente como activo
+                    if _afkStep % 2 == 0 then
+                        pcall(function()
+                            local char = LocalPlayer.Character
+                            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                            if hum and hrp then
+                                -- Simular paso rapido en dirección aleatoria y regresar
+                                local angle   = math.random() * math.pi * 2
+                                local dir     = Vector3.new(math.cos(angle), 0, math.sin(angle)) * 0.1
+                                hum:ChangeState(Enum.HumanoidStateType.Running)
+                                hrp.AssemblyLinearVelocity = dir
+                            end
+                        end)
+                    end
+                    -- 4) Cada 6 ciclos: presionar una tecla virtual para evitar que el server detecte AFK
+                    if _afkStep % 6 == 0 then
+                        pcall(function()
+                            vu:Button1Down(Vector2.new(math.random(100, 200), math.random(100, 200)), workspace.CurrentCamera)
+                            _w(0.05)
+                            vu:Button1Up(Vector2.new(math.random(100, 200), math.random(100, 200)), workspace.CurrentCamera)
+                        end)
+                    end
+                    _w(18)  -- ciclo cada 18 segundos (más agresivo que 25)
                 end
             end)
-            -- [notif removed]
         end, _mp.afkThread ~= nil)
     end
 
@@ -28965,7 +29564,6 @@ _G._vsColors = _G._vsColors or {
     outline  = Color3.fromRGB(235, 95, 115),   -- azul por defecto
     esp      = Color3.fromRGB(220, 25, 61),   -- verde por defecto
     box      = Color3.fromRGB(72, 140, 68),   -- naranja por defecto
-    skeleton = Color3.fromRGB(255, 255, 255),   -- blanco por defecto
     tracer   = Color3.fromRGB(255,  60,  60),   -- rojo por defecto
 }
 
@@ -29023,7 +29621,7 @@ VisualState = {
                  assassin=false, dead=false, innocent=false, survivor=false, zombie=false },
     box      = { everyone=false, murderer=false, sheriff=false, hero=false,
                  assassin=false, dead=false, survivor=false, zombie=false, knife=false },
-    skeleton = { everyone=false, murderer=false, sheriff=false, hero=false,
+    headTracer = { everyone=false, murderer=false, sheriff=false, hero=false,
                  assassin=false, dead=false, survivor=false, zombie=false, knife=false },
     tracer   = { everyone=false, murderer=false, sheriff=false, hero=false,
                  assassin=false, dead=false, survivor=false, zombie=false,
@@ -29083,14 +29681,20 @@ do
         ["Box ESP Sheriff Only"]  = {VisualState.box, "sheriff"},
         ["Box ESP Hero Only"]     = {VisualState.box, "hero"},
         ["Box ESP Assassin Only"] = {VisualState.box, "assassin"},
-        -- Skeleton
-        ["Skeleton Everyone"]      = {VisualState.skeleton, "everyone"},
-        ["Skeleton Murderer Only"] = {VisualState.skeleton, "murderer"},
-        ["Skeleton Sheriff Only"]  = {VisualState.skeleton, "sheriff"},
+        -- Head Tracer
         -- Tracer
-        ["Tracer Everyone"]      = {VisualState.tracer, "everyone"},
-        ["Tracer Murderer Only"] = {VisualState.tracer, "murderer"},
-        ["Tracer Sheriff Only"]  = {VisualState.tracer, "sheriff"},
+        ["Head Tracer Everyone"]      = {VisualState.tracer, "everyone"},
+        ["Head Tracer Murderer Only"] = {VisualState.tracer, "murderer"},
+        ["Head Tracer Sheriff Only"]  = {VisualState.tracer, "sheriff"},
+        ["Head Tracer Everyone"]      = {VisualState.tracer, "everyone"},
+        ["Head Tracer Murderer Only"] = {VisualState.tracer, "murderer"},
+        ["Head Tracer Sheriff Only"]  = {VisualState.tracer, "sheriff"},
+        ["Head Tracer Hero Only"]     = {VisualState.tracer, "hero"},
+        ["Head Tracer Innocent Only"] = {VisualState.tracer, "innocent"},
+        ["Head Tracer Assassin Only"] = {VisualState.tracer, "assassin"},
+        ["Head Tracer Survivor Only"] = {VisualState.tracer, "survivor"},
+        ["Head Tracer Zombie Only"]   = {VisualState.tracer, "zombie"},
+        ["Head Tracer Dead Only"]     = {VisualState.tracer, "dead"},
         -- Coins
         ["ESP Coins"]  = {VisualState.coins, "esp"},
         ["Cham Coins"] = {VisualState.coins, "cham"},  -- FIX v62: tambien se restaura
@@ -29144,7 +29748,7 @@ outHighlight  = {}
 _outPartList  = {}   -- cache de partes por char para outline
 _outCacheTs   = {}   -- timestamps de cache para outline
 boxSelect     = {}
-skelParts     = {}
+headTracerParts     = {}
 
 _deadBodies = {}   -- { [Model] = { player = Player, hrp = BasePart } }
 
@@ -29395,6 +29999,7 @@ function vsShow(flags, role, player)
     if flags.murderer  and role == "Murderer" then return true end
     if flags.sheriff   and role == "Sheriff"  then return true end
     if flags.hero      and role == "Hero"     then return true end
+    if flags.innocent  and role == "Innocent"  then return true end
     -- v70: el portador de la gun cuenta tambien como sheriff para la visibilidad,
     -- asi el que tenia prendido solo el ESP de Sheriff no lo pierde de vista
     -- cuando el rol pasa a Hero.
@@ -30288,19 +30893,16 @@ function updateBox(player)
     removeBox(player)
 end
 
-SKELETON_PAIRS = {
-    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
-    {"UpperTorso","LeftUpperArm"},{"UpperTorso","RightUpperArm"},
-    {"LeftUpperArm","LeftLowerArm"},{"RightUpperArm","RightLowerArm"},
-    {"LeftLowerArm","LeftHand"},{"RightLowerArm","RightHand"},
-    {"LowerTorso","LeftUpperLeg"},{"LowerTorso","RightUpperLeg"},
-    {"LeftUpperLeg","LeftLowerLeg"},{"RightUpperLeg","RightLowerLeg"},
-    {"LeftLowerLeg","LeftFoot"},{"RightLowerLeg","RightFoot"},
-}
+-- ================================================================
+-- HEAD TRACER
 
-function removeSkeleton(player)
-    if skelParts[player] then
-        for _, obj in ipairs(skelParts[player]) do
+-- El antiguo Skeleton ESP fue eliminado. La visualización se maneja
+-- por el sistema unificado de tracer + avatar BillboardGui.
+-- ================================================================
+function removeHeadTracer(player)
+    local item = headTracerParts[player]
+    if item then
+        for _, obj in ipairs(item) do
             pcall(function()
                 if typeof(obj) == "RBXScriptConnection" then
                     obj:Disconnect()
@@ -30311,111 +30913,13 @@ function removeSkeleton(player)
                 end
             end)
         end
-        skelParts[player] = nil
     end
+    headTracerParts[player] = nil
 end
 
-function buildSkeleton(player)
-    removeSkeleton(player)
-    local char = player.Character
-    if not char then return end
-    if not char:FindFirstChild("HumanoidRootPart") then
-        skelParts[player] = {}
-        task.wait(1)
-        char = player.Character
-        if not char then skelParts[player] = nil; return end
-    end
-    local _pr = GetPlayerRole(player); local role = (_pr ~= "" and _pr ~= "Grey") and _pr or "Innocent"
-    local show = vsShow(VisualState.skeleton, role, player)
-    if not show then return end
-
-    local color = colorOf(role)
-    local objs  = {}
-    local lines  = {}   -- Drawing.Line por cada hueso
-    local camera = workspace.CurrentCamera
-
-    for _, pair in ipairs(SKELETON_PAIRS) do
-        local ln = Drawing.new("Line")
-        ln.Thickness  = 1.5
-        ln.Color      = color
-        ln.Transparency = 1
-        ln.Visible    = false
-        ln.ZIndex     = 1
-        table.insert(objs,  ln)
-        table.insert(lines, { line = ln, b1 = pair[1], b2 = pair[2] })
-    end
-    local headDot = Drawing.new("Circle")
-    headDot.Radius      = 5
-    headDot.Color       = color
-    headDot.Thickness   = 1.5
-    headDot.Filled      = false
-    headDot.Transparency = 1
-    headDot.Visible     = false
-    table.insert(objs, headDot)
-
-    local _hbTlocalConn = 0
-    local _skelConn = nil   -- FIX LAG v61: referencia propia para poder cortarse
-    local conn = RunService.Heartbeat:Connect(function()
-        _hbTlocalConn=_hbTlocalConn+1; if _hbTlocalConn<10 then return end; _hbTlocalConn=0  -- OPT: 6->10 frames (~6Hz)
-        local c = player.Character
-        if not c or not c.Parent then
-            for _, ln in ipairs(objs) do pcall(function() ln:Remove() end) end
-            -- FIX LAG v61: hay que desconectar ACA. objs guarda esta misma conexion,
-            -- y al borrar skelParts[player] se perdia la unica referencia, asi que
-            -- removeSkeleton ya no podia desconectarla: quedaba un Heartbeat vivo
-            -- por jugador y por respawn, para siempre.
-            skelParts[player] = nil
-            if _skelConn then pcall(function() _skelConn:Disconnect() end) end
-            return
-        end
-        local cam = workspace.CurrentCamera
-        -- OPT: GetPlayerRole O(1) en vez de roleOf con GetChildren() a 20Hz
-        local _pr2 = GetPlayerRole(player)
-        local r2 = (_pr2 ~= "" and _pr2 ~= "Grey") and _pr2 or "Innocent"
-        local sh  = vsShow(VisualState.skeleton, r2, player)
-        local col = colorOf(r2)
-
-        if not sh then
-            for _, ln in ipairs(objs) do ln.Visible = false end
-            return
-        end
-
-        for _, entry in ipairs(lines) do
-            local part1 = c:FindFirstChild(entry.b1)
-            local part2 = c:FindFirstChild(entry.b2)
-            if part1 and part2 then
-                local sp1, on1 = cam:WorldToViewportPoint(part1.Position)
-                local sp2, on2 = cam:WorldToViewportPoint(part2.Position)
-                if on1 or on2 then
-                    entry.line.From    = Vector2.new(sp1.X, sp1.Y)
-                    entry.line.To      = Vector2.new(sp2.X, sp2.Y)
-                    entry.line.Color   = col
-                    entry.line.Visible = true
-                else
-                    entry.line.Visible = false
-                end
-            else
-                entry.line.Visible = false
-            end
-        end
-
-        local head = c:FindFirstChild("Head")
-        if head then
-            local sp, on = cam:WorldToViewportPoint(head.Position)
-            if on then
-                headDot.Position  = Vector2.new(sp.X, sp.Y)
-                headDot.Radius    = math.clamp(300 / math.max(sp.Z, 1), 3, 10)
-                headDot.Color     = col
-                headDot.Visible   = true
-            else
-                headDot.Visible = false
-            end
-        end
-    end)
-    _skelConn = conn
-    table.insert(objs, conn)
-
-    skelParts[player] = objs
+function buildHeadTracer(player)
+    -- Compatibilidad: el Head Tracer se crea/actualiza en el loop unificado.
+    return true
 end
 
 ESPBoards = { coin = {} }
@@ -32001,7 +32505,6 @@ end
 do
     local ticker = 0
     -- OPT: Tabla de indices para round-robin de skeleton (no reconstruir cada frame)
-    local _skelDirty = {}   -- [player] = true cuando necesita rebuild
     -- FIX VERDE ENTRE RONDAS: exponer _lastRole via _G para que RoundStart
     -- lo limpie al inicio de cada ronda. Sin esto el rol viejo persiste en cache
     -- y el jugador que era Murderer queda pintado de verde en la ronda siguiente.
@@ -32043,11 +32546,10 @@ do
             (_vs.box    and (_vs.box.everyone    or _vs.box.murderer    or _vs.box.sheriff
                           or _vs.box.hero        or _vs.box.assassin    or _vs.box.zombie
                           or _vs.box.survivor    or _vs.box.dead        or _vs.box.knife)) or
-            (_vs.skeleton and (_vs.skeleton.everyone or _vs.skeleton.murderer or _vs.skeleton.sheriff
-                          or _vs.skeleton.hero   or _vs.skeleton.assassin or _vs.skeleton.zombie)) or
             (_vs.tracer  and (_vs.tracer.everyone  or _vs.tracer.murderer  or _vs.tracer.sheriff
-                          or _vs.tracer.hero     or _vs.tracer.assassin  or _vs.tracer.zombie
-                          or _vs.tracer.knife    or _vs.tracer.gun       or _vs.tracer.droppedknife))
+                          or _vs.tracer.hero     or _vs.tracer.innocent  or _vs.tracer.assassin
+                          or _vs.tracer.dead     or _vs.tracer.survivor or _vs.tracer.zombie
+                          or _vs.tracer.knife   or _vs.tracer.gun      or _vs.tracer.droppedknife))
         )
         local _timeSinceRS   = os.clock() - (_G._roundStartTime or 0)  -- FIX #3
         local _isEarlyRound  = _timeSinceRS < 12
@@ -32174,7 +32676,7 @@ do
                     end
                     if _lastRole[player] ~= curRole then
                         _lastRole[player] = curRole
-                        _skelDirty[player] = true
+                        _headTracerDirty[player] = true
                         -- FIX REPINTADO: destruir outline/cham viejos inmediatamente
                         pcall(removeOutline, player)
                         pcall(removeCham,    player)
@@ -32385,25 +32887,12 @@ do
         for player in pairs(outHighlight)  do if not activePlayers[player] then removeOutline(player) end end
         for player in pairs(boxSelect)     do if not activePlayers[player] then removeBox(player)     end end
         for player in pairs(hlObjects)     do if not activePlayers[player] then removeHighlight(player)  end end
-        for player in pairs(skelParts)     do if not activePlayers[player] then removeSkeleton(player); _lastRole[player] = nil end end
-
-        for _, player in ipairs(_cachedPlayers) do
-            if player ~= LocalPlayer then
-                local anySkelly = vsShow(VisualState.skeleton, (GetPlayerRole and GetPlayerRole(player)) or roleOf(player) or "Innocent", player)
-                if anySkelly and player.Character then
-                    if not skelParts[player] then
-                        -- No existe aun: construir
-                        pcall(buildSkeleton, player)
-                        _skelDirty[player] = false
-                    elseif _skelDirty[player] then
-                        -- Solo reconstruir si el rol cambio (dirty flag)
-                        pcall(buildSkeleton, player)
-                        _skelDirty[player] = false
-                    end
-                    -- Si ya existe y no dirty: NO hacer nada (beams se actualizan solos)
-                elseif not anySkelly and skelParts[player] then
-                    removeSkeleton(player)
-                end
+        -- El Skeleton ESP ya no existe. El Head Tracer comparte el mismo
+        -- filtro de roles que los demas ESP y se actualiza en el bloque tracer.
+        for player in pairs(headTracerParts) do
+            if not activePlayers[player] then
+                removeHeadTracer(player)
+                _lastRole[player] = nil
             end
         end
 
@@ -32444,54 +32933,144 @@ _tracerViewTick = 30  -- forzar recalculo en el primer frame (Y=0 = arriba de pa
 _G._tracerFromHead = true  -- tracer siempre apunta a la cabeza
 -- GUARD: desconectar conexion anterior si existe (evita duplicados al re-ejecutar)
 if _G._tracerHBConn then pcall(function() _G._tracerHBConn:Disconnect() end) end
-_G._tracerHBConn = RunService.Heartbeat:Connect(function()
-    -- FIX LAG: guard ANTES del ticker ? si no hay tracers activos no incrementar ni entrar
+_G._HeadTracerAvatars = _G._HeadTracerAvatars or {}
+local _headTracerAvatars = _G._HeadTracerAvatars
+
+local function _headTracerDestroyAvatar(player)
+    local pack = _headTracerAvatars[player]
+    if pack then
+        for _, obj in pairs(pack) do
+            pcall(function()
+                if obj and obj.Parent then obj:Destroy() end
+            end)
+        end
+    end
+    _headTracerAvatars[player] = nil
+end
+
+local function _headTracerEnsureAvatar(player, head, roleColor)
+    local pack = _headTracerAvatars[player]
+    if pack and pack.gui and pack.gui.Parent and pack.image and pack.image.Parent then
+        pack.stroke.Color = roleColor
+        if pack.gui.Adornee ~= head then pack.gui.Adornee = head end
+        return pack
+    end
+
+    _headTracerDestroyAvatar(player)
+
+    local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pg or not head then return nil end
+
+    local gui = Instance.new("BillboardGui")
+    gui.Name = "ZQHeadTracer_" .. tostring(player.UserId)
+    gui.Adornee = head
+    gui.AlwaysOnTop = true
+    gui.LightInfluence = 0
+    gui.Size = UDim2.fromOffset(42, 42)
+    gui.StudsOffsetWorldSpace = Vector3.new(0, 2.65, 0)
+    gui.MaxDistance = 1500
+    gui.Parent = pg
+
+    local outer = Instance.new("Frame")
+    outer.Name = "AvatarCircle"
+    outer.Size = UDim2.fromScale(1, 1)
+    outer.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+    outer.BackgroundTransparency = 0.12
+    outer.BorderSizePixel = 0
+    outer.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = outer
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Transparency = 0.05
+    stroke.Color = roleColor
+    stroke.Parent = outer
+
+    local image = Instance.new("ImageLabel")
+    image.Name = "Avatar"
+    image.BackgroundTransparency = 1
+    image.Size = UDim2.new(1, -6, 1, -6)
+    image.Position = UDim2.fromOffset(3, 3)
+    image.ScaleType = Enum.ScaleType.Crop
+    image.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=150&h=150"
+    image.Parent = outer
+
+    local imgCorner = Instance.new("UICorner")
+    imgCorner.CornerRadius = UDim.new(1, 0)
+    imgCorner.Parent = image
+
+    pack = { gui = gui, image = image, stroke = stroke, outer = outer }
+    _headTracerAvatars[player] = pack
+    return pack
+end
+
+if _G._headTracerHBConn then pcall(function() _G._headTracerHBConn:Disconnect() end) end
+_G._headTracerHBConn = RunService.Heartbeat:Connect(function()
     local vt = VisualState.tracer
     local anyTracer = vt.everyone or vt.murderer or vt.sheriff or vt.hero
-        or vt.assassin or vt.dead or vt.survivor or vt.zombie
+        or vt.innocent or vt.assassin or vt.dead or vt.survivor or vt.zombie
         or vt.knife or vt.droppedknife or vt.throwknife
-    if not anyTracer then return end  -- sin resetLinePool: no hay lineas que limpiar si no hay tracers
-    _hbTtracer=_hbTtracer+1; if _hbTtracer<36 then return end; _hbTtracer=0
+    if not anyTracer then
+        for player in pairs(_headTracerAvatars) do _headTracerDestroyAvatar(player) end
+        return
+    end
+
+    _hbTtracer = _hbTtracer + 1
+    if _hbTtracer < 6 then return end
+    _hbTtracer = 0
 
     resetLinePool()
 
     local cam = workspace.CurrentCamera
-    -- OPT: recalcular viewport center solo cada 30 ticks (~cada 4s) -- ViewportSize no cambia seguido
+    if not cam then return end
     _tracerViewTick = _tracerViewTick + 1
-    if _tracerViewTick >= 30 then
+    if _tracerViewTick >= 8 then
         _tracerViewTick = 0
-        -- TRACER ORIGIN: parte superior de la pantalla (Y = 0 = arriba del todo)
         _tracerViewCenter = Vector2.new(cam.ViewportSize.X / 2, 0)
     end
     local center = _tracerViewCenter
+    local seen = {}
 
     for _, player in ipairs(_cachedPlayers) do
         if player ~= LocalPlayer and player.Character then
-            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                -- OPT: usar GetPlayerRole O(1) en lugar de roleOf con GetChildren()
+            local char = player.Character
+            local head = char:FindFirstChild("Head")
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if head and hrp then
                 local _pr = GetPlayerRole(player)
                 local role = (_pr ~= "" and _pr ~= "Grey") and _pr or "Innocent"
                 if roleOf ~= nil and (VisualState.tracer.gunholder or false) then role = roleOf(player) end
-                if vsShow(vt, role, player) then
+                local show = vsShow(vt, role, player)
+
+                if show then
+                    seen[player] = true
                     local color = colorOf(role)
-                    -- TRACER TARGET: siempre apunta a la Head del jugador (no al HRP)
-                    -- _tracerFromHead ya no cambia el target; siempre es la cabeza
-                    local _head = player.Character:FindFirstChild("Head")
-                    local _tPart = _head or hrp
-                    local sp, onScreen = cam:WorldToViewportPoint(_tPart.Position)
-                    if onScreen then
+                    local sp, onScreen = cam:WorldToViewportPoint(head.Position)
+                    if onScreen and sp.Z > 0 then
                         local line = getLine()
-                        line.From = center; line.To = Vector2.new(sp.X, sp.Y)
-                        line.Color = color; line.Thickness = 2.5
-                        line.Transparency = 1; line.Visible = true
+                        line.From = center
+                        line.To = Vector2.new(sp.X, sp.Y)
+                        line.Color = color
+                        line.Thickness = 2.2
+                        line.Transparency = 1
+                        line.Visible = true
                     end
+                    _headTracerEnsureAvatar(player, head, color)
+                else
+                    _headTracerDestroyAvatar(player)
                 end
+            else
+                _headTracerDestroyAvatar(player)
             end
         end
     end
 
-
+    for player in pairs(_headTracerAvatars) do
+        if not seen[player] then _headTracerDestroyAvatar(player) end
+    end
     if vt.droppedknife then
         for obj in pairs(_knifeWorldCache) do
             if obj.Parent then
@@ -32578,15 +33157,15 @@ function hookPlayer(player)
         _limpiarPieceChams(char)
         task.wait(0.9)  -- esperar que el personaje cargue completamente
         clearDeathPose(player)
-        removeSkeleton(player)
-        local anySkelly = vsShow(VisualState.skeleton, (GetPlayerRole and GetPlayerRole(player)) or roleOf(player) or "Innocent", player)
-        if anySkelly then pcall(buildSkeleton, player) end
+        removeHeadTracer(player)
+        local anySkelly = vsShow(VisualState.headTracer, (GetPlayerRole and GetPlayerRole(player)) or roleOf(player) or "Innocent", player)
+        if anySkelly then pcall(buildHeadTracer, player) end
         -- instanceLoop se encarga de re-crear board/cham/outline/box en el proximo tick
     end)
     player.AncestryChanged:Connect(function()
         if not player.Parent then
             removeBoard(player); removeCham(player); removeOutline(player)
-            removeBox(player);   removeSkeleton(player); clearDeathPose(player)
+            removeBox(player);   removeHeadTracer(player); clearDeathPose(player)
         end
     end)
 end
@@ -34816,53 +35395,31 @@ end, _G._chamDropGun or false)
 
 
     do
-        -- == TRACER -- BY TEAM + BY OBJECT + from Head ==============
-        local inner = CreateVisualCard(rightColumn, "", "TRACER", ThemeColors.Aurora4)
+        -- == HEAD TRACER -- AVATAR + TOP LINE =========================
+        local inner = CreateVisualCard(rightColumn, "", "HEAD TRACER", ThemeColors.Aurora4)
         local vt = VisualState.tracer
         MiniHeader(inner, "EVERYONE", Color3.fromRGB(255,255,255))
-        CreateAuroraToggle(inner, "Tracer Everyone", function(v) vt.everyone=v end, vt.everyone)
+        CreateAuroraToggle(inner, "Head Tracer Everyone", function(v) vt.everyone=v end, vt.everyone)
         MiniHeader(inner, "MURDERER", Color3.fromRGB(235, 95, 115))
-        CreateAuroraToggle(inner, "Tracer Murderer Only", function(v) vt.murderer=v end, vt.murderer)
+        CreateAuroraToggle(inner, "Head Tracer Murderer Only", function(v) vt.murderer=v end, vt.murderer)
         MiniHeader(inner, "SHERIFF", Color3.fromRGB(72, 140, 68))
-        CreateAuroraToggle(inner, "Tracer Sheriff Only", function(v) vt.sheriff=v end, vt.sheriff)
+        CreateAuroraToggle(inner, "Head Tracer Sheriff Only", function(v) vt.sheriff=v end, vt.sheriff)
         MiniHeader(inner, "HERO", Color3.fromRGB(72, 140, 68))
-        CreateAuroraToggle(inner, "Tracer Hero Only", function(v) vt.hero=v end, vt.hero)
+        CreateAuroraToggle(inner, "Head Tracer Hero Only", function(v) vt.hero=v end, vt.hero)
+        MiniHeader(inner, "INNOCENT", Color3.fromRGB(145, 220, 170))
+        CreateAuroraToggle(inner, "Head Tracer Innocent Only", function(v) vt.innocent=v end, vt.innocent)
         MiniHeader(inner, "ASSASSIN", Color3.fromRGB(24, 28, 36))
-        CreateAuroraToggle(inner, "Tracer Assassin Only", function(v) vt.assassin=v end, vt.assassin)
-        -- [AUTO-PAINT GRIS ELIMINADO] Tracer Dead Only removido.
+        CreateAuroraToggle(inner, "Head Tracer Assassin Only", function(v) vt.assassin=v end, vt.assassin)
         MiniHeader(inner, "SURVIVOR", Color3.fromRGB(24, 28, 36))
-        CreateAuroraToggle(inner, "Tracer Survivor Only", function(v) vt.survivor=v end, vt.survivor)
+        CreateAuroraToggle(inner, "Head Tracer Survivor Only", function(v) vt.survivor=v end, vt.survivor)
         MiniHeader(inner, "ZOMBIE", Color3.fromRGB(72, 140, 68))
-        CreateAuroraToggle(inner, "Tracer Zombie Only", function(v) vt.zombie=v end, vt.zombie)
-        MiniHeader(inner, "ORIGIN", Color3.fromRGB(200,200,200))
-        -- NOTA: los tracers ahora SIEMPRE salen de arriba de la pantalla y apuntan a la cabeza.
-        -- Este toggle es legacy y no cambia el comportamiento (la cabeza ya es siempre el target).
-        CreateAuroraToggle(inner, "Tracer Top-Screen ? Head [ACTIVO]", function(v)
-            _G._tracerFromHead = true  -- siempre true: los tracers van a la cabeza
+        CreateAuroraToggle(inner, "Head Tracer Zombie Only", function(v) vt.zombie=v end, vt.zombie)
+        MiniHeader(inner, "DEAD", Color3.fromRGB(125,125,130))
+        CreateAuroraToggle(inner, "Head Tracer Dead Only", function(v) vt.dead=v end, vt.dead)
+        MiniHeader(inner, "STYLE", Color3.fromRGB(200,200,200))
+        CreateAuroraToggle(inner, "Head Tracer Top-Screen To Head", function(v)
+            _G._tracerFromHead = true
         end, true)
-        MiniHeader(inner, "THROWING KNIFE", Color3.fromRGB(35, 43, 53))
-        CreateAuroraToggle(inner, "Tracer ThrowingKnife", function(v) vt.throwknife=v end, vt.throwknife)
-    end
-
-    do
-        -- == SKELETON -- BY TEAM ====================================
-        local inner = CreateVisualCard(rightColumn, "", "SKELETON", ThemeColors.TextPrimary)
-        local vs2 = VisualState.skeleton
-        MiniHeader(inner, "EVERYONE", Color3.fromRGB(255,255,255))
-        CreateAuroraToggle(inner, "Skeleton Everyone", function(v) vs2.everyone=v end, vs2.everyone)
-        MiniHeader(inner, "MURDERER", Color3.fromRGB(235, 95, 115))
-        CreateAuroraToggle(inner, "Skeleton Murderer Only", function(v) vs2.murderer=v end, vs2.murderer)
-        MiniHeader(inner, "SHERIFF", Color3.fromRGB(72, 140, 68))
-        CreateAuroraToggle(inner, "Skeleton Sheriff Only", function(v) vs2.sheriff=v end, vs2.sheriff)
-        MiniHeader(inner, "HERO", Color3.fromRGB(72, 140, 68))
-        CreateAuroraToggle(inner, "Skeleton Hero Only", function(v) vs2.hero=v end, vs2.hero)
-        MiniHeader(inner, "ASSASSIN", Color3.fromRGB(24, 28, 36))
-        CreateAuroraToggle(inner, "Skeleton Assassin Only", function(v) vs2.assassin=v end, vs2.assassin)
-        -- [AUTO-PAINT GRIS ELIMINADO] Skeleton Dead Only removido.
-        MiniHeader(inner, "SURVIVOR", Color3.fromRGB(24, 28, 36))
-        CreateAuroraToggle(inner, "Skeleton Survivor Only", function(v) vs2.survivor=v end, vs2.survivor)
-        MiniHeader(inner, "ZOMBIE", Color3.fromRGB(72, 140, 68))
-        CreateAuroraToggle(inner, "Skeleton Zombie Only", function(v) vs2.zombie=v end, vs2.zombie)
     end
 
     -- ===============================================================
@@ -35964,22 +36521,22 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         local knobPosOn  = UDim2.new(1, -KNOB_SZ/2 - 3, 0.5, 0)
         local knobPosOff = UDim2.new(0, KNOB_SZ/2 + 3, 0.5, 0)
         if animate then
-            TweenService:Create(pill, _ti, {BackgroundColor3 = on and C_TRACK_ON or C_TRACK_OFF}):Play()
-            TweenService:Create(knob, _tiK, {
+            _G._ZQSafeTween(pill, _ti, {BackgroundColor3 = on and C_TRACK_ON or C_TRACK_OFF})
+            _G._ZQSafeTween(knob, _tiK, {
                 Position         = on and knobPosOn or knobPosOff,
                 BackgroundColor3 = on and C_KNOB_ON or C_KNOB_OFF,
-            }):Play()
-            TweenService:Create(pillStroke, _ti, {
+            })
+            _G._ZQSafeTween(pillStroke, _ti, {
                 Color        = on and C_TRACK_ON or C_TRACK_OFF,  -- v64: sigue la pill
                 Transparency = on and 0.05 or 0.20,
-            }):Play()
-            TweenService:Create(accentBar, _ti, {
+            })
+            _G._ZQSafeTween(accentBar, _ti, {
                 BackgroundColor3 = on and C_ACCENT or C_STROKE,
                 Size = on and UDim2.fromScale(0.008, 0.72) or UDim2.fromScale(0.008, 0.55),
-            }):Play()
-            TweenService:Create(label, _ti, {
+            })
+            _G._ZQSafeTween(label, _ti, {
                 TextColor3 = C_TEXT,  -- v68: blanco prendido y apagado
-            }):Play()
+            })
         else
             pill.BackgroundColor3   = on and C_TRACK_ON or C_TRACK_OFF
             knob.Position           = on and knobPosOn or knobPosOff
@@ -36000,22 +36557,26 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         _toggleScale.Parent = container
     end
     local function _toggleActivationAnim(on)
+        -- v70: UN solo tween sobre el UIScale y SIEMPRE termina en 1 exacto.
+        -- El pop anterior encadenaba tres task.delay con easing Back: al
+        -- togglear rapido se superponian y la fila quedaba con Scale 1.02 o
+        -- 0.985 de forma permanente.
         pcall(function()
-            TweenService:Create(_toggleScale, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 0.985}):Play()
-            task.delay(0.10, function()
-                if not _toggleScale or not _toggleScale.Parent then return end
-                local t = TweenService:Create(_toggleScale, TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1.02})
-                t:Play()
-                task.delay(0.26, function()
-                    if _toggleScale and _toggleScale.Parent then
-                        TweenService:Create(_toggleScale, TweenInfo.new(0.24, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Scale = 1}):Play()
-                    end
-                end)
-            end)
+            if not (_toggleScale and _toggleScale.Parent) then return end
+            _G._ZQCancelObjectTweens(_toggleScale, false)
+            _toggleScale.Scale = 0.985
+            _G._ZQSafeTween(_toggleScale, _G._ZQTIOut(_G._ZQD.toggle), { Scale = 1 })
         end)
     end
 
     _G._toggleApplyStates[nombre] = ApplyState
+    _G._toggleApplyByTab = _G._toggleApplyByTab or {}
+    local _ownerTab = _G._currentBuildingTabIdx
+    if _ownerTab then
+        local _set = _G._toggleApplyByTab[_ownerTab]
+        if not _set then _set = {}; _G._toggleApplyByTab[_ownerTab] = _set end
+        _set[nombre] = true
+    end
     ApplyState(estado, false)
 
     -- ============================================================
@@ -36088,19 +36649,16 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
         end
     end
 
-    -- Hover: efecto Zerqon suave - SIN fondo, solo borde brilla
+    -- Hover: efecto Zerqon suave - SIN fondo, SIN cambio de color (evita verde en hover)
     clickRow.MouseEnter:Connect(function()
-        -- FIX: fondo siempre transparente, solo el stroke cambia en hover
+        -- FIX v78: fondo siempre transparente; stroke solo cambia grosor, NO color
+        -- (antes cambiaba a C_ACCENT que con el tema verde se veia todo verde al hover)
         TweenService:Create(container, _ti, {
-            BackgroundTransparency = 1,  -- FIX: SIEMPRE transparente
+            BackgroundTransparency = 1,
         }):Play()
-        -- v60: por ARRIBA del pico del latido (2.20 / 0.06). Con los
-        -- valores viejos (1.4 / 0.10) el hover quedaba mas apagado que la
-        -- respiracion y parecia que el hover no andaba.
         TweenService:Create(_contStroke, _ti, {
-            Color       = C_ACCENT,
-            Thickness   = 2.9,
-            Transparency = 0.02,
+            Thickness   = 2.2,
+            Transparency = 0.10,
         }):Play()
         TweenService:Create(accentBar, _ti, {
             Size = UDim2.fromScale(0.012, 0.72),
@@ -36108,12 +36666,9 @@ function CreateAuroraToggle(parent, nombre, callback, initialValue)
     end)
     clickRow.MouseLeave:Connect(function()
         TweenService:Create(container, _ti, {
-            BackgroundTransparency = 1,  -- FIX: SIEMPRE transparente al salir hover
+            BackgroundTransparency = 1,
         }):Play()
-        -- v60: volver al piso del latido (1.15 / 0.42) para que el pulso
-        -- lo retome sin salto.
         TweenService:Create(_contStroke, _ti, {
-            Color       = C_STROKE,
             Thickness   = 1.15,
             Transparency = 0.42,
         }):Play()
@@ -44121,7 +44676,7 @@ function CreateWorldTab()
     _safeCall(CreateWorldUI_BombJump, "BombJump")
     _safeCall(CreateWorldUI_GoldBomb, "GoldBomb")
     -- FakeBombCustomization e InfinityJump eliminados del World tab
-    _safeCall(CreateWorldUI_Emotes, "Emotes")
+    -- Emotes has its own cached tab; do not duplicate its controls/connections here.
     _safeCall(CreateWorldUI_GotoPlayers, "GotoPlayers")
     _safeCall(CreateWorldUI_Spectate, "Spectate")
     _safeCall(CreateWorldUI_FakeLag, "FakeLag")
@@ -44909,6 +45464,29 @@ end
 
 
 
+
+-- Standalone EMOTES page. Built exactly once by the shared tab cache, so its
+-- controls, selected state and keybind connections survive navigation without duplication.
+function CreateEmotesTab()
+    if not contentContainer then return end
+    _currentMainSectionFrame = nil
+    _makeTwoColumns()
+    local l = leftColumn
+    local r = rightColumn
+    for _, col in ipairs((r and r ~= l) and {l, r} or {l}) do
+        if col then
+            pcall(function()
+                col.ScrollingEnabled = true
+                col.ScrollingDirection = Enum.ScrollingDirection.Y
+                col.ElasticBehavior = Enum.ElasticBehavior.Never
+                col.AutomaticCanvasSize = Enum.AutomaticSize.Y
+                col.CanvasSize = UDim2.new(0, 0, 0, 0)
+            end)
+        end
+    end
+    local ok, err = pcall(CreateWorldUI_Emotes)
+    if not ok then _log("EMOTES tab build failed", err) end
+end
 
 function CreatePremiumTab()
     ClearContent()
@@ -47035,7 +47613,7 @@ function CreateExclusiveTab()
         undraggableButtons = false,
         noTabAnimations    = false,
         noMinMaxAnimations = false,
-        allowHubDrag       = false,  -- DESACTIVADO: hub fijo
+        allowHubDrag       = false,  -- hub fijo: no se permite arrastrar
         hubOpacity         = 0,   -- 0-95 (porcentaje de opacidad del fondo)
         hubScale           = 70,   -- 70-130 (escala del hub en %)
         hubLayoutMode      = 1,    -- 1=SidebarIzq 2=BarraTop 3=SidebarDer 4=BarraBot 5=MiniIzq
@@ -49731,6 +50309,13 @@ end
 -- ================================================================
 
 function CreateCombatTab()
+    CombatTabState = CombatTabState or {}
+    if CombatTabState._uiBuilt and CombatTabState._uiRoot and CombatTabState._uiRoot.Parent then
+        return -- pagina cacheada: mostrar/animar lo maneja SetActiveTab
+    end
+    CombatTabState._uiRoot = contentContainer
+    CombatTabState._uiBuilt = true
+    CombatTabState.dropdownOpen = false
     if not contentContainer or not contentContainer.Parent then
         _w(0.15)
         if not contentContainer or not contentContainer.Parent then return end
@@ -52264,41 +52849,21 @@ function CreateCombatTab()
             end
         end, false)
 
-        -- Bot?n: Select Target ? abre selector de jugadores
-        local _selBtn = Instance.new("TextButton", ctSection)
-        _selBtn.Size = UDim2.new(1, -8, 0, 34)
-        _selBtn.AutomaticSize = Enum.AutomaticSize.None
-        _selBtn.BackgroundColor3 = ThemeColors.Background
-        _selBtn.BackgroundTransparency = 0.35
-        _selBtn.BorderSizePixel = 0
-        _selBtn.Text = "  Select Target"
-        _selBtn.TextColor3 = ThemeColors.TextPrimary
-        _selBtn.Font = Enum.Font.GothamBold
-        _selBtn.TextSize = 13
-        _selBtn.ZIndex = 14
-        _selBtn.Active = true
-        _selBtn.AutoButtonColor = false
-        local _selBtnPad = Instance.new("UIPadding", _selBtn)
-        _selBtnPad.PaddingLeft = UDim.new(0, 10)
-        local _selCorner = Instance.new("UICorner", _selBtn)
-        _selCorner.CornerRadius = UDim.new(0, 8)
-        local _selStroke = Instance.new("UIStroke", _selBtn)
-        _selStroke.Color = ThemeColors.Primary
-        _selStroke.Thickness = 1.5
-        _selStroke.Transparency = 0.1
-        -- Hover feedback
-        _selBtn.MouseEnter:Connect(function()
-            TweenService:Create(_selBtn, TweenInfo.new(0.1), {BackgroundTransparency = 0.15}):Play()
-        end)
-        _selBtn.MouseLeave:Connect(function()
-            TweenService:Create(_selBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.35}):Play()
-        end)
+        -- v78: Selector de jugadores estilo hub (CreateZerqonSelector) para custom target
+        -- Construir lista dinámica de jugadores; "Murder (auto)" como primera opción
+        local function _buildCTPlayerList()
+            local list = {"Murder (auto)"}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then table.insert(list, p.Name) end
+            end
+            return list
+        end
 
-        -- Label del target seleccionado
+        -- Label del target seleccionado (se actualiza al elegir)
         local _ctLabel = Instance.new("TextLabel", ctSection)
         _ctLabel.Size = UDim2.new(1, -8, 0, 18)
         _ctLabel.BackgroundTransparency = 1
-        _ctLabel.Text = "Target: " .. (CombatTabState.customTargetPlayer and CombatTabState.customTargetPlayer.Name or "ninguno")
+        _ctLabel.Text = "Target: " .. (CombatTabState.customTargetPlayer and CombatTabState.customTargetPlayer.Name or "Murder (auto)")
         _ctLabel.TextColor3 = Color3.fromRGB(235, 95, 115)
         _ctLabel.Font = Enum.Font.Montserrat
         _ctLabel.TextSize = 10
@@ -52308,125 +52873,27 @@ function CreateCombatTab()
         _ctlPad.PaddingLeft = UDim.new(0, 8)
         _ctlPad.PaddingBottom = UDim.new(0, 4)
 
-        -- GUI del selector de jugadores
-        local _selectorGui = nil
-        local function _closeSelector()
-            if _selectorGui and _selectorGui.Parent then
-                pcall(function() _selectorGui:Destroy() end)
-            end
-            _selectorGui = nil
-        end
-
-        _selBtn.Activated:Connect(function()
-            -- Cerrar si ya est? abierto
-            if _selectorGui and _selectorGui.Parent then _closeSelector(); return end
-
-            local sg = Instance.new("ScreenGui")
-            sg.Name = "CustomTargetSelector"
-            sg.ResetOnSpawn = false
-            sg.IgnoreGuiInset = true
-            sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
-            sg.DisplayOrder = 10100
-            pcall(function() sg.Parent = CoreGui end)
-            if not sg.Parent then sg.Parent = LocalPlayer.PlayerGui end
-            _selectorGui = sg
-
-            -- Fondo oscuro semitransparente
-            local bg = Instance.new("Frame", sg)
-            bg.Size = UDim2.new(1, 0, 1, 0)
-            bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-            bg.BackgroundTransparency = 0.5
-            bg.BorderSizePixel = 0
-            bg.ZIndex = 1
-
-            -- Panel central
-            local panel = Instance.new("Frame", sg)
-            panel.Size = UDim2.new(0, 260, 0, 0)
-            panel.AutomaticSize = Enum.AutomaticSize.Y
-            panel.AnchorPoint = Vector2.new(0.5, 0.5)
-            panel.Position = UDim2.new(0.5, 0, 0.5, 0)
-            panel.BackgroundColor3 = Color3.fromRGB(24, 28, 36)
-            panel.BackgroundTransparency = 0.08
-            panel.BorderSizePixel = 0
-            panel.ZIndex = 2
-            Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
-            local pStroke = Instance.new("UIStroke", panel)
-            pStroke.Color = Color3.fromRGB(200, 200, 200); pStroke.Thickness = 1.5; pStroke.Transparency = 0.1
-            local pPad = Instance.new("UIPadding", panel)
-            pPad.PaddingTop = UDim.new(0, 8); pPad.PaddingBottom = UDim.new(0, 8)
-            pPad.PaddingLeft = UDim.new(0, 8); pPad.PaddingRight = UDim.new(0, 8)
-            local pList = Instance.new("UIListLayout", panel)
-            pList.SortOrder = Enum.SortOrder.LayoutOrder; pList.Padding = UDim.new(0, 4)
-
-            -- T?tulo
-            local titleRow = Instance.new("TextLabel", panel)
-            titleRow.Size = UDim2.new(1, 0, 0, 22)
-            titleRow.BackgroundTransparency = 1
-            titleRow.Text = " Seleccionar Target del Silent Aim"
-            titleRow.TextColor3 = Color3.fromRGB(24, 28, 36)
-            titleRow.Font = Enum.Font.GothamBold
-            titleRow.TextSize = 12
-            titleRow.TextXAlignment = Enum.TextXAlignment.Left
-            titleRow.ZIndex = 3
-            titleRow.LayoutOrder = 0
-
-            -- Bot?n para quitar custom target
-            local clearBtn = Instance.new("TextButton", panel)
-            clearBtn.Size = UDim2.new(1, 0, 0, 28)
-            clearBtn.BackgroundColor3 = Color3.fromRGB(24, 28, 36)
-            clearBtn.BackgroundTransparency = 0.3
-            clearBtn.BorderSizePixel = 0
-            clearBtn.Text = "  Usar Murder (sin custom)"
-            clearBtn.TextColor3 = Color3.fromRGB(220, 25, 61)
-            clearBtn.Font = Enum.Font.GothamSemibold
-            clearBtn.TextSize = 11
-            clearBtn.ZIndex = 3
-            clearBtn.LayoutOrder = 1
-            Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 6)
-            clearBtn.Activated:Connect(function()
+        -- Selector principal estilo Zerqon hub
+        local _ctInitial = CombatTabState.customTargetPlayer and CombatTabState.customTargetPlayer.Name or "Murder (auto)"
+        CreateZerqonSelector(ctSection, "Select Target", _buildCTPlayerList(), _ctInitial, function(selected)
+            if selected == "Murder (auto)" then
                 CombatTabState.customTargetPlayer = nil
                 CombatTabState.saCustomTargetName = ""
-                CombatTabState.saUseCustomTarget  = false   -- sincronizar campo legacy
-                _ctLabel.Text = "Target: ninguno"
-                _closeSelector()
-                CreateCustomNotification("CUSTOM TARGET", "Target limpiado ? usar? Murder", 2)
-            end)
-
-            -- Botones por cada jugador (excepto local)
-            local allPlayers = Players:GetPlayers()
-            for i, plr in ipairs(allPlayers) do
-                if plr ~= LocalPlayer then
-                    local plrBtn = Instance.new("TextButton", panel)
-                    plrBtn.Size = UDim2.new(1, 0, 0, 28)
-                    plrBtn.BackgroundColor3 = (CombatTabState.customTargetPlayer == plr)
-                        and Color3.fromRGB(72, 140, 68) or Color3.fromRGB(20, 21, 28)
-                    plrBtn.BackgroundTransparency = 0.3
-                    plrBtn.BorderSizePixel = 0
-                    plrBtn.Text = "  " .. plr.Name
-                    plrBtn.TextColor3 = Color3.fromRGB(186, 133, 198)
-                    plrBtn.Font = Enum.Font.GothamSemibold
-                    plrBtn.TextSize = 11
-                    plrBtn.ZIndex = 3
-                    plrBtn.LayoutOrder = i + 1
-                    Instance.new("UICorner", plrBtn).CornerRadius = UDim.new(0, 6)
-                    plrBtn.Activated:Connect(function()
-                        CombatTabState.customTargetPlayer = plr
-                        CombatTabState.saCustomTargetName = plr.Name
-                        CombatTabState.saUseCustomTarget  = CombatTabState.useCustomTarget   -- sincronizar campo legacy
-                        _ctLabel.Text = "Target: " .. plr.Name
-                        _closeSelector()
-                        CreateCustomNotification("CUSTOM TARGET", "Seleccionado: " .. plr.Name, 2)
-                    end)
+                CombatTabState.saUseCustomTarget  = false
+                _ctLabel.Text = "Target: Murder (auto)"
+                CreateCustomNotification("CUSTOM TARGET", "Usando Murder automático", 2)
+            else
+                local plr = Players:FindFirstChild(selected)
+                if plr then
+                    CombatTabState.customTargetPlayer = plr
+                    CombatTabState.saCustomTargetName = plr.Name
+                    CombatTabState.saUseCustomTarget  = CombatTabState.useCustomTarget
+                    _ctLabel.Text = "Target: " .. plr.Name
+                    CreateCustomNotification("CUSTOM TARGET", "Seleccionado: " .. plr.Name, 2)
+                else
+                    CreateCustomNotification("CUSTOM TARGET", "Jugador no encontrado: " .. selected, 2)
                 end
             end
-
-            -- Cerrar al hacer clic/toque en el fondo
-            bg.InputBegan:Connect(function(inp)
-                if inp.UserInputType == Enum.UserInputType.MouseButton1
-                or inp.UserInputType == Enum.UserInputType.Touch then
-                    _closeSelector()
-                end
-            end)
         end)
 
         -- Descripci?n
@@ -54807,102 +55274,27 @@ function CreateCombatTab()
         end
     )
 
-    -- Selector de jugador espec?fico para "Select Player"
+    -- v78: Selector de jugador estilo hub para "Select Player" (Knife SA)
     do
-        local knifePlayerLbl = Instance.new("TextLabel", knifeSASection)
-        knifePlayerLbl.Size = UDim2.new(1, -10, 0, 16)
-        knifePlayerLbl.BackgroundTransparency = 1
- knifePlayerLbl.Text = "Select Player target:"
-        knifePlayerLbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
-        knifePlayerLbl.TextSize = 10
-        knifePlayerLbl.TextColor3 = ThemeColors.TextSecondary
-        knifePlayerLbl.TextXAlignment = Enum.TextXAlignment.Left
-        knifePlayerLbl.ZIndex = 13
-
-        local knifePlayerRow = Instance.new("Frame", knifeSASection)
-        knifePlayerRow.Size = UDim2.new(1, -10, 0, 30)
-        knifePlayerRow.BackgroundColor3 = ThemeColors.Background
-        knifePlayerRow.BackgroundTransparency = 0.3
-        knifePlayerRow.BorderSizePixel = 0
-        Instance.new("UICorner", knifePlayerRow).CornerRadius = UDim.new(0, 8)
-        local kpStroke = Instance.new("UIStroke", knifePlayerRow)
-        kpStroke.Color = ThemeColors.Primary; kpStroke.Thickness = 2.5; kpStroke.Transparency = 0.4
-
-        local kpLbl = Instance.new("TextLabel", knifePlayerRow)
-        kpLbl.Size = UDim2.new(1, -40, 1, 0)
-        kpLbl.Position = UDim2.new(0, 8, 0, 0)
-        kpLbl.BackgroundTransparency = 1
- kpLbl.Text = "? ninguno seleccionado ?"
-        kpLbl.FontFace = Font.fromEnum(Enum.Font.Arimo)
-        kpLbl.TextSize = 10
-        kpLbl.TextColor3 = ThemeColors.TextPrimary
-        kpLbl.TextXAlignment = Enum.TextXAlignment.Left
-        kpLbl.TextTruncate = Enum.TextTruncate.AtEnd
-        kpLbl.ZIndex = 14
-
-        local kpBtn = Instance.new("TextButton", knifePlayerRow)
-        kpBtn.Size = UDim2.new(0, 32, 0, 22)
-        kpBtn.Position = UDim2.new(1, -36, 0.5, -11)
-        kpBtn.BackgroundColor3 = ThemeColors.Aurora1
-        kpBtn.BackgroundTransparency = 0.85
-        kpBtn.BorderSizePixel = 0
- kpBtn.Text = "?"
-        kpBtn.FontFace = Font.fromEnum(Enum.Font.Arimo)
-        kpBtn.TextSize = 12
-        kpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        kpBtn.ZIndex = 15
-        Instance.new("UICorner", kpBtn).CornerRadius = UDim.new(0, 6)
-
-        local kpDdOpen = false
-        local kpDdFrame = nil
-        local function kpCloseDD()
-            if kpDdFrame and kpDdFrame.Parent then kpDdFrame:Destroy(); kpDdFrame = nil end
-            kpDdOpen = false
-        end
-        kpBtn.Activated:Connect(function()
-
-            if kpDdOpen then kpCloseDD(); return end
-            kpDdOpen = true
-            local names = {}
+        local function _buildKSAPlayerList()
+            local list = {}
             for _, p in ipairs(_cachedPlayers) do
-                if p ~= LocalPlayer then table.insert(names, p.Name) end
+                if p ~= LocalPlayer then table.insert(list, p.Name) end
             end
-            if #names == 0 then
- CreateCustomNotification("KNIFE SA", "No hay otros jugadores", 2)
-                kpDdOpen = false; return
-            end
-            kpDdFrame = Instance.new("Frame", knifeSASection)
-            kpDdFrame.Size = UDim2.new(1, -10, 0, math.min(#names, 5) * 28 + 8)
-            kpDdFrame.BackgroundColor3 = ThemeColors.BackgroundLight
-            kpDdFrame.BackgroundTransparency = 0.72
-            kpDdFrame.BorderSizePixel = 0
-            kpDdFrame.ZIndex = 90
-            Instance.new("UICorner", kpDdFrame).CornerRadius = UDim.new(0, 8)
-            local ddStk = Instance.new("UIStroke", kpDdFrame)
-            ddStk.Color = ThemeColors.Primary; ddStk.Thickness = 2.5; ddStk.Transparency = 0.1
-            local ddLL = Instance.new("UIListLayout", kpDdFrame)
-            ddLL.Padding = UDim.new(0, 2); ddLL.SortOrder = Enum.SortOrder.LayoutOrder
-            local ddPad = Instance.new("UIPadding", kpDdFrame)
-            ddPad.PaddingLeft = UDim.new(0, 5); ddPad.PaddingTop = UDim.new(0, 4); ddPad.PaddingRight = UDim.new(0, 5)
-            for _, pname in ipairs(names) do
-                local pbtn = Instance.new("TextButton", kpDdFrame)
-                pbtn.Size = UDim2.new(1, 0, 0, 24)
-                pbtn.BackgroundColor3 = ThemeColors.Background
-                pbtn.BackgroundTransparency = 0.7
-                pbtn.BorderSizePixel = 0
- pbtn.Text = pname
-                pbtn.FontFace = Font.fromEnum(Enum.Font.Arimo)
-                pbtn.TextSize = 11
-                pbtn.TextColor3 = ThemeColors.TextPrimary
-                pbtn.ZIndex = 91
-                Instance.new("UICorner", pbtn).CornerRadius = UDim.new(0, 5)
-                pbtn.Activated:Connect(function()
-                    KnifeSAState.specificTarget = Players:FindFirstChild(pname)
-                    KnifeSAState.target = "Select Player"
- kpLbl.Text = pname
-                    kpCloseDD()
- CreateCustomNotification("KNIFE SA", "Target ? " .. pname, 2)
-                end)
+            if #list == 0 then list = {"(sin jugadores)"} end
+            return list
+        end
+
+        local _ksaCurrentName = KnifeSAState.specificTarget and KnifeSAState.specificTarget.Name or _buildKSAPlayerList()[1]
+        CreateZerqonSelector(knifeSASection, "Select Player (Knife)", _buildKSAPlayerList(), _ksaCurrentName, function(pname)
+            if pname == "(sin jugadores)" then return end
+            local plr = Players:FindFirstChild(pname)
+            if plr then
+                KnifeSAState.specificTarget = plr
+                KnifeSAState.target = "Select Player"
+                CreateCustomNotification("KNIFE SA", "Target → " .. pname, 2)
+            else
+                CreateCustomNotification("KNIFE SA", "Jugador no encontrado: " .. pname, 2)
             end
         end)
     end
@@ -60459,21 +60851,26 @@ function CreateCombatTab()
     do
         local predModes = {"Default", "Advanced GunClient", "Ghost Take", "Tianca Half"}
         local predDesc = {
-            ["Default"]            = "Original GunClient sin modificar (PREDETERMINADO)",
-            ["Advanced GunClient"] = "Hooks GunClient Shoot:FireServer - ping + strafe prediction",
-            ["Ghost Take"]         = "Hooks GunClient Shoot:FireServer - smooth horizontal ping lead",
-            ["Tianca Half"]        = "Hooks GunClient ShootStart:FireServer - half velocity offset",
+            ["Default"]            = "GunClient original sin modificar (PREDETERMINADO)",
+            ["Advanced GunClient"] = "[GunClient v1] Hooks Shoot:FireServer - rolling avg velocity + ping prediction",
+            ["Ghost Take"]         = "[GunClient v2] Hooks Shoot:FireServer - filtro Kalman + aceleracion + gravity drop",
+            ["Tianca Half"]        = "[GunClient v3] Hooks ShootStart:FireServer - balística exacta cuadrática + Kalman adaptativo",
         }
         -- Default sin estrella (gratuito), los demas con badge premium
-        local predModesLabeled = {"Predeterminado", "? Advanced GunClient", "? Ghost Take", "? Tianca Half"}
-        local _currentLabelSel = (CombatTabState.gunPredMode == "Default" or not CombatTabState.gunPredMode)
-            and "Predeterminado"
-            or ("? " .. CombatTabState.gunPredMode)
+        local predModesLabeled = {"Predeterminado", "? Advanced GunClient (v1)", "? Ghost Take (v2)", "? Tianca Half (v3)"}
+        -- v78: mapear modo interno a label con versión
+        local _modeLabelMap = {
+            ["Default"]            = "Predeterminado",
+            ["Advanced GunClient"] = "? Advanced GunClient (v1)",
+            ["Ghost Take"]         = "? Ghost Take (v2)",
+            ["Tianca Half"]        = "? Tianca Half (v3)",
+        }
+        local _currentLabelSel = _modeLabelMap[CombatTabState.gunPredMode] or "Predeterminado"
         local _predSel = CreateZerqonSelector(predSection, "GunClient Mode", predModesLabeled,
             _currentLabelSel,
             function(sel)
                 local raw  = type(sel) == "table" and sel[1] or sel
-                local mode = raw:gsub("^? ", ""):gsub("^Predeterminado$", "Default")
+                local mode = raw:gsub("^? ", ""):gsub(" %(v%d%)$", ""):gsub("^Predeterminado$", "Default")
                 -- Si no es premium y elige opcion premium: bloquear TOTALMENTE
                 if mode ~= "Default" and not _G._discordPremiumVerified then
                     CreateCustomNotification("? PREMIUM", "Loguea en el tab PREMIUM para usar este modo.", 4)
@@ -60491,7 +60888,7 @@ function CreateCombatTab()
             local function _colorizeAll()
                 for _, d in ipairs(_predSel.frame:GetDescendants()) do
                     if d:IsA("TextLabel") then
-                        if d.Text:find("^? ") then
+                        if d.Text:find("^%? ") then
                             d.TextColor3 = Color3.fromRGB(24, 28, 36)
                             d.Font = Enum.Font.GothamBold
                         elseif d.Text == "Predeterminado" then
@@ -63794,8 +64191,10 @@ function abrirHub()
     end
     -- FIX CRTICO: inicializar _tabConns ANTES de cualquier RegisterTabConn
     -- Si _tabConns es nil cuando RegisterTabConn intenta table.insert -> crash
-    _G._tabConns     = {}   -- reiniciar conexiones de tab
-    _G._sliderResets = {}   -- reiniciar resets de sliders
+    -- STABLE: no perder las referencias de conexiones al reabrir el GUI cacheado.
+    -- Solo una reconstruccion real limpia y reemplaza este scope.
+    _G._tabConns     = _G._tabConns or {}
+    _G._sliderResets = _G._sliderResets or {}
     -- FIX OPTIMIZACIN: si el hub ya existe y est oculto, solo mostrarlo
     local playerGui = LocalPlayer:WaitForChild("PlayerGui")
     local existingHub = playerGui:FindFirstChild("f") or CoreGui:FindFirstChild("f")
@@ -63833,15 +64232,28 @@ function abrirHub()
             pcall(function() local bg = mainFrame:FindFirstChild("HubBackground"); if bg then bg.ImageTransparency = 0 end end)
             local _uiSc = mainFrame:FindFirstChildOfClass("UIScale")
             if _uiSc then
-                _uiSc.Scale = _targetSc * 0.7  -- empezar un poco mas chico para la animacion
+                _uiSc.Scale = _targetSc * 0.96  -- v70: arranque sutil, sin salto
             end
         end
         existingHub.Enabled = true
         _G._hubHidden = false
+        -- v70: maquina de estados. Abrir durante CLOSING invalida el token
+        -- del cierre, asi que su callback ya no puede apagar el ScreenGui.
+        local _openToken = nil
+        pcall(function() _openToken = _G._ZQHubSetState("OPENING") end)
+        task.delay((_G._ZQD and _G._ZQD.open or 0.32) + 0.05, function()
+            if not _G._hubHidden
+            and (not _openToken or not _G._ZQHubTokenOk or _G._ZQHubTokenOk(_openToken)) then
+                pcall(function() _G._ZQHubSetState("OPEN") end)
+            end
+        end)
+        -- Cerrar el hub NO apaga ninguna funcion: lo que quedo en ON debe
+        -- verse en ON al reabrir.
+        task.defer(function() pcall(function() _G._ZQResyncToggles() end) end)
         -- Animacion de entrada suave desde escala casi correcta
         local _uiSc2 = mainFrame and mainFrame:FindFirstChildOfClass("UIScale")
         if _uiSc2 then
-            TweenService:Create(_uiSc2, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = _targetSc}):Play()
+            _G._ZQSafeTween(_uiSc2, _G._ZQTISoft(_G._ZQD.open), {Scale = _targetSc})
         end
         -- FIX BINDABLES: restaurar con delay para no chocar con la animacion de entrada
         task.spawn(function()
@@ -63852,6 +64264,38 @@ function abrirHub()
         -- Los tabs se mantienen cacheados y SetActiveTab controla su visibilidad.
         return
     end
+
+    -- STABLE RELEASE: a partir de aqui es una reconstruccion real, no un reopen.
+    -- Liberar solamente conexiones de UI/tab; no tocar loops de features activas.
+    for _, _c in ipairs(_G._tabConns or {}) do
+        pcall(function() _c:Disconnect() end)
+    end
+    _G._tabConns = {}
+    _G._sliderResets = {}
+
+    if _G._zqMainGuiConnections then
+        for _, _c in ipairs(_G._zqMainGuiConnections) do
+            pcall(function() _c:Disconnect() end)
+        end
+    end
+    local _mainGuiConnections = {}
+    _G._zqMainGuiConnections = _mainGuiConnections
+    local function _mainGuiConnect(signal, callback)
+        local conn = signal:Connect(callback)
+        _mainGuiConnections[#_mainGuiConnections + 1] = conn
+        return conn
+    end
+    local function _cleanupMainGuiConnections()
+        for i = #_mainGuiConnections, 1, -1 do
+            local conn = _mainGuiConnections[i]
+            _mainGuiConnections[i] = nil
+            if conn then pcall(function() conn:Disconnect() end) end
+        end
+        if _G._zqMainGuiConnections == _mainGuiConnections then
+            _G._zqMainGuiConnections = nil
+        end
+    end
+
     _G._hubReady   = false  -- resetear al (re)abrir
     _G._activatedToggles = {}  -- FIX: resetear al abrir hub de nuevo
     _G._hubRunning = true   -- bloquear nuevas llamadas mientras se construye este hub
@@ -63946,6 +64390,7 @@ function abrirHub()
     if not hubGui.Parent then hubGui.Parent = playerGui end
     print("3: hubGui parent =", tostring(hubGui.Parent))
     print("3: ScreenGui creado y parenteado")
+    hubGui.Destroying:Connect(_cleanupMainGuiConnections)
 
 mainFrame = Instance.new("Frame", hubGui)
 print("3: mainFrame creado")
@@ -63990,7 +64435,8 @@ end)
 _G._isMobileHub = _isMobileHub
 
 -- Tama?o base fijo: UIScale se encarga de ajustar segun dispositivo
-mainFrame.Size = UDim2.new(0, 950, 0, 555)
+_G._ZQHubBaseSize = _isMobileHub and UDim2.new(0, 1080, 0, 500) or UDim2.new(0, 950, 0, 555)
+mainFrame.Size = _G._ZQHubBaseSize
 
 -- ================================================================
 -- == GUARDIAN DE FORMA DEL HUB v1
@@ -64001,13 +64447,13 @@ mainFrame.Size = UDim2.new(0, 950, 0, 555)
 -- script pise el frame del hub.
 -- ================================================================
 do
-    local _guardSize   = UDim2.new(0, 950, 0, 555)
+    local _guardSize   = _G._ZQHubBaseSize or UDim2.new(0, 950, 0, 555)
     local _guardPos    = UDim2.new(0.5, 0, 0.5, 0)
     local _guardAnchor = Vector2.new(0.5, 0.5)
     local _guardBusy   = false   -- re-entrancy lock
 
     -- HUB MOVIBLE: allowDragMove permite que el drag actualice _guardPos
-    _G._hubAllowDragMove = true
+    _G._hubAllowDragMove = false
     _G._hubDragging = false
 
     mainFrame:GetPropertyChangedSignal("Size"):Connect(function()
@@ -64067,7 +64513,7 @@ do
 
     -- El header real se conecta mas abajo si existe; fallback al frame completo
     local dragTarget = mainFrame
-    dragTarget.Active = true
+    dragTarget.Active = false
 
     local function moveSmooth(targetPos)
         if _dragSmooth then pcall(function() _dragSmooth:Cancel() end) end
@@ -64075,33 +64521,11 @@ do
         _dragSmooth:Play()
     end
 
-    dragTarget.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            _dragging = true
-            _G._hubDragging = true
-            _dragStart = input.Position
-            _startPos = mainFrame.Position
-        end
-    end)
+    -- Hub fijo: no se registran handlers de inicio de drag.
 
-    dragTarget.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            _dragging = false
-            _G._hubDragging = false
-        end
-    end)
+    -- Hub fijo: no se registran handlers de fin de drag.
 
-    UserInputService.InputChanged:Connect(function(input)
-        if not _dragging then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
-        local d = input.Position - _dragStart
-        local vp = workspace.CurrentCamera.ViewportSize
-        local pos = UDim2.fromOffset(
-            math.clamp(_startPos.X.Offset + d.X, -mainFrame.AbsoluteSize.X + 80, vp.X - 80),
-            math.clamp(_startPos.Y.Offset + d.Y, -mainFrame.AbsoluteSize.Y + 80, vp.Y - 80)
-        )
-        moveSmooth(pos)
-    end)
+    -- Hub fijo: no se conecta InputChanged para mover el frame.
 end
 -- ================================================================
 -- == FIN HUB DRAG SUAVE
@@ -64481,7 +64905,7 @@ end
 
 -- Helper global: siempre 750x420 (UIScale se encarga de la escala)
 _getHubSize = function()
-    return UDim2.new(0, 950, 0, 555)
+    return _G._ZQHubBaseSize or UDim2.new(0, 950, 0, 555)
 end
 
 uiScale = Instance.new("UIScale", mainFrame)
@@ -64504,14 +64928,12 @@ _getTargetScale = function()
     -- DEBUG: imprimir valores reales para diagnosticar
     _log("SCALE DEBUG VP=", tostring(_vpNow.X), "x", tostring(_vpNow.Y), "isMobile=", tostring(_isMobileNow))
     if _isMobileNow then
-        -- MAS ANCHO Y MAS CHICO: escala por ancho (casi llena la pantalla),
-        -- pero la altura se limita fuerte para que no ocupe tanto vertical.
-        -- _scaleByW: que el frame de 950px ocupe casi todo el ancho disponible (margen 8px c/lado)
-        -- _scaleByH: que el frame de 555px no pase del 52% del alto de pantalla
-        local _scaleByW = (_vpNow.X - 16) / 950   -- casi ancho completo
-        local _scaleByH = (_vpNow.Y * 0.52) / 555  -- maximo 52% del alto
-        -- Se usa el menor de los dos para que no se corte, pero con clamp bajo en alto
-        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.20, 0.72)
+        -- Calcular escala exacta para que el frame entre en pantalla con margen reducido
+        -- MODIFICADO: divisores mas grandes y clamp menor para que ocupe menos pantalla en celu
+        -- Base movil 1080x500: mas ancha, pero con menor altura visual.
+        local _scaleByW = (_vpNow.X - 20) / 1080
+        local _scaleByH = (_vpNow.Y - 36) / 560
+        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.20, 0.54)
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
     else
@@ -64547,12 +64969,13 @@ do
             }):Play()
         end)
     else
-        uiScale.Scale = 0  -- inicia en 0 para animar
+        -- ZQ MOTION v2: sin rebote Back y sin arrancar en 0 (evita el frame
+        -- colapsado y cualquier estado intermedio si la apertura se interrumpe).
+        uiScale.Scale = _openTargetScale * 0.94
         task.defer(function()
-            -- Escala: 0 -> target con Back easing (rebote suave al abrir)
-            TweenService:Create(uiScale, TweenInfo.new(0.80, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            _G._ZQSafeTween(uiScale, _G._ZQTISoft(_G._ZQD.open), {
                 Scale = _openTargetScale
-            }):Play()
+            })
         end)
     end
 end
@@ -64590,7 +65013,7 @@ end
 -- Reajustar escala en mobile cuando rota la pantalla o cambia el viewport
 if _G._isMobileHub then
     pcall(function()
-        workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+        _mainGuiConnect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function()
             task.defer(function()
                 if uiScale and uiScale.Parent then
                     uiScale.Scale = _getTargetScale()
@@ -65138,46 +65561,9 @@ flagStroke.Color = Color3.fromRGB(146, 146, 146)
 flagStroke.Thickness = 2.5
 flagStroke.Transparency = 0
 
--- Animacion de brillo del borde
-task.spawn(function()
-    while flagImg and flagImg.Parent do
-        TweenService:Create(flagStroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-            Transparency = 0.8, Color = Color3.fromRGB(255, 255, 255)
-        }):Play()
-        task.wait(1.2)
-        TweenService:Create(flagStroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-            Transparency = 0, Color = Color3.fromRGB(146, 146, 146)
-        }):Play()
-        task.wait(1.2)
-    end
-end)
-
--- Particulas/destellos alrededor de la bandera
-task.spawn(function()
-    while flagContainer and flagContainer.Parent do
-        task.wait(0.8)
-        for i = 1, 3 do
-            local spark = Instance.new("Frame", flagGui)
-            local bx = flagContainer.AbsolutePosition.X
-            local by = flagContainer.AbsolutePosition.Y
-            local bw = flagContainer.AbsoluteSize.X
-            local bh = flagContainer.AbsoluteSize.Y
-            spark.Size = UDim2.new(0, 4, 0, 4)
-            spark.Position = UDim2.new(0, bx + math.random(0, bw), 0, by + math.random(0, bh))
-            spark.BackgroundColor3 = Color3.fromRGB(math.random(150,220), math.random(150,220), math.random(150,220))
-            spark.BackgroundTransparency = 0
-            spark.BorderSizePixel = 0
-            spark.ZIndex = 202
-            Instance.new("UICorner", spark).CornerRadius = UDim.new(1, 0)
-            TweenService:Create(spark, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, 1, 0, 1),
-                BackgroundTransparency = 1,
-                Position = UDim2.new(0, bx + math.random(-10, bw+10), 0, by - math.random(10, 30))
-            }):Play()
-            task.delay(0.65, function() pcall(function() spark:Destroy() end) end)
-        end
-    end
-end)
+-- STABLE: la bandera fue retirada (Visible=false y Size=0). No iniciar tweens ni
+-- crear particulas invisibles. Si vuelve a habilitarse en una version futura,
+-- su animacion debe arrancarse explicitamente desde el lifecycle del componente.
 
 -- Bandera draggable
 flagDragging, flagDragStart, flagStartPos = false, nil, nil
@@ -65552,7 +65938,7 @@ particles = {}
             -- Refrescar cache cuando la camara cambia de tamaño (ventana redimensionada)
             local _ddResizeConn
             pcall(function()
-                _ddResizeConn = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                _ddResizeConn = _mainGuiConnect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function()
                     _ddVp    = workspace.CurrentCamera.ViewportSize
                     _ddInset = 0
                     pcall(function() _ddInset = GuiService:GetGuiInset().Y end)
@@ -65600,9 +65986,15 @@ particles = {}
         -- InputBegan: activar drag inmediatamente al presionar (fallback manual)
         -- FIX DRAG BORDER BUG: si UIDragDetector es compatible (_ddSupported), NO usar el
         -- fallback. El fallback competia con UIDragDetector causando el salto a la esquina.
-        UserInputService.InputBegan:Connect(function(inp)
-            -- DRAG DESACTIVADO: hub fijo para PC y celu
-            return
+        _mainGuiConnect(UserInputService.InputBegan, function(inp)
+            -- Solo activar fallback manual si UIDragDetector NO esta disponible
+            if _ddActive or _ddSupported then return end
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                local mp = UserInputService:GetMouseLocation()
+                _onHeaderPress(Vector2.new(mp.X, mp.Y))
+            elseif inp.UserInputType == Enum.UserInputType.Touch then
+                _onHeaderPress(Vector2.new(inp.Position.X, inp.Position.Y))
+            end
         end)
 
         -- dragIcon: compatibilidad con executors que no exponen UIS correctamente
@@ -65619,13 +66011,13 @@ particles = {}
         -- FIX MOBILE BARRERA: se usa GuiService:GetGuiInset() para compensar
         -- la barra de status de Roblox en celular (~36px arriba).
         -- Sin esto el hub no puede subirse mas alla del inset (barrera invisible).
-        UserInputService.InputChanged:Connect(function(input)
+        _mainGuiConnect(UserInputService.InputChanged, function(input)
             -- HUB NO MOVIBLE: no procesar movimiento de drag
         end)
 
         -- FIX DRAG v-bugfix: Connect directo (NO _safeConnect). Ver comentario en InputBegan.
         -- Fin de drag (un solo Connect, resetea flag siempre)
-        UserInputService.InputEnded:Connect(function(input)
+        _mainGuiConnect(UserInputService.InputEnded, function(input)
             -- HUB NO MOVIBLE: drag desactivado, nada que limpiar
         end)
 
@@ -65844,27 +66236,32 @@ particles = {}
     Instance.new("UICorner", arrowToggleBtn).CornerRadius = UDim.new(1, 0)
 
     -- FIX v32: Hover sin glow grande - solo cambia color del icono
+    -- v79: hover/leave por el gestor central. Con TweenService:Create crudo,
+    -- entrar y salir rapido dejaba dos tweens de ImageColor3 peleandose y el
+    -- icono se quedaba con el color del hover de forma permanente.
     arrowToggleBtn.MouseEnter:Connect(function()
-        TweenService:Create(arrowLabel, TweenInfo.new(0.13), {
+        _G._ZQSafeTween(arrowLabel, _G._ZQTIOut(_G._ZQD.hover), {
             ImageColor3 = Color3.fromRGB(186, 133, 198),  -- oro brillante en hover
-        }):Play()
+        })
     end)
     arrowToggleBtn.MouseLeave:Connect(function()
-        TweenService:Create(arrowLabel, TweenInfo.new(0.18), {
+        _G._ZQSafeTween(arrowLabel, _G._ZQTIOut(0.18), {
             ImageColor3 = ThemeColors.TextPrimary,  -- blanco calido normal
-        }):Play()
+        })
     end)
 
     -- Press: achica al clickear, vuelve con Back easing
     arrowToggleBtn.MouseButton1Down:Connect(function()
-        TweenService:Create(arrowLabel, TweenInfo.new(0.07), {
+        -- v79: el press y el release comparten ImageTransparency. Por el gestor
+        -- central el release siempre pisa al press y nunca queda a medio fade.
+        _G._ZQSafeTween(arrowLabel, _G._ZQTIOut(0.07), {
             ImageTransparency = 0.35,  -- press: leve fade en vez de achicar
-        }):Play()
+        })
     end)
     arrowToggleBtn.MouseButton1Up:Connect(function()
-        TweenService:Create(arrowLabel, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        _G._ZQSafeTween(arrowLabel, TweenInfo.new(_G._ZQD.press, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             ImageTransparency = 0,
-        }):Play()
+        })
     end)
 
     -- FIX DUPLICADO: el handler de cierre real esta mas abajo.
@@ -65952,21 +66349,59 @@ particles = {}
 
     local tabNames = {"HOME", "GAMEPLAY", "VISUALS", "VIP", "SETTINGS", "BATTLE", "USE", "UPDATE"}
     local tabFunctions = {CreateMainTab, CreateWorldTab, CreateVisualsTab, CreatePremiumTab, CreateExclusiveTab, CreateCombatTab,
-        function() CreateUseTab() end,      -- late binding: CreateUseTab se define despues de esta tabla
-        function() CreateUpdateTab() end}   -- late binding: CreateUpdateTab
-    -- IDs de rbxassetid eliminados: se usan emojis en lugar de imagenes
+        function() CreateUseTab() end,       -- late binding
+        function() CreateUpdateTab() end}    -- late binding
+    -- Solo las ocho pestanas visibles de la referencia; EMOTES y extras quedan fuera.
     local tabIcons = { "", "", "", "", "", "", "", "" }
     local tabEmojis = { "", "", "", "", "", "", "", "" }
 
     local sideButtons = {}
     local activeTabIdx = 1
     local tabScrollPositions = {}
+
+    local function _stabilizePrimaryScrolls(idx)
+        local frames = _G._tabScrollFrames and _G._tabScrollFrames[idx]
+        if not frames then return end
+        for _, sf in ipairs(frames) do
+            if sf and sf.Parent and (sf.Name == "LeftColumn" or sf.Name == "RightColumn") then
+                pcall(function()
+                    sf.ScrollingEnabled = true
+                    sf.ScrollingDirection = Enum.ScrollingDirection.Y
+                    sf.ElasticBehavior = Enum.ElasticBehavior.Never
+                    sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+                    sf.CanvasSize = UDim2.new(0, 0, 0, 0)
+                end)
+            end
+        end
+    end
+
+    local function _restoreTabScroll(idx, token)
+        local saved = tabScrollPositions[idx]
+        local frames = _G._tabScrollFrames and _G._tabScrollFrames[idx]
+        if not saved or not frames then return end
+        local function apply()
+            if token ~= _G._tabSwitchToken then return end
+            for i, sf in ipairs(frames) do
+                local pos = saved[i]
+                if sf and sf.Parent and pos then
+                    local maxY = math.max(0, sf.AbsoluteCanvasSize.Y - sf.AbsoluteSize.Y)
+                    sf.CanvasPosition = Vector2.new(pos.X, math.clamp(pos.Y, 0, maxY))
+                end
+            end
+        end
+        apply()
+        -- A second layout-cycle commit handles AutomaticCanvasSize settling.
+        task.defer(apply)
+    end
     -- OPT: tabla de refs precacheadas (icon, stroke, activeBar, lbl2) para cada boton
     -- Se llena despues de crear los botones; evita FindFirstChild en cada SetActiveTab
     _G._tabBtnRefs = {}
 
     local _togglePersist = {}
-    _G._toggleCallbacks = _G._toggleCallbacks or {}
+    -- A real rebuild creates new controls; discard stale UI closures.
+    _G._toggleCallbacks = {}
+    _G._toggleApplyStates = {}
+    _G._toggleApplyByTab = {}
     local _toggleCallbacks = _G._toggleCallbacks
 
     local function _saveToggleStates(tabIdx) end
@@ -66028,11 +66463,12 @@ particles = {}
         _buildMutex = true
         _G._tabBuilding[idx] = true
 
-        local tabFrame = Instance.new("Frame")
+        local tabFrame = Instance.new("CanvasGroup")
         tabFrame.Name                   = "TabCache_" .. tostring(idx)
         tabFrame.Size                   = UDim2.new(1, 0, 1, 0)
         tabFrame.Position               = UDim2.new(0, 0, 0, 0)
         tabFrame.BackgroundTransparency = 1
+        tabFrame.GroupTransparency      = 0
         tabFrame.BorderSizePixel        = 0
         tabFrame.ZIndex                 = 1
         tabFrame.Visible                = false
@@ -66065,26 +66501,38 @@ particles = {}
             -- Solo ahora el tab pasa a estado BUILT.
             _tabBuilt[idx] = true
 
-            -- Cachear ScrollingFrames despues de terminar el build.
-            task.defer(function()
-                if not tabFrame or not tabFrame.Parent then return end
-                local sfs = {}
-                for _, d in ipairs(tabFrame:GetDescendants()) do
-                    if d:IsA("ScrollingFrame") then sfs[#sfs + 1] = d end
-                end
-                _G._tabScrollFrames[idx] = sfs
-            end)
-
-            -- Aplicar fuente activa sin tocar estados/propiedades visuales de toggles.
-            task.defer(function()
-                if _G._hubActiveFontFace and tabFrame and tabFrame.Parent then
-                    for _, obj in ipairs(tabFrame:GetDescendants()) do
-                        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-                            pcall(function() obj.FontFace = _G._hubActiveFontFace end)
+            -- v79 PERF: UNA sola pasada de GetDescendants por build.
+            -- Antes el arbol completo se recorria TRES veces seguidas:
+            -- _ZQBaselineTree, el cacheo de ScrollingFrames y el pase de
+            -- fuente diferido. En BATTLE (el arbol mas grande del hub) eso
+            -- eran tres barridos de miles de nodos en el mismo instante en
+            -- que el usuario espera ver la pestania. Ahora es un recorrido
+            -- unico que hace los tres trabajos.
+            --
+            -- La foto (baseline) sigue siendo del estado RECIEN CONSTRUIDO:
+            -- el unico momento en el que la pestania esta garantizadamente
+            -- sana y por lo tanto la referencia de todo restore posterior.
+            local sfs = {}
+            pcall(function()
+                local desc  = tabFrame:GetDescendants()
+                local font  = _G._hubActiveFontFace
+                _G._ZQBaselineCapture(tabFrame)
+                for i = 1, #desc do
+                    local d = desc[i]
+                    if d:IsA("GuiObject") then
+                        _G._ZQBaselineCapture(d)
+                        if d:IsA("ScrollingFrame") then
+                            sfs[#sfs + 1] = d
                         end
+                        if font and (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) then
+                            pcall(function() d.FontFace = font end)
+                        end
+                    elseif d:IsA("UIStroke") or d:IsA("UIScale") or d:IsA("UIGradient") then
+                        _G._ZQBaselineCapture(d)
                     end
                 end
             end)
+            _G._tabScrollFrames[idx] = sfs
 
             _G._tabBuilding[idx] = nil
             _buildMutex = false
@@ -66155,6 +66603,18 @@ particles = {}
             end
             _zqIconTw[i] = nil
         end
+        -- v79 FIX ESTADO VISUAL: el bob infinito y esta pose base escribian
+        -- los dos la MISMA propiedad (Position) del mismo icono. Si el icono
+        -- que se apaga era el que estaba flotando, el tween seguia vivo y
+        -- seguia moviendolo despues de este reset, dejando el icono fuera de
+        -- lugar. Se corta el bob primero y despues se fija la pose.
+        local _bob = _G._tabIconBob
+        if type(_bob) == "table" and _bob.icon == img then
+            if _bob.tween then pcall(function() _bob.tween:Cancel() end) end
+            _bob.tween = nil
+            _bob.icon  = nil
+            _bob.baseY = nil
+        end
         img.Rotation = 0
         img.Position = UDim2.fromScale(0.165, 0.50)
         img.Size = UDim2.fromScale(0.22, 0.88)
@@ -66181,51 +66641,51 @@ particles = {}
             -- v64: ese relleno ahora es el azul electrico de la imagen; el
             -- texto, el icono y el borde usan el azul claro para que se lean.
             btn.BackgroundColor3 = _ZQ_TabFill
-            TweenService:Create(btn, ti, {
+            _G._ZQSafeTween(btn, ti, {
                 BackgroundTransparency = 0.42,
-            }):Play()
-            if stroke then TweenService:Create(stroke, ti, {
+            })
+            if stroke then _G._ZQSafeTween(stroke, ti, {
                 Color = _ZQ_Primary,
                 Thickness = 1.4,
                 Transparency = 0.10,
-            }):Play() end
-            if lbl2 then TweenService:Create(lbl2, ti, {
+            }) end
+            if lbl2 then _G._ZQSafeTween(lbl2, ti, {
                 TextColor3 = Color3.fromRGB(255, 255, 255),
                 TextSize = _G._ZQFLAT.TAB_TEXT_SZ,  -- v63: no cambia de tamanio
                 TextTransparency = 0,  -- FIX: restaurar texto al cambiar pestana
-            }):Play() end
-            if iconLbl then TweenService:Create(iconLbl, ti, {
+            }) end
+            if iconLbl then _G._ZQSafeTween(iconLbl, ti, {
                 TextColor3 = _ZQ_Primary,
                 TextTransparency = 0,  -- FIX: restaurar icono al cambiar pestana
-            }):Play() end
-            if accentBar then TweenService:Create(accentBar, ti, {
+            }) end
+            if accentBar then _G._ZQSafeTween(accentBar, ti, {
                 Size = UDim2.fromScale(0.012, 0.70),
                 BackgroundTransparency = 0,
-            }):Play() end
+            }) end
             -- v67: el icono de ESTA pestania es el unico que se mueve.
             _zqIconFloat(i, true)
         else
-            TweenService:Create(btn, ti, {
+            _G._ZQSafeTween(btn, ti, {
                 BackgroundTransparency = 1,
-            }):Play()
-            if stroke then TweenService:Create(stroke, ti, {
+            })
+            if stroke then _G._ZQSafeTween(stroke, ti, {
                 Color = _ZQ_Line,
                 Thickness = 1.0,
                 Transparency = 0.35,
-            }):Play() end
-            if lbl2 then TweenService:Create(lbl2, ti, {
+            }) end
+            if lbl2 then _G._ZQSafeTween(lbl2, ti, {
                 TextColor3 = Color3.fromRGB(255, 255, 255),
                 TextSize = _G._ZQFLAT.TAB_TEXT_SZ,  -- v63: no cambia de tamanio
                 TextTransparency = 0,  -- FIX: restaurar texto al cambiar pestana
-            }):Play() end
-            if iconLbl then TweenService:Create(iconLbl, ti, {
+            }) end
+            if iconLbl then _G._ZQSafeTween(iconLbl, ti, {
                 TextColor3 = _ZQ_SubText,
                 TextTransparency = 0,  -- FIX: restaurar icono al cambiar pestana
-            }):Play() end
-            if accentBar then TweenService:Create(accentBar, ti, {
+            }) end
+            if accentBar then _G._ZQSafeTween(accentBar, ti, {
                 Size = UDim2.fromScale(0.012, 0),
                 BackgroundTransparency = 1,
-            }):Play() end
+            }) end
             -- v67: las otras 7 vuelven a la pose base y se quedan quietas.
             _zqIconFloat(i, false)
         end
@@ -66306,8 +66766,8 @@ particles = {}
         {0.775, 0.34, 0.19, 0.095},  -- 4 VIP         mid-right-upper
         {0.075, 0.61, 0.19, 0.095},  -- 5 SETTINGS    mid-left-lower
         {0.775, 0.61, 0.19, 0.095},  -- 6 BATTLE      mid-right-lower
-        {0.075, 0.85, 0.19, 0.095},  -- 7 USE         left-column-bottom (debajo de SETTINGS)
-        {0.775, 0.85, 0.19, 0.095},  -- 8 UPDATE      right-column-bottom (debajo de BATTLE)
+        {0.075, 0.85, 0.19, 0.095},  -- 7 USE
+        {0.775, 0.85, 0.19, 0.095},  -- 8 UPDATE
     }
 
     -- ==================================================================
@@ -66351,8 +66811,8 @@ particles = {}
         ThemeColors.Aurora2,                  -- VIP       : aurora2
         ThemeColors.Aurora3,                  -- SETTINGS  : aurora3
         Color3.fromRGB(72, 140, 68),         -- BATTLE    : amber oscuro
-        Color3.fromRGB(235, 95, 115),         -- USE       : amber medio
-        Color3.fromRGB(72, 140, 68),         -- UPDATE    : bronze
+        Color3.fromRGB(235, 95, 115),         -- USE
+        Color3.fromRGB(72, 140, 68),          -- UPDATE
     }
 
     -- ============================================================
@@ -66390,6 +66850,9 @@ particles = {}
         st.icon = icon
         if not icon then return end
         if _G._hubSettings and _G._hubSettings.noTabAnimations then return end
+        -- v79: con el hub cerrado nadie ve el icono, asi que no se arranca un
+        -- tween infinito. Al reabrir, SetActiveTab lo vuelve a pedir.
+        if _G._hubHidden then st.icon = nil; return end
         local p = icon.Position
         st.baseY   = p.Y.Scale
         st.baseOff = p.Y.Offset
@@ -66406,6 +66869,21 @@ particles = {}
         if not tabNames[idx] then return end
         _G._tabSwitchToken = (_G._tabSwitchToken or 0) + 1
         local myToken = _G._tabSwitchToken
+        -- v70: cambiar de pestania con un selector abierto lo cierra al
+        -- instante y lo deja en estado conocido, asi que su proxima
+        -- apertura no arranca desde un alto intermedio.
+        pcall(function() if _G._ZQCloseAllDrops then _G._ZQCloseAllDrops() end end)
+
+        -- Guardar CanvasPosition del tab saliente antes de cambiar la fuente de verdad.
+        local previousTabIdx = activeTabIdx
+        if previousTabIdx and _G._tabScrollFrames and _G._tabScrollFrames[previousTabIdx] then
+            local saved = {}
+            for i, sf in ipairs(_G._tabScrollFrames[previousTabIdx]) do
+                if sf and sf.Parent then saved[i] = sf.CanvasPosition end
+            end
+            tabScrollPositions[previousTabIdx] = saved
+        end
+
         activeTabIdx = idx
         _G._activeTabIdx = idx
 
@@ -66416,19 +66894,35 @@ particles = {}
             _startTabIconBob(_icon)
         end)
 
-        -- Cambio instantaneo: no fade-out/fade-in ni delays que puedan dejar
-        -- estados de transparencia/visibilidad corruptos al volver al tab.
-        for _, frame in pairs(_tabCache) do
+        -- Restaurar solamente la pagina saliente/visible. El barrido anterior
+        -- recorria TODOS los descendientes de los 8 caches en cada click y era
+        -- la principal fuente de stutter al navegar rapido.
+        for cacheIdx, frame in pairs(_tabCache) do
             if frame and frame.Parent then
+                if cacheIdx == previousTabIdx or frame.Visible then
+                    pcall(function() _G._ZQRestoreTree(frame, true) end)
+                    pcall(function() _G._ZQFinalizePage(frame, false) end)
+                end
                 frame.Visible = false
-                frame.Position = UDim2.new(0, 0, 0, 0)
-                frame.BackgroundTransparency = 1
             end
         end
 
         if (not _G._tabContentActive) or (_G._ZQFLAT and _G._ZQFLAT.SIDEBAR_ALWAYS) then
-            for i = 1, #tabNames do
-                pcall(function() _applyBtnState(i, i == idx) end)
+            -- v79 PERF: _applyBtnState lanza ~5 tweens por boton. Repintar los
+            -- 8 en CADA click eran ~40 tweens por cambio de pestania, de los
+            -- cuales 30 escribian el valor que el boton ya tenia. Ahora solo
+            -- cambian de estado el que sale y el que entra; la primera pasada
+            -- sigue siendo completa para dejar los 8 en un estado conocido.
+            if not _G._tabBtnStatePainted then
+                _G._tabBtnStatePainted = true
+                for i = 1, #tabNames do
+                    pcall(function() _applyBtnState(i, i == idx) end)
+                end
+            else
+                if previousTabIdx and previousTabIdx ~= idx then
+                    pcall(function() _applyBtnState(previousTabIdx, false) end)
+                end
+                pcall(function() _applyBtnState(idx, true) end)
             end
         end
 
@@ -66436,17 +66930,22 @@ particles = {}
             if myToken ~= _G._tabSwitchToken or success == false then return end
             local frame = _tabCache[idx]
             if not frame or not frame.Parent then return end
-            frame.BackgroundTransparency = 1
-            frame.Visible = true
-            -- ANIMACION DE ENTRADA A LA PESTANA: leve deslizamiento hacia arriba
-            if _G._hubSettings and _G._hubSettings.noTabAnimations then
-                frame.Position = UDim2.new(0, 0, 0, 0)
-            else
-                frame.Position = UDim2.new(0, 0, 0, 18)
-                TweenService:Create(frame,
-                    TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                    { Position = UDim2.new(0, 0, 0, 0) }):Play()
-            end
+            -- One deterministic lifecycle for every page: RESET -> ANIMATE -> FINAL.
+            _stabilizePrimaryScrolls(idx)
+            pcall(function()
+                _G._ZQTransitionPageIn(frame, myToken, function(t)
+                    return t == _G._tabSwitchToken and idx == activeTabIdx
+                        and _G._tabContentActive == true
+                end)
+            end)
+
+            -- UI is always derived from logical state; navigation never becomes
+            -- the source of truth for toggles or dropdowns.
+            task.defer(function()
+                if myToken ~= _G._tabSwitchToken then return end
+                pcall(function() _G._ZQResyncToggles(idx) end)
+            end)
+            _restoreTabScroll(idx, myToken)
         end)
     end
     -- ============================================================
@@ -66561,26 +67060,35 @@ particles = {}
         task.delay(_btnDelay, function()
             if not btn or not btn.Parent then return end
             -- Slide hacia la posicion final + fade in del stroke
+            -- v79 FIX "ELEMENTOS QUE DESAPARECEN": esta entrada escalonada duraba
+            -- hasta ~1.6 s y usaba TweenService:Create crudo, fuera del gestor.
+            -- Si el usuario clickeaba una pestania mientras corria, el fade-out
+            -- del click y este fade-in quedaban los dos vivos sobre la MISMA
+            -- propiedad (Transparency del stroke, TextTransparency del label,
+            -- ImageTransparency del icono) y el que terminaba ultimo ganaba:
+            -- de ahi los botones/iconos que se quedaban invisibles para
+            -- siempre. Ahora van por _ZQSafeTween, que tiene un unico dueno
+            -- por propiedad y al ser pisado escribe el valor final exacto.
             local _btnFinalPos = _zqTabPositions[i]
             if _btnFinalPos then
-                TweenService:Create(btn, _ti_btnIn, {
+                _G._ZQSafeTween(btn, _ti_btnIn, {
                     Position = UDim2.fromScale(_btnFinalPos[1], _btnFinalPos[2]),
-                }):Play()
+                })
             end
-            TweenService:Create(bs, _ti_btnIn, {
+            _G._ZQSafeTween(bs, _ti_btnIn, {
                 Transparency = (i == 1) and 0.10 or 0.35,
-            }):Play()
+            })
             -- Fade in de la imagen ZQTabShape
             local _sh = btn:FindFirstChild("ZQTabShape")
             if _sh then
-                TweenService:Create(_sh, _ti_btnIn, {ImageTransparency = 0}):Play()
+                _G._ZQSafeTween(_sh, _ti_btnIn, {ImageTransparency = 0})
             end
             -- Fade in del icono y label
-            TweenService:Create(iconLbl, _ti_btnIn, {TextTransparency = 0}):Play()
-            TweenService:Create(lbl, _ti_btnIn, {TextTransparency = 0}):Play()
+            _G._ZQSafeTween(iconLbl, _ti_btnIn, {TextTransparency = 0})
+            _G._ZQSafeTween(lbl, _ti_btnIn, {TextTransparency = 0})
             -- v67: el icono de imagen entra con el mismo fade escalonado.
             if _imgIcon then
-                TweenService:Create(_imgIcon, _ti_btnIn, {ImageTransparency = 0}):Play()
+                _G._ZQSafeTween(_imgIcon, _ti_btnIn, {ImageTransparency = 0})
             end
             -- v67: en el arranque SetActiveTab corre ANTES de que exista el
             -- boton, asi que _applyBtnState se fue por "if not btn then return"
@@ -66625,35 +67133,38 @@ particles = {}
             _btnHoverScale = Instance.new("UIScale", btn)
             _btnHoverScale.Scale = 1.0
         end
-        local _hoverTiIn  = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-        local _hoverTiOut = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+        local _hoverTiIn  = _G._ZQTIOut(_G._ZQD.hover)
+        local _hoverTiOut = _G._ZQTIOut(0.16)
 
         clickRow.MouseEnter:Connect(function()
             -- Animacion premium: agrandamiento suave al pasar el mouse
-            TweenService:Create(_btnHoverScale, _hoverTiIn, {Scale = 1.08}):Play()
+            _G._ZQSafeTween(_btnHoverScale, _hoverTiIn, {Scale = 1.035})
             if activeTabIdx ~= i then
-                TweenService:Create(bs, _hoverTiIn, {Transparency = 0.10, Thickness = 1.5}):Play()
+                _G._ZQSafeTween(bs, _hoverTiIn, {Transparency = 0.10, Thickness = 1.5})
             end
         end)
         clickRow.MouseLeave:Connect(function()
             -- Volver al tamaño original con easing suave
-            TweenService:Create(_btnHoverScale, _hoverTiOut, {Scale = 1.0}):Play()
+            _G._ZQSafeTween(_btnHoverScale, _hoverTiOut, {Scale = 1.0})
             if activeTabIdx ~= i then
-                TweenService:Create(bs, _hoverTiOut, {Transparency = 0.35, Thickness = 1.0}):Play()
+                _G._ZQSafeTween(bs, _hoverTiOut, {Transparency = 0.35, Thickness = 1.0})
             end
         end)
 
         local lastClick = 0
         clickRow.Activated:Connect(function()
             local now = tick()
-            if now - lastClick < 0.35 then return end
+            if now - lastClick < 0.12 then return end
             lastClick = now
             PlayTabSound()
+            -- v70: feedback de click muy corto. El UIScale vuelve SIEMPRE a
+            -- su base exacta, nunca altera Position/Size/AnchorPoint.
+            pcall(function() _G._ZQPress(btn, 1.0, 0.97) end)
 
             -- ANIMACION DE ENTRADA A PESTANA v29b: fade-out de TODOS los botones
             -- (incluyendo el clickeado) al entrar a una pestana.
             -- Al salir, el bloque de restauracion escalonada los devuelve todos.
-            local _ti_fadeOut = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+            local _ti_fadeOut = _G._ZQTIIn(0.18)
             for _jj, _otherBtn2 in ipairs(sideButtons) do
                 local _capturedBtn = _otherBtn2
                 -- v63: con la barra fija no hay fade-out. Se marca cual quedo
@@ -66685,16 +67196,16 @@ particles = {}
                     _capturedBtn.Visible = true
                     if _rShp2 then _rShp2.Visible = true end
                     -- Tweens de fade-out
-                    if _rIcon2 then TweenService:Create(_rIcon2, _ti_fadeOut, {TextTransparency = 1}):Play() end
+                    if _rIcon2 then _G._ZQSafeTween(_rIcon2, _ti_fadeOut, {TextTransparency = 1}) end
                     -- v67: el icono se va con el resto del boton y deja de moverse.
-                    if _rImg2  then TweenService:Create(_rImg2,  _ti_fadeOut, {ImageTransparency = 1}):Play() end
+                    if _rImg2  then _G._ZQSafeTween(_rImg2,  _ti_fadeOut, {ImageTransparency = 1}) end
                     _zqIconFloat(_jj, false)
-                    if _rLbl2  then TweenService:Create(_rLbl2,  _ti_fadeOut, {TextTransparency = 1}):Play() end
-                    if _rStr2  then TweenService:Create(_rStr2,  _ti_fadeOut, {Transparency      = 1}):Play() end
-                    if _rShp2  then TweenService:Create(_rShp2,  _ti_fadeOut, {ImageTransparency = 1}):Play() end
+                    if _rLbl2  then _G._ZQSafeTween(_rLbl2,  _ti_fadeOut, {TextTransparency = 1}) end
+                    if _rStr2  then _G._ZQSafeTween(_rStr2,  _ti_fadeOut, {Transparency      = 1}) end
+                    if _rShp2  then _G._ZQSafeTween(_rShp2,  _ti_fadeOut, {ImageTransparency = 1}) end
                 end)
                 -- Ocultar el frame raiz despues de que el tween termine
-                task.delay(0.40, function()
+                task.delay(0.20, function()
                     if _capturedBtn and _capturedBtn.Parent then
                         _capturedBtn.Visible = false
                     end
@@ -66713,16 +67224,16 @@ particles = {}
                         -- Fade out + scale down del panel central
                         local _scExit = _nbC:FindFirstChildOfClass("UIScale")
                         if _scExit then
-                            TweenService:Create(_scExit, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Scale = 0.80}):Play()
+                            _G._ZQSafeTween(_scExit, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Scale = 0.80})
                         end
                         local _strExit = _nbC:FindFirstChildOfClass("UIStroke")
                         if _strExit then
-                            TweenService:Create(_strExit, TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Transparency = 1}):Play()
+                            _G._ZQSafeTween(_strExit, TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Transparency = 1})
                         end
                         for _, _child in ipairs(_nbC:GetDescendants()) do
                             pcall(function()
                                 if _child:IsA("TextLabel") or _child:IsA("TextButton") then
-                                    TweenService:Create(_child, TweenInfo.new(0.20), {TextTransparency = 1}):Play()
+                                    _G._ZQSafeTween(_child, TweenInfo.new(0.20), {TextTransparency = 1})
                                 end
                             end)
                         end
@@ -66781,11 +67292,19 @@ particles = {}
             if tabDockFrame then tabDockFrame.BackgroundTransparency = 0.30 end  -- TRANSPARENCIA restaurada
         else
             if tabDockFrame then TweenService:Create(tabDockFrame, TweenInfo.new(0.25), {BackgroundTransparency = 0.15}):Play() end
-            TweenService:Create(contentContainer, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(_G._ZQFLAT.CONTENT_X, 0, 1.5, 0)}):Play()
-            task.wait(0.32)
-            serverPanel.Visible = true
-            serverPanel.Position = UDim2.new(0, 20, 1.5, 0)
-            TweenService:Create(serverPanel, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 20, 0, 60)}):Play()
+            _G._ZQSafeTween(contentContainer, TweenInfo.new(0.20, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(_G._ZQFLAT.CONTENT_X, 0, 1.5, 0)})
+            -- v79 LIFECYCLE: antes esto era task.wait(0.22) DENTRO del handler,
+            -- asi que el hilo del click quedaba bloqueado 220 ms y una segunda
+            -- interaccion en ese hueco se resolvia en orden invertido. Ahora es
+            -- un delay con guarda de estado: si el usuario ya volvio a las
+            -- pestanias, este tramo simplemente no se ejecuta.
+            task.delay(0.22, function()
+                if tabsVisible then return end
+                if not (serverPanel and serverPanel.Parent) then return end
+                serverPanel.Visible = true
+                serverPanel.Position = UDim2.new(0, 20, 1.5, 0)
+                _G._ZQSafeTween(serverPanel, _G._ZQTISoft(0.28), {Position = UDim2.new(0, 20, 0, 60)})
+            end)
         end
         RefreshRoles()
     end
@@ -66799,14 +67318,22 @@ particles = {}
             if fpsConn then fpsConn:Disconnect(); fpsConn = nil end
             if tabDockFrame then tabDockFrame.BackgroundTransparency = 0.30 end  -- TRANSPARENCIA restaurada
         else
-            TweenService:Create(serverPanel, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(0, 20, 1.5, 0)}):Play()
-            task.wait(0.32)
-            serverPanel.Visible = false
+            _G._ZQSafeTween(serverPanel, TweenInfo.new(0.20, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(0, 20, 1.5, 0)})
+            -- v79 LIFECYCLE: mismo caso que ShowServerPanel. La conexion de FPS
+            -- se corta YA (no hay panel que alimentar) y el ocultado del panel
+            -- se hace al terminar la animacion, con guarda de estado.
             if fpsConn then fpsConn:Disconnect(); fpsConn = nil end
+            task.delay(0.22, function()
+                if not tabsVisible then return end
+                if serverPanel and serverPanel.Parent then serverPanel.Visible = false end
+            end)
             -- Restaurar dock de tabs
-            if tabDockFrame then TweenService:Create(tabDockFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.55}):Play() end
+            if tabDockFrame then _G._ZQSafeTween(tabDockFrame, _G._ZQTISoft(0.24), {BackgroundTransparency = 0.55}) end
             if contentContainer.Visible then
-                TweenService:Create(contentContainer, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(_G._ZQFLAT.CONTENT_X, 0, 0, 56)}):Play()
+                _G._ZQSafeTween(contentContainer, _G._ZQTISoft(_G._ZQD.tab), {Position = UDim2.new(_G._ZQFLAT.CONTENT_X, 0, 0, 56)})
+            else
+                -- garantia: aunque este oculto, su posicion vuelve al valor final
+                contentContainer.Position = UDim2.new(_G._ZQFLAT.CONTENT_X, 0, 0, 56)
             end
         end
     end
@@ -66895,16 +67422,21 @@ particles = {}
     local function _arrowBtnFire()
         if _arrowBtnDebounce then return end
         _arrowBtnDebounce = true
-        task.delay(0.5, function() _arrowBtnDebounce = false end)
+        task.delay(0.12, function() _arrowBtnDebounce = false end)
 
         -- SI hay una pestana activa abierta: cerrar el contenido y volver al inicio
         if _G._tabContentActive then
             _G._tabContentActive = false
+            _G._tabSwitchToken = (_G._tabSwitchToken or 0) + 1
+            -- v70: salir con un selector abierto no puede dejarlo flotando.
+            pcall(function() if _G._ZQCloseAllDrops then _G._ZQCloseAllDrops() end end)
             pcall(function()
-                TweenService:Create(arrowLabel, TweenInfo.new(0.20, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Rotation = -12}):Play()
-                task.delay(0.70, function()
+                _G._ZQSafeTween(arrowLabel, TweenInfo.new(0.20, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Rotation = -12})
+                task.delay(0.24, function()
                     if arrowLabel and arrowLabel.Parent then
-                        TweenService:Create(arrowLabel, TweenInfo.new(0.30, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Rotation = 0}):Play()
+                        -- v70: sin Back. El overshoot dejaba la flecha torcida
+                        -- si se volvia a clickear en medio del rebote.
+                        _G._ZQSafeTween(arrowLabel, _G._ZQTIOut(0.16), {Rotation = 0})
                     end
                 end)
             end)
@@ -66917,7 +67449,7 @@ particles = {}
             -- Al salir solo ocultamos el ROOT del tab/contenedor. Esto conserva
             -- exactamente el estado visual original de cada toggle, slider,
             -- label, icono y UIStroke.
-            local _exitDuration = 0.90
+            local _exitDuration = _G._ZQD.tab
             local _activeFrame = _tabCache and _tabCache[activeTabIdx]
             if _activeFrame and _activeFrame.Parent then
                 -- v60: antes se ocultaba de golpe mientras el contenedor hacia
@@ -66941,16 +67473,16 @@ particles = {}
             -- Animacion de salida del contentContainer
             local _sc = contentContainer and contentContainer:FindFirstChildOfClass("UIScale")
             if _sc then
-                TweenService:Create(_sc,
+                _G._ZQSafeTween(_sc,
                     TweenInfo.new(_exitDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
                     {Scale = 0.90}
-                ):Play()
+                )
             end
             if contentContainer then
-                TweenService:Create(contentContainer,
+                _G._ZQSafeTween(contentContainer,
                     TweenInfo.new(_exitDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
                     {BackgroundTransparency = 1}
-                ):Play()
+                )
             end
             task.delay(_exitDuration + 0.05, function()
                 if contentContainer then contentContainer.Position = UDim2.new(_G._ZQFLAT.CONTENT_X, 0, 0, 56) end
@@ -67001,24 +67533,24 @@ particles = {}
 
                 -- PASO 2 - animar fade-in escalonado sobre los botones ya visibles
                 for _rIdx, _restoreBtn in ipairs(sideButtons) do
-                    local _rDelay = (_rIdx - 1) * 0.10  -- 100ms entre cada boton
+                    local _rDelay = (_rIdx - 1) * 0.028  -- v70: cascada corta, no 100ms
                     local _captured = _restoreBtn
                     task.delay(_rDelay, function()
                         if not _captured or not _captured.Parent then return end
-                        local _restoreTi = TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        local _restoreTi = _G._ZQTIOut(0.18)
                         local _rIcon = _captured:FindFirstChild("TabIcon")
                         local _rImg  = _captured:FindFirstChild("TabIconImg")
                         local _rLbl  = _captured:FindFirstChild("TabLabel")
                         local _rStr  = _captured:FindFirstChildOfClass("UIStroke")
                         local _shape = _captured:FindFirstChild("ZQTabShape")
                         if _shape and _shape:IsA("ImageLabel") then
-                            TweenService:Create(_shape, _restoreTi, {ImageTransparency = 0}):Play()
+                            _G._ZQSafeTween(_shape, _restoreTi, {ImageTransparency = 0})
                         end
-                        if _rIcon then TweenService:Create(_rIcon, _restoreTi, {TextTransparency = 0}):Play() end
+                        if _rIcon then _G._ZQSafeTween(_rIcon, _restoreTi, {TextTransparency = 0}) end
                         -- v67: el icono vuelve con el mismo fade que el resto.
-                        if _rImg  then TweenService:Create(_rImg,  _restoreTi, {ImageTransparency = 0}):Play() end
-                        if _rLbl  then TweenService:Create(_rLbl,  _restoreTi, {TextTransparency = 0}):Play() end
-                        if _rStr  then TweenService:Create(_rStr,  _restoreTi, {Transparency = 0.35}):Play() end
+                        if _rImg  then _G._ZQSafeTween(_rImg,  _restoreTi, {ImageTransparency = 0}) end
+                        if _rLbl  then _G._ZQSafeTween(_rLbl,  _restoreTi, {TextTransparency = 0}) end
+                        if _rStr  then _G._ZQSafeTween(_rStr,  _restoreTi, {Transparency = 0.35}) end
                     end)
                 end
 
@@ -67048,26 +67580,26 @@ particles = {}
                             end
 
                             -- ANIMACION LENTA: el cuadrado aparece con Back easing (rebote suave)
-                            local _animTiSlow = TweenInfo.new(0.75, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+                            local _animTiSlow = TweenInfo.new(0.34, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
                             local _animTiFade = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
                             -- UIScale: pop de escala desde 0.70 hasta 1
                             local _sc = _nbC:FindFirstChildOfClass("UIScale")
                             if _sc then
                                 _sc.Scale = 0.70
-                                TweenService:Create(_sc, _animTiSlow, {Scale = 1.0}):Play()
+                                _G._ZQSafeTween(_sc, _animTiSlow, {Scale = 1.0})
                             end
 
                             -- Fade in del stroke
                             if _nbStroke then
-                                TweenService:Create(_nbStroke, _animTiFade, {Transparency = 0.25}):Play()
+                                _G._ZQSafeTween(_nbStroke, _animTiFade, {Transparency = 0.25})
                             end
 
                             -- Imagen ZQShape: fade in
                             local _nbShape = _nbC:FindFirstChild("ZQShape")
                             if _nbShape then
                                 _nbShape.ImageTransparency = 1
-                                TweenService:Create(_nbShape, _animTiFade, {ImageTransparency = 0}):Play()
+                                _G._ZQSafeTween(_nbShape, _animTiFade, {ImageTransparency = 0})
                             end
 
                             -- Texto: fade in con delay
@@ -67076,7 +67608,7 @@ particles = {}
                                 for _, _child in ipairs(_nbC:GetDescendants()) do
                                     pcall(function()
                                         if _child:IsA("TextLabel") or _child:IsA("TextButton") then
-                                            TweenService:Create(_child, _animTiFade, {TextTransparency = 0}):Play()
+                                            _G._ZQSafeTween(_child, _animTiFade, {TextTransparency = 0})
                                         end
                                     end)
                                 end
@@ -67096,6 +67628,9 @@ particles = {}
         -- aparte. Ahora anotamos el valor que tenia cada cosa ANTES de
         -- apagarla y al reabrir se devuelve ese mismo valor: forzar 0 seria
         -- peor, prenderia los labels que estan atenuados a proposito.
+        -- v70: TEST 17 -- cerrar el hub con un selector abierto.
+        pcall(function() if _G._ZQCloseAllDrops then _G._ZQCloseAllDrops() end end)
+
         _G._ZQ_FadeSnap = { txt = {}, num = {}, tw = {} }
         local _fsnap = _G._ZQ_FadeSnap
         local function _fsTxt(o)
@@ -67110,6 +67645,8 @@ particles = {}
         function _G._ZQ_RestoreFade()
             -- v58: si reabrio en medio del cierre, el overlay se va ya
             pcall(function() if _G._ZQ_MorphKill then _G._ZQ_MorphKill() end end)
+            -- v70: el visual de los toggles se re-deriva del estado logico.
+            task.defer(function() pcall(function() _G._ZQResyncToggles() end) end)
             local s = _G._ZQ_FadeSnap
             if not s then return 0 end
             _G._ZQ_FadeSnap = nil
@@ -67155,7 +67692,7 @@ particles = {}
                 -- guardian de forma NO lo vigila, el borde ya sincroniza su escala
                 -- con el (linea ~63900) y la reapertura restaura todo via
                 -- _ZQ_RestoreFade() + _getTargetScale().
-                local _closeDur = 0.5
+                local _closeDur = _G._ZQD.close
                 local _closeTI  = TweenInfo.new(_closeDur, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
                 -- Fade + deslizamiento del frame principal
                 _fsNum(_mainFrameRef, "BackgroundTransparency")
@@ -67187,17 +67724,9 @@ particles = {}
                     _fsNum(_tb, "BackgroundTransparency")
                     _fsPlay(TweenService:Create(_tb, _closeTI, {BackgroundTransparency = 1}))
                 end
-                -- Los labels se apagan primero (mas rapido) para un cierre escalonado
-                pcall(function()
-                    for _, desc in ipairs(_mainFrameRef:GetDescendants()) do
-                        if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.TextTransparency < 0.9 then
-                            _fsTxt(desc)
-                            _fsPlay(TweenService:Create(desc,
-                                TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                                {TextTransparency = 1}))
-                        end
-                    end
-                end)
+                -- No crear un Tween por cada label al cerrar. El colapso del root
+                -- y el apagado atomico del ScreenGui producen el mismo cierre sin
+                -- cientos de tweens/conexiones ni snapshots de descendientes.
                 if tabDockFrame then
                     _fsNum(tabDockFrame, "BackgroundTransparency")
                     _fsPlay(TweenService:Create(tabDockFrame, _closeTI, {BackgroundTransparency = 1}))
@@ -67209,11 +67738,16 @@ particles = {}
             pcall(function() if _G._ZQ_MorphClose then _G._ZQ_MorphClose() end end)
         end
         _G._hubHidden = true
+        -- v79: cerrar el hub apaga la animacion permanente del icono activo.
+        pcall(function() if _G._ZQStopTabIconBob then _G._ZQStopTabIconBob() end end)
         pcall(_flushConfig)
-        task.delay(0.60, function()  -- v8: delay ajustado a duracion de cierre (0.55s)
+        pcall(function() _G._ZQHubSetState("CLOSING") end)
+        local _closeToken = (_G._ZQHubToken and _G._ZQHubToken()) or 0
+        task.delay((_G._ZQD and _G._ZQD.close or 0.28) + 0.06, function()  -- stable: atado a la duracion real
             -- FIX v56: si el usuario reabrio dentro de esos 0.60 s, este
             -- delay apagaba el ScreenGui recien prendido y el hub se iba.
             if not _G._hubHidden then return end
+            if _G._ZQHubToken and not _G._ZQHubTokenOk(_closeToken) then return end
             pcall(function() if _hubGuiRef then _hubGuiRef.Enabled = false end end)
             pcall(function()
                 for _, parent in ipairs({ LocalPlayer:FindFirstChildOfClass("PlayerGui"), CoreGui }) do
@@ -67222,6 +67756,7 @@ particles = {}
                 if gethui then local _gh = gethui():FindFirstChild("f"); if _gh then _gh.Enabled = false end end
             end)
             if tabDockGui then pcall(function() tabDockGui.Enabled = false end) end
+            pcall(function() _G._ZQHubSetState("CLOSED") end)
         end)
         -- Skull reopener
         local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -67470,9 +68005,9 @@ particles = {}
             -- v42: loop de rotacion RGB eliminado; el color del borde lo anima
             -- el bloque de arriba con la paleta del hub cada 2 s.
 
-            TweenService:Create(rBtn2, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            _G._ZQSafeTween(rBtn2, _G._ZQTISoft(0.26), {
                 Size = UDim2.new(0, SKULL_SIZE2 * 1.0, 0, SKULL_SIZE2 * 1.0)  -- FIX v41: llena el frame completo
-            }):Play()
+            })
 
             -- Hover: borde mas grueso al pasar el mouse
             rBtn2.MouseEnter:Connect(function()
@@ -67528,7 +68063,7 @@ particles = {}
                         -- FIX TAMA?O REOPEN MOBILE: escala correcta ANTES de Enabled=true
                         local _tgtSc = (_getTargetScale and _getTargetScale() or 0.70)
                         local uiScaleR = mainFrame and mainFrame:FindFirstChildOfClass("UIScale")
-                        if uiScaleR then uiScaleR.Scale = _tgtSc * 0.75 end
+                        if uiScaleR then uiScaleR.Scale = _tgtSc * 0.96 end
                         if mainFrame and mainFrame.Parent then
                             mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
                             -- v60: igual que el otro camino de reapertura
@@ -67545,8 +68080,20 @@ particles = {}
                         -- FIX BINDABLES: restaurar todos los botones/bindables flotantes al reabrir
                         pcall(function() if _G._setAllBindablesVisible then _G._setAllBindablesVisible(true) end end)
                         if uiScaleR then
-                            TweenService:Create(uiScaleR, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = _tgtSc}):Play()
+                            -- v70: sin Back y por el gestor central, para que
+                            -- reabrir dos veces seguidas no deje el hub con una
+                            -- escala intermedia.
+                            _G._ZQSafeTween(uiScaleR, _G._ZQTISoft(_G._ZQD.open), {Scale = _tgtSc})
                         end
+                        local _reopenToken = nil
+                        pcall(function() _reopenToken = _G._ZQHubSetState("OPENING") end)
+                        task.delay((_G._ZQD and _G._ZQD.open or 0.32) + 0.05, function()
+                            if not _G._hubHidden
+                            and (not _reopenToken or not _G._ZQHubTokenOk or _G._ZQHubTokenOk(_reopenToken)) then
+                                pcall(function() _G._ZQHubSetState("OPEN") end)
+                            end
+                        end)
+                        task.defer(function() pcall(function() _G._ZQResyncToggles() end) end)
                     else
                         task.spawn(abrirHub)
                     end
@@ -67902,36 +68449,25 @@ particles = {}
             end)
         end
 
-        -- ── LOOPS DE DATOS EN TIEMPO REAL ────────────────────────────
-        task.spawn(function()
-            while _nbCenter and _nbCenter.Parent do
-                pcall(function()
-                    local rol = (_G._currentRole) or (_roleCache and _roleCache.localRole) or "Innocent"
-                    local color = _C_Success
-                    if rol == "Murderer" then color = Color3.fromRGB(255, 80, 80)
-                    elseif rol == "Sheriff" then color = Color3.fromRGB(235, 95, 115) end
-                    _valRol.Text = rol; _valRol.TextColor3 = color
-                end)
-                task.wait(1)
-            end
-        end)
-
-        task.spawn(function()
-            while _nbCenter and _nbCenter.Parent do
-                pcall(function()
-                    _valKill.Text = tostring(_G._sessionKills or 0)
-                end)
-                task.wait(1)
-            end
-        end)
-
+        -- ── DATOS EN TIEMPO REAL (UN SOLO WORKER) ───────────────────
+        -- Tres threads de polling de 1 Hz se consolidan en uno. Cuando el hub
+        -- esta cerrado se conserva el tiempo de sesion, pero no se escriben props UI.
         local _sessionStart = tick()
         task.spawn(function()
             while _nbCenter and _nbCenter.Parent do
-                pcall(function()
-                    local e = math.floor(tick() - _sessionStart)
-                    _valTime.Text = string.format("%02d:%02d", math.floor(e/60), e%60)
-                end)
+                if not _G._hubHidden then
+                    pcall(function()
+                        local rol = (_G._currentRole) or (_roleCache and _roleCache.localRole) or "Innocent"
+                        local color = _C_Success
+                        if rol == "Murderer" then color = Color3.fromRGB(255, 80, 80)
+                        elseif rol == "Sheriff" then color = Color3.fromRGB(235, 95, 115) end
+                        _valRol.Text = rol
+                        _valRol.TextColor3 = color
+                        _valKill.Text = tostring(_G._sessionKills or 0)
+                        local e = math.floor(tick() - _sessionStart)
+                        _valTime.Text = string.format("%02d:%02d", math.floor(e / 60), e % 60)
+                    end)
+                end
                 task.wait(1)
             end
         end)
@@ -67994,24 +68530,27 @@ particles = {}
     -- sigue viendo Home y no se abre ninguna pestaña por si sola.
     -- =====================================================================
     local _globalTabPrewarmStarted = false
+    _G._ZQ_GlobalTabPrewarmDone = false
     if not _globalTabPrewarmStarted then
         _globalTabPrewarmStarted = true
         task.spawn(function()
-            -- Dar un frame al hub para terminar de montar botones y referencias.
-            task.wait()
+            -- No construir paginas pesadas durante el primer frame visible.
+            -- El restore worker tambien espera READY, por lo que el orden queda:
+            -- shell -> visible -> prewarm -> callbacks restaurados.
+            local _prewarmFrames = 0
+            while not _G._hubReady and _prewarmFrames < 900 do
+                RunService.Heartbeat:Wait()
+                _prewarmFrames = _prewarmFrames + 1
+            end
+            if not (mainFrame and mainFrame.Parent) then return end
 
-            local totalTabs = #tabFunctions
-            for _idx = 1, totalTabs do
-                -- Si otro flujo ya construyo este tab, _buildTabCached lo reutiliza.
-                pcall(function()
-                    _buildTabCached(_idx)
-                end)
-
-                -- OPT v_QUEUE: intervalo aumentado para dar mas respiro entre tabs
-                -- y evitar que varias decenas de toggles pesados se pongan en cola
-                -- al mismo tiempo. Los primeros 2 tabs son los mas urgentes (HOME
-                -- y WORLD); el resto puede esperar un poco mas sin impacto visible.
-                task.wait((_idx <= 2) and 0.05 or 0.10)
+            -- Registrar estados globales sin depender de abrir una pestana.
+            -- BATTLE se prepara temprano; cada build empieza en un frame distinto.
+            local _prewarmOrder = {1, 2, 6, 3, 4, 5, 7, 8}
+            for _, _idx in ipairs(_prewarmOrder) do
+                if not (mainFrame and mainFrame.Parent) then return end
+                pcall(_buildTabCached, _idx)
+                RunService.Heartbeat:Wait()
             end
 
             -- Una segunda llamada a updateBindables cubre bindables que dependen
@@ -68075,11 +68614,13 @@ particles = {}
             -- Reapertura sin animacion: pop-in suave
             local _tgtSc2 = (_getTargetScale and _getTargetScale() or 0.70)
             local _uiSR = mainFrame:FindFirstChildOfClass("UIScale")
-            if _uiSR then _uiSR.Scale = _tgtSc2 * 0.75 end
+            if _uiSR then _uiSR.Scale = _tgtSc2 * 0.96 end
             mainFrame.Visible = true
             mainFrame.BackgroundTransparency = 1
             if _uiSR then
-                TweenService:Create(_uiSR, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = _tgtSc2}):Play()
+                -- v70: sin Back. Un overshoot interrumpido dejaba el hub
+                -- con una escala intermedia.
+                _G._ZQSafeTween(_uiSR, _G._ZQTISoft(_G._ZQD.open), {Scale = _tgtSc2})
             end
             header.Position = UDim2.new(0, 0, 0, 0)
             TweenService:Create(glowBorder, TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Thickness = 0, Transparency = 1.0}):Play()
@@ -68098,13 +68639,6 @@ particles = {}
                     end
                 end)
             end)
-            task.delay(5.5, function() pcall(function() _buildTabCached(5) end) end)
-            task.delay(2.5, function() pcall(function() _buildTabCached(2) end) end)
-            task.delay(4.0, function() pcall(function() _buildTabCached(3) end) end)
-            task.delay(7.0, function() pcall(function() _buildTabCached(6) end) end)
-            task.delay(9.0, function() pcall(function() _buildTabCached(7) end) end)
-            task.delay(11.0, function() pcall(function() _buildTabCached(8) end) end)
-            task.delay(13.0, function() pcall(function() _buildTabCached(9) end) end)
             return
         end
 
@@ -68124,36 +68658,30 @@ particles = {}
         local _origPos = mainFrame.Position
         mainFrame.Position = UDim2.new(
             _origPos.X.Scale, _origPos.X.Offset,
-            _origPos.Y.Scale - 0.06, _origPos.Y.Offset
+            _origPos.Y.Scale - 0.02, _origPos.Y.Offset
         )
 
-        -- Fade-in del frame principal con ca?da suave
-        TweenService:Create(mainFrame,
-            TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        -- Fade-in del frame principal: movimiento chico y easing suave.
+        _G._ZQSafeTween(mainFrame,
+            _G._ZQTISoft(_G._ZQD.open),
             {Position = _origPos, BackgroundTransparency = 0}
-        ):Play()
+        )
 
-        -- Hijos caen con efecto cascada (cada uno con delay creciente)
-        task.spawn(function()
-            task.wait(0.1)
-            local _children = mainFrame:GetChildren()
-            for i, _child in ipairs(_children) do
-                if _child:IsA("Frame") or _child:IsA("TextLabel")
-                or _child:IsA("TextButton") or _child:IsA("ImageLabel")
-                or _child:IsA("ScrollingFrame") then
-                    local _cp = _child.Position
-                    local _origTrans = _child.BackgroundTransparency
-                    _child.Position = UDim2.new(_cp.X.Scale, _cp.X.Offset, _cp.Y.Scale - 0.04, _cp.Y.Offset)
-                    local _delay = (i - 1) * 0.04
-                    task.delay(_delay, function()
-                        if _child and _child.Parent then
-                            TweenService:Create(_child,
-                                TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                                {Position = _cp}
-                            ):Play()
-                        end
-                    end)
-                end
+        -- ENTRADA v70: el hub entra con UIScale + fade del contenedor, NO
+        -- moviendo a cada hijo.
+        --
+        -- La cascada anterior escribia la Position de los 8 botones de
+        -- pestania y de todos los paneles, y la devolvia con una cadena de
+        -- task.delay. Si el hub se cerraba o se reabria en medio de esa
+        -- cadena, esos hijos quedaban corridos PARA SIEMPRE: es una de las
+        -- causas de "elementos desplazados". Animar solo el contenedor no
+        -- puede corromper el layout de nada que viva adentro.
+        pcall(function()
+            local _uiE = mainFrame:FindFirstChildOfClass("UIScale")
+            if _uiE then
+                _G._ZQCancelObjectTweens(_uiE, false)
+                _uiE.Scale = _tgtSc * 0.96
+                _G._ZQSafeTween(_uiE, _G._ZQTISoft(_G._ZQD.open), {Scale = _tgtSc})
             end
         end)
 
@@ -68163,7 +68691,7 @@ particles = {}
             Transparency = 1.0
         }):Play()
 
-        task.wait(0.6)
+        task.wait(_G._ZQD.open + 0.05)
 
         -- Hub listo
         _G._hubReady = true
@@ -68184,13 +68712,6 @@ particles = {}
                 end
             end)
         end)
-        task.delay(5.5, function() pcall(function() _buildTabCached(5) end) end)
-        task.delay(2.5, function() pcall(function() _buildTabCached(2) end) end)
-        task.delay(4.0, function() pcall(function() _buildTabCached(3) end) end)
-        task.delay(7.0, function() pcall(function() _buildTabCached(6) end) end)
-        task.delay(9.0, function() pcall(function() _buildTabCached(7) end) end)
-        task.delay(11.0, function() pcall(function() _buildTabCached(8) end) end)
-        task.delay(13.0, function() pcall(function() _buildTabCached(9) end) end)
         end)  -- cierre pcall animacion
         if not _animOk then
             warn("[HUB] Error en apertura: " .. tostring(_animErr))
@@ -68769,11 +69290,8 @@ function CreateUpdateTab()
     end
 end
 
--- v50: la pestania EMOTES se elimino por completo: la funcion que la
--- construia y sus entradas en tabNames / tabFunctions / _zqTabPositions /
--- _zqTabIcons / _zqTabAccents / _tabAccentMap. UPDATE pasa a ser el indice 8.
--- La seccion de emotes de GAMEPLAY sigue existiendo y la UI nativa del juego
--- no se toca.
+-- v3 UI: EMOTES vuelve como pagina cacheada independiente (indice 8).
+-- UPDATE pasa al indice 9. Ambas usan el mismo lifecycle centralizado.
 
 function CreateUseTab()
     -- Guard: verificar contentContainer sin usar task.wait (el wait romperia la redireccion
@@ -72572,7 +73090,7 @@ do
         -- Match the proportions of the reference while keeping the existing
         -- relative layout used by the hub.
         pcall(function()
-            mainFrame.Size = UDim2.new(0, 950, 0, 555)
+            mainFrame.Size = (_G._ZQHubBaseSize or UDim2.new(0, 950, 0, 555))
         end)
 
         -- Force the reference layout: content left, tabs right.
@@ -72660,10 +73178,8 @@ do
 
     -- Apply after all cached tabs have had a chance to build.
     task.defer(function()
-        task.wait(0.15)
-        _applyMM2Skin()
-        task.wait(0.75)
-        _applyMM2Skin()
+        while mainFrame and mainFrame.Parent and not _G._ZQ_GlobalTabPrewarmDone do task.wait() end
+        if mainFrame and mainFrame.Parent then _applyMM2Skin() end
     end)
 
     -- Keep newly-created/cached tab contents in the same appearance.
@@ -72710,31 +73226,12 @@ do
     task.defer(function()
         task.wait(1)
 
-        -- UI: quitar fondos RGB/rojos de textos y secciones, texto blanco
+        -- UI: limitar el ajuste al propio Hub; nunca recorrer PlayerGui/CoreGui completos.
         pcall(function()
-            local roots = {}
-            local lp = Players.LocalPlayer
-            if lp and lp:FindFirstChild("PlayerGui") then table.insert(roots, lp.PlayerGui) end
-            pcall(function() table.insert(roots, CoreGui) end)
-            if gethui then pcall(function() table.insert(roots, gethui()) end) end
-
-            for _,root in ipairs(roots) do
-                for _,obj in ipairs(root:GetDescendants()) do
-                    if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-                        local n = tostring(obj.Name):lower()
-                        if n:find("high") or n:find("version") or n:find("main") or n:find("local") or true then
-                            pcall(function()
-                                obj.TextColor3 = Color3.fromRGB(255,255,255)
-                                if obj.BackgroundTransparency < 1 then
-                                    obj.BackgroundTransparency = 1
-                                end
-                            end)
-                        end
-                    elseif obj:IsA("UIStroke") then
-                        pcall(function()
-                            obj.Transparency = 1
-                        end)
-                    end
+            if not (mainFrame and mainFrame.Parent) then return end
+            for _,obj in ipairs(mainFrame:GetDescendants()) do
+                if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+                    obj.TextColor3 = Color3.fromRGB(255,255,255)
                 end
             end
         end)
