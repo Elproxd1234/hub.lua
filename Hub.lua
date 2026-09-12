@@ -1,3 +1,19 @@
+-- ZERQON v80: Expansion de selectores de color + notificaciones estilo Roblox.
+-- Cambios de esta pasada:
+--   * Selectores de color: se agregan 12 partes adicionales al selector de
+--     Google Material (Pestanas Fondo/Texto/Borde, Boton Cerrar Fondo/Borde,
+--     Borde Exterior del Hub, Titulos de Seccion, Mensajes Fondo/Borde/Titulo,
+--     Dropdowns, Botones Generales, Scrollbar/Sliders).
+--   * HTML Colors: la grilla ahora tiene un selector de DESTINO desplegable
+--     que permite elegir a que parte del hub se aplica el color seleccionado
+--     (antes solo aplicaba el tema completo; ahora puede apuntar a cualquier
+--     parte especifica incluyendo las nuevas extras).
+--   * Notificaciones: rediseno al estilo Roblox (imagen 2): panel gris oscuro
+--     redondeado, badge circular verde con tilde blanco a la izquierda, linea
+--     divisora, titulo blanco/negrita, mensaje gris claro, barra de progreso
+--     delgada del color del hub. El slide-out ahora es hacia la derecha.
+--   * _styleNotif actualizado para que las notifs vivas tambien reflejen el
+--     nuevo estilo y respeten los colores extra de _G._ZQExtraColors.
 -- ZERQON v79 (MASTER AUDIT): auditoria arquitectonica completa sobre v78.
 -- Cambios de esta pasada, todos sobre el codigo existente y sin tocar features:
 --   * Motion core: baseline/restore con lista de propiedades cacheada por
@@ -14736,187 +14752,176 @@ function CreateCustomNotification(titleRaw, message, duration)
         if _notifShape == "Banner" then _notifH = _notifIsMob and 44 or 52 end
         if _notifShape == "Minimal" then _notifH = _notifIsMob and 38 or 46 end
 
-        -- v68: FORMA CON BADGE (imagen de referencia) pero en color del hub.
-        -- El panel crece para que entren el circulo y las dos lineas de texto.
-        local _ZQN_ICON  = _notifIsMob and 24 or 28    -- diametro del badge
-        local _ZQN_PAD   = 10                          -- margen izquierdo
-        local _ZQN_TXT_X = _ZQN_PAD + _ZQN_ICON + 10   -- los textos, a su derecha
-        _notifW = _notifIsMob and math.min(math.floor(_notifVP.X * 0.74), 272) or 300
-        _notifH = _notifIsMob and 50 or 58
+        -- v80: FORMA ESTILO ROBLOX (imagen de referencia 2)
+        -- Panel gris oscuro redondeado, icono verde con tilde a la izquierda,
+        -- titulo en blanco negrita, mensaje en blanco subtitulo.
+        -- Dimensiones responsive
+        local _ZQN_ICON  = _notifIsMob and 28 or 34    -- diametro del badge
+        local _ZQN_PAD   = _notifIsMob and 10 or 12    -- margen izquierdo
+        local _ZQN_TXT_X = _ZQN_PAD + _ZQN_ICON + (_notifIsMob and 8 or 10)
+        _notifW = _notifIsMob and math.min(math.floor(_notifVP.X * 0.78), 280) or 320
+        _notifH = _notifIsMob and 54 or 64
+
+        -- Color de fondo: gris oscuro estilo Roblox (respeta selector extra)
+        local _notifBgColor = (_G._ZQExtraColors and _G._ZQExtraColors.notifBg)
+            or Color3.fromRGB(30, 32, 36)
 
         local mainFrame = Instance.new("Frame")
-        mainFrame.Size = UDim2.new(0, _notifW, 0, _notifH)
-        mainFrame.Position = UDim2.new(1, -8, 1, -50)
-        mainFrame.AnchorPoint = Vector2.new(1, 1)
-        mainFrame.BackgroundColor3 = Color3.fromRGB( 8, 8,  18)
-        mainFrame.BackgroundTransparency = 0.18
-        mainFrame.BorderSizePixel = 0
-        mainFrame.Parent = notifSG
+        mainFrame.Name                   = "ZQNotifMain"
+        mainFrame.Size                   = UDim2.new(0, _notifW, 0, _notifH)
+        mainFrame.Position               = UDim2.new(1, -8, 1, -50)
+        mainFrame.AnchorPoint            = Vector2.new(1, 1)
+        mainFrame.BackgroundColor3       = _notifBgColor
+        mainFrame.BackgroundTransparency = 0.08
+        mainFrame.BorderSizePixel        = 0
+        mainFrame.Parent                 = notifSG
 
-        -- Radio de esquinas segun forma
-        local _cornerRadius = 12
-        if _notifShape == "Rounded" then _cornerRadius = 12
-        elseif _notifShape == "Sharp"   then _cornerRadius = 0
-        elseif _notifShape == "Pill"    then _cornerRadius = 24
-        elseif _notifShape == "Banner"  then _cornerRadius = 0
-        elseif _notifShape == "Minimal" then _cornerRadius = 12
-        end
+        -- Esquinas bien redondeadas (estilo Roblox: ~10-12px)
         local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, _cornerRadius)
+        corner.CornerRadius = UDim.new(0, _notifIsMob and 10 or 12)
         corner.Parent = mainFrame
 
-        -- Barra lateral de acento (solo en Banner)
-        if _notifShape == "Banner" then
-            local accentBar = Instance.new("Frame", mainFrame)
-            accentBar.Size = UDim2.new(0, 4, 1, 0)
-            accentBar.Position = UDim2.new(0, 0, 0, 0)
-            accentBar.BackgroundColor3 = ThemeColors.Primary
-            accentBar.BorderSizePixel = 0
-            accentBar.ZIndex = 2
-        end
-
-        -- Borde sutil muy fino
+        -- Borde sutil con el color del acento del hub
+        local _notifAccentColor = (_G._ZQExtraColors and _G._ZQExtraColors.notifAccent)
+            or ThemeColors.Aurora1
         local stroke = Instance.new("UIStroke")
-        stroke.Thickness = 1
-        stroke.Color = ThemeColors.Aurora1
-        stroke.Transparency = 0.3
-        stroke.Parent = mainFrame
+        stroke.Thickness       = 1.5
+        stroke.Color           = _notifAccentColor
+        stroke.Transparency    = 0.25
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent          = mainFrame
 
-        -- Icono checkmark dorado (oculto en Minimal/Banner)
-        local _iconSize = 0  -- sin icono en modo compacto
-        local _iconOffX  = 10
+        -- Sombra de fondo (imagen ImageLabel como drop-shadow)
+        local _shadow = Instance.new("ImageLabel", mainFrame)
+        _shadow.Name                   = "ZQNotifShadow"
+        _shadow.AnchorPoint            = Vector2.new(0.5, 0.5)
+        _shadow.Position               = UDim2.fromScale(0.5, 0.5)
+        _shadow.Size                   = UDim2.new(1, 24, 1, 24)
+        _shadow.BackgroundTransparency = 1
+        _shadow.Image                  = "rbxassetid://118930676204472"
+        _shadow.ImageColor3            = Color3.fromRGB(0, 0, 0)
+        _shadow.ImageTransparency      = 0.72
+        _shadow.ScaleType              = Enum.ScaleType.Fit
+        _shadow.ZIndex                 = 0
+
+        -- Icono (placeholder invisible, por compatibilidad)
         local icon = Instance.new("ImageLabel")
-        icon.Size = UDim2.new(0, 0, 0, 0)
-        icon.Position = UDim2.new(0, 0, 0.5, 0)
+        icon.Size                = UDim2.new(0, 0, 0, 0)
         icon.BackgroundTransparency = 1
-        icon.Image = ""
-        icon.ImageColor3 = ThemeColors.Primary
-        icon.Visible = false
-        icon.Parent = mainFrame
+        icon.Image               = ""
+        icon.Visible             = false
+        icon.Parent              = mainFrame
 
-        -- v68: BADGE CIRCULAR DEL COLOR DEL HUB (reemplaza al `icon`, que sigue
-        -- existiendo pero invisible: regla de cero borrado).
+        -- BADGE CIRCULAR DEL COLOR DEL HUB (estilo Roblox: verde con tilde blanco)
         local _okBadge = Instance.new("Frame", mainFrame)
         _okBadge.Name                   = "ZQNotifOk"
         _okBadge.Size                   = UDim2.fromOffset(_ZQN_ICON, _ZQN_ICON)
         _okBadge.AnchorPoint            = Vector2.new(0, 0.5)
         _okBadge.Position               = UDim2.new(0, _ZQN_PAD, 0.5, 0)
-        _okBadge.BackgroundColor3       = ThemeColors.Aurora1
+        _okBadge.BackgroundColor3       = _notifAccentColor
         _okBadge.BackgroundTransparency = 0
         _okBadge.BorderSizePixel        = 0
         _okBadge.ZIndex                 = 6
         Instance.new("UICorner", _okBadge).CornerRadius = UDim.new(1, 0)
 
-        -- El tilde se dibuja con dos barras rotadas en vez de un glyph: asi no
-        -- depende de que la fuente de Roblox tenga el caracter, y el archivo
-        -- sigue siendo ASCII puro. El vertice del tilde cae en (0.42, 0.68).
+        -- Tilde dibujado con dos barras (igual que v68, probado)
         local _okArmW = math.max(2, math.floor(_ZQN_ICON * 0.11))
-        local _okS1 = Instance.new("Frame", _okBadge)   -- palo corto (arriba izq)
+        local _okS1 = Instance.new("Frame", _okBadge)
         _okS1.Name                   = "ZQTickShort"
         _okS1.AnchorPoint            = Vector2.new(0.5, 0.5)
         _okS1.Position               = UDim2.fromScale(0.31, 0.57)
-        _okS1.Size                   = UDim2.fromOffset(
-            _okArmW, math.floor(_ZQN_ICON * 0.30))
+        _okS1.Size                   = UDim2.fromOffset(_okArmW, math.floor(_ZQN_ICON * 0.30))
         _okS1.Rotation               = -45
         _okS1.BackgroundColor3       = Color3.fromRGB(255, 255, 255)
         _okS1.BorderSizePixel        = 0
         _okS1.ZIndex                 = 7
         Instance.new("UICorner", _okS1).CornerRadius = UDim.new(1, 0)
-        local _okS2 = _okS1:Clone()                     -- palo largo (arriba der)
+        local _okS2 = _okS1:Clone()
         _okS2.Name     = "ZQTickLong"
         _okS2.Position = UDim2.fromScale(0.60, 0.50)
         _okS2.Size     = UDim2.fromOffset(_okArmW, math.floor(_ZQN_ICON * 0.52))
         _okS2.Rotation = 45
         _okS2.Parent   = _okBadge
 
-        -- Titulo con RichText
-        local _titleOffX = (_notifShape == "Minimal") and 12 or (_notifShape == "Banner") and 14 or 46
-        local _titleOffY = (_notifShape == "Minimal") and 0 or (_notifShape == "Banner") and 6 or 8
-        local _titleH    = (_notifShape == "Minimal") and math.floor(_notifH * 0.55) or 20
+        -- Linea divisora vertical entre badge y textos (detalle visual Roblox)
+        local _divider = Instance.new("Frame", mainFrame)
+        _divider.Name                   = "ZQNotifDivider"
+        _divider.AnchorPoint            = Vector2.new(0.5, 0.5)
+        _divider.Position               = UDim2.new(0, _ZQN_PAD + _ZQN_ICON + 4, 0.5, 0)
+        _divider.Size                   = UDim2.fromOffset(1, math.floor(_notifH * 0.55))
+        _divider.BackgroundColor3       = Color3.fromRGB(255, 255, 255)
+        _divider.BackgroundTransparency = 0.82
+        _divider.BorderSizePixel        = 0
+        _divider.ZIndex                 = 5
+
+        -- TITULO: blanco, negrita, parte superior del bloque de texto
+        local _notifTitleColor = (_G._ZQExtraColors and _G._ZQExtraColors.notifTitle)
+            or Color3.fromRGB(255, 255, 255)
         local titleLbl = Instance.new("TextLabel")
-        titleLbl.Size = UDim2.new(1, -(_titleOffX + 8), 0, _titleH)
-        titleLbl.Position = UDim2.new(0, _titleOffX, 0, _titleOffY)
+        titleLbl.Name                   = "ZQNotifTitle"
+        titleLbl.Size                   = UDim2.new(1, -(_ZQN_TXT_X + 10), 0, _notifIsMob and 15 or 17)
+        titleLbl.Position               = UDim2.new(0, _ZQN_TXT_X, 0, _notifIsMob and 8 or 10)
         titleLbl.BackgroundTransparency = 1
-        titleLbl.RichText = true
-        local _pr = ThemeColors.Primary
-        local _phex = string.format("#%02X%02X%02X", math.floor(_pr.R*255), math.floor(_pr.G*255), math.floor(_pr.B*255))
-        titleLbl.Text = '<font color="' .. _phex .. '">' .. tostring(titleRaw) .. '</font>'
-        titleLbl.TextSize = 12
-        titleLbl.Font = Enum.Font.GothamBold
-        titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-        titleLbl.Parent = mainFrame
+        titleLbl.RichText               = true
+        titleLbl.Text                   = tostring(titleRaw)
+        titleLbl.TextColor3             = _notifTitleColor
+        titleLbl.TextSize               = _notifIsMob and 13 or 14
+        titleLbl.Font                   = Enum.Font.GothamBold
+        titleLbl.TextXAlignment         = Enum.TextXAlignment.Left
+        titleLbl.TextYAlignment         = Enum.TextYAlignment.Center
+        titleLbl.ZIndex                 = 6
+        titleLbl.Parent                 = mainFrame
 
-        -- v68: el titulo arranca a la derecha del badge y va en BLANCO (el
-        -- RichText de arriba lo pintaba con ThemeColors.Primary, casi negro
-        -- sobre el fondo del panel).
-        titleLbl.Position = UDim2.new(0, _ZQN_TXT_X, 0, _notifIsMob and 6 or 9)
-        titleLbl.Size     = UDim2.new(1, -(_ZQN_TXT_X + 10), 0,
-                                      _notifIsMob and 13 or 14)
-        titleLbl.TextSize = _notifIsMob and 12 or 13
-        titleLbl.Text     = '<font color="#FFFFFF">' .. tostring(titleRaw) .. '</font>'
-
-        -- Mensaje (oculto en Minimal)
-        local _descOffX = (_notifShape == "Banner") and 14 or 12
+        -- MENSAJE: gris claro, fuente regular, parte inferior del bloque de texto
         local descLbl = Instance.new("TextLabel")
-        descLbl.Size = UDim2.new(1, -(_descOffX + 8), 0, 22)
-        descLbl.Position = UDim2.new(0, _descOffX, 0, (_notifShape == "Banner") and 22 or math.floor(_notifH * 0.52))
-        descLbl.Visible = true  -- siempre visible en modo compacto
+        descLbl.Name                   = "ZQNotifDesc"
+        descLbl.Size                   = UDim2.new(1, -(_ZQN_TXT_X + 10), 0, _notifIsMob and 16 or 18)
+        descLbl.Position               = UDim2.new(0, _ZQN_TXT_X, 0, _notifIsMob and 24 or 29)
+        descLbl.Visible                = true
         descLbl.BackgroundTransparency = 1
-        descLbl.RichText = true
-        descLbl.Text = tostring(message)
-        descLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-        descLbl.TextSize = 9
-        descLbl.Font = Enum.Font.Gotham
-        descLbl.TextWrapped = true
-        descLbl.TextXAlignment = Enum.TextXAlignment.Left
-        descLbl.TextYAlignment = Enum.TextYAlignment.Top
-        descLbl.Parent = mainFrame
+        descLbl.RichText               = true
+        descLbl.Text                   = tostring(message)
+        descLbl.TextColor3             = Color3.fromRGB(200, 202, 210)
+        descLbl.TextSize               = _notifIsMob and 10 or 11
+        descLbl.Font                   = Enum.Font.Gotham
+        descLbl.TextWrapped            = true
+        descLbl.TextXAlignment         = Enum.TextXAlignment.Left
+        descLbl.TextYAlignment         = Enum.TextYAlignment.Top
+        descLbl.ZIndex                 = 6
+        descLbl.Parent                 = mainFrame
 
-        -- v68: el mensaje se alinea con el titulo, no con el borde del panel.
-        descLbl.Position = UDim2.new(0, _ZQN_TXT_X, 0, _notifIsMob and 20 or 25)
-        descLbl.Size     = UDim2.new(1, -(_ZQN_TXT_X + 10), 0,
-                                     _notifIsMob and 14 or 16)
-        descLbl.TextSize = _notifIsMob and 10 or 11
-
-        -- Barra de progreso dorada
+        -- BARRA DE PROGRESO: delgada, debajo del panel, del color del hub
         local progressBarBg = Instance.new("Frame")
-        progressBarBg.Size = UDim2.new(1, -16, 0, 2)
-        progressBarBg.Position = UDim2.new(0, 8, 1, -6)
-        progressBarBg.BackgroundColor3 = Color3.fromRGB(30, 31, 50)
-        progressBarBg.BackgroundTransparency = 0.3
-        progressBarBg.BorderSizePixel = 0
-        progressBarBg.Parent = mainFrame
+        progressBarBg.Size                   = UDim2.new(1, -20, 0, 3)
+        progressBarBg.Position               = UDim2.new(0, 10, 1, -7)
+        progressBarBg.BackgroundColor3       = Color3.fromRGB(50, 52, 58)
+        progressBarBg.BackgroundTransparency = 0.2
+        progressBarBg.BorderSizePixel        = 0
+        progressBarBg.ZIndex                 = 6
+        progressBarBg.Parent                 = mainFrame
+        Instance.new("UICorner", progressBarBg).CornerRadius = UDim.new(1, 0)
 
         local progressBar = Instance.new("Frame")
-        progressBar.Size = UDim2.new(1, 0, 1, 0)
-        progressBar.BackgroundColor3 = Color3.fromRGB(72, 140, 68)  -- oro neon transparente
-        progressBar.BackgroundTransparency = 0.15
-        progressBar.BorderSizePixel = 0
-        progressBar.Parent = progressBarBg
-
-        -- Gradiente dorado transparente: tono del hub
-        local progressGrad = Instance.new("UIGradient")
-        progressGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(72, 140, 68)),  -- oro claro neon
-            ColorSequenceKeypoint.new(0.35, Color3.fromRGB(24, 28, 36)),  -- ambar hub puro
-            ColorSequenceKeypoint.new(0.7, Color3.fromRGB(24, 28, 36)),  -- oro medio
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(72, 140, 68)),  -- oro electrico
-        })
-        progressGrad.Rotation = 0
-        progressGrad.Parent = progressBar
-
-        -- v68: barra mas gruesa, redondeada y del color del hub (imagen de
-        -- referencia). El gradiente que ya estaba multiplica este color.
-        progressBarBg.Size     = UDim2.new(1, -20, 0, 4)
-        progressBarBg.Position = UDim2.new(0, 10, 1, -9)
-        Instance.new("UICorner", progressBarBg).CornerRadius = UDim.new(1, 0)
-        Instance.new("UICorner", progressBar).CornerRadius   = UDim.new(1, 0)
-        progressBar.BackgroundColor3       = ThemeColors.Aurora2
+        progressBar.Size                   = UDim2.new(1, 0, 1, 0)
+        progressBar.BackgroundColor3       = _notifAccentColor
         progressBar.BackgroundTransparency = 0
-        -- Borde del panel mas visible, como en la imagen de referencia
-        stroke.Color        = ThemeColors.Aurora2
-        stroke.Thickness    = 1.6
-        stroke.Transparency = 0.05
+        progressBar.BorderSizePixel        = 0
+        progressBar.ZIndex                 = 7
+        progressBar.Parent                 = progressBarBg
+        Instance.new("UICorner", progressBar).CornerRadius = UDim.new(1, 0)
+
+        local progressGrad = Instance.new("UIGradient")
+        progressGrad.Color    = ColorSequence.new(_notifAccentColor,
+            Color3.fromRGB(
+                math.clamp(math.floor(_notifAccentColor.R*255*0.6), 0, 255),
+                math.clamp(math.floor(_notifAccentColor.G*255*0.6), 0, 255),
+                math.clamp(math.floor(_notifAccentColor.B*255*0.6), 0, 255)))
+        progressGrad.Rotation = 0
+        progressGrad.Parent   = progressBar
+
+        -- _okS1/_okS2 ya estan en _okBadge; referencias para el fade-out
+        local _okS1ref = _okS1
+        local _okS2ref = _okS2
 
         -- Boton transparente encima para cerrar al tocar (version movil)
         local _dismissed = false
@@ -14931,20 +14936,23 @@ function CreateCustomNotification(titleRaw, message, duration)
         local function _doFadeOut()
             if _dismissed then return end
             _dismissed = true
-            local fadeInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            local fadeInfo = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            -- Slide out to the right while fading
+            TweenService:Create(mainFrame, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                {Position = UDim2.new(1, _notifW + 20, 1, mainFrame.Position.Y.Offset)}):Play()
             TweenService:Create(mainFrame, fadeInfo, {BackgroundTransparency = 1}):Play()
             TweenService:Create(stroke, fadeInfo, {Transparency = 1}):Play()
             TweenService:Create(titleLbl, fadeInfo, {TextTransparency = 1}):Play()
             TweenService:Create(descLbl, fadeInfo, {TextTransparency = 1}):Play()
             TweenService:Create(icon, fadeInfo, {ImageTransparency = 1}):Play()
-            -- v68: los objetos nuevos tienen que irse con el resto o quedan
-            -- pintados un frame de mas sobre el panel ya transparente.
+            -- v80: todos los elementos nuevos se desvanecen
             TweenService:Create(_okBadge, fadeInfo, {BackgroundTransparency = 1}):Play()
-            TweenService:Create(_okS1, fadeInfo, {BackgroundTransparency = 1}):Play()
-            TweenService:Create(_okS2, fadeInfo, {BackgroundTransparency = 1}):Play()
+            TweenService:Create(_okS1ref, fadeInfo, {BackgroundTransparency = 1}):Play()
+            TweenService:Create(_okS2ref, fadeInfo, {BackgroundTransparency = 1}):Play()
+            TweenService:Create(_divider, fadeInfo, {BackgroundTransparency = 1}):Play()
             TweenService:Create(progressBarBg, fadeInfo, {BackgroundTransparency = 1}):Play()
             TweenService:Create(progressBar, fadeInfo, {BackgroundTransparency = 1}):Play()
-            task.delay(0.26, function() pcall(function() notifSG:Destroy() end) end)
+            task.delay(0.30, function() pcall(function() notifSG:Destroy() end) end)
         end
 
         dismissBtn.Activated:Connect(_doFadeOut)  -- FIX MOBILE: Activated cubre mouse y touch
@@ -14955,10 +14963,14 @@ function CreateCustomNotification(titleRaw, message, duration)
         local _notifMarginBottom = _notifIsMob and (_notifH + 14) or (_notifH + 20)
         local _notifTargetY = -_notifMarginBottom
 
-        -- Slide in desde derecha (menos intrusivo, rapido)
-        mainFrame.Position = UDim2.new(1, _notifW + 20, 1, _notifTargetY)  -- empieza fuera a la derecha
-        local tweenIn = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        TweenService:Create(mainFrame, tweenIn, {Position = UDim2.new(1, -8, 1, _notifTargetY)}):Play()
+        -- v80: Slide in desde derecha, suave y rapido (estilo Roblox)
+        mainFrame.BackgroundTransparency = 0.6
+        mainFrame.Position = UDim2.new(1, _notifW + 30, 1, _notifTargetY)
+        local tweenIn = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+        TweenService:Create(mainFrame, tweenIn, {
+            Position = UDim2.new(1, -8, 1, _notifTargetY),
+            BackgroundTransparency = 0.08,
+        }):Play()
 
         -- Barra se encoge durante 'duration' segundos
         local tweenBar = TweenInfo.new(duration, Enum.EasingStyle.Linear)
@@ -51144,11 +51156,20 @@ function CreateCombatTab()
             local selfOk  = false
             local selfName = ""
             pcall(function()
-                selfName = self.Name
+                -- FIX v81: tostring() garantiza que selfName sea siempre string.
+                -- En algunos executors self.Name puede devolver el objeto mismo
+                -- (Instance) en vez de un string -> "argument #1 expects a string,
+                -- but Instance was passed" al comparar selfName == "KnifeThrown".
+                local rawName = self.Name
+                selfName = (type(rawName) == "string") and rawName or tostring(rawName)
                 local _ = self.Parent
                 selfOk = self:IsA("RemoteEvent")
             end)
             if not selfOk then
+                return _orig(self, ...)
+            end
+            -- Guard extra: si selfName sigue sin ser string, pasar sin tocar
+            if type(selfName) ~= "string" then
                 return _orig(self, ...)
             end
 
@@ -58795,6 +58816,13 @@ function CreateCombatTab()
                     -- FIX BUG 2: usar _dkRearm para incluir el inputConn correcto
                     _dkRearm(ks)
                 end
+                -- FIX v81 VISUAL: actualizar knob del toggle para que aparezca
+                -- en ON inmediatamente sin que el usuario tenga que apagar/prender.
+                pcall(function()
+                    if _G._toggleApplyStates and _G._toggleApplyStates["Dual Knife"] then
+                        _G._toggleApplyStates["Dual Knife"](true, true)
+                    end
+                end)
             end
             if gs and gs.enabled then
                 _dualCleanState(gs)
@@ -58802,6 +58830,13 @@ function CreateCombatTab()
                 if char then
                     _dualStartArm(gs, _dualGunKeywords)
                 end
+                -- FIX v81 VISUAL: actualizar knob del toggle para que aparezca
+                -- en ON inmediatamente sin que el usuario tenga que apagar/prender.
+                pcall(function()
+                    if _G._toggleApplyStates and _G._toggleApplyStates["Dual Gun"] then
+                        _G._toggleApplyStates["Dual Gun"](true, true)
+                    end
+                end)
             end
         end)
 
@@ -70231,15 +70266,360 @@ function CreateUseTab()
         matTitle.ZIndex                 = 22
         matTitle.LayoutOrder            = 0
 
-        -- Partes del hub que se pueden recolorear
+        -- Partes del hub que se pueden recolorear (v80: expandido con todas las partes)
         local HUB_PARTS = {
-            { label = "Color Principal",     key = "Primary"     },
-            { label = "Acento",              key = "Accent"      },
-            { label = "Toggle Activo",       key = "Aurora1"     },
-            { label = "Knob Activo",         key = "Aurora2"     },
-            { label = "Texto",               key = "TextPrimary" },
-            { label = "Panel Oscuro",        key = "BackgroundLight" },
+            -- === COLORES BASE DEL TEMA ===
+            { label = "Color Principal",       key = "Primary"         },
+            { label = "Secundario",            key = "Secondary"       },
+            { label = "Acento",                key = "Accent"          },
+            { label = "Fondo Principal",       key = "Background"      },
+            { label = "Panel Oscuro",          key = "BackgroundLight" },
+            { label = "Texto Principal",       key = "TextPrimary"     },
+            { label = "Texto Secundario",      key = "TextSecondary"   },
+            -- === TOGGLES / CONTROLES ===
+            { label = "Toggle Activo (Pill)",  key = "Aurora1"         },
+            { label = "Knob / Boton Activo",   key = "Aurora2"         },
+            { label = "Panel Medio",           key = "Aurora3"         },
+            { label = "Sombra / Borde Suave",  key = "Aurora4"         },
         }
+
+        -- === SELECTORES EXTRA PARA PARTES ESPECIFICAS DEL HUB ===
+        -- Estos no usan ThemeColors sino que pintan directo en tiempo real
+        -- con los mismos tweens que _matApply, pero accediendo a los objetos
+        -- por nombre / atributo en lugar de por color anterior.
+
+        -- Estado extra de colores personalizados (persiste en _G para re-pintar)
+        _G._ZQExtraColors = _G._ZQExtraColors or {}
+        local _ec = _G._ZQExtraColors
+
+        -- Funcion interna: aplica color a todos los objetos del hub que
+        -- coincidan con el filtro fn(obj) -> bool
+        local function _extraApply(filterFn, propName, newC, fallbackPropName)
+            pcall(function()
+                if not mainFrame then return end
+                local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                for _, obj in ipairs(mainFrame:GetDescendants()) do
+                    pcall(function()
+                        if filterFn(obj) then
+                            TweenService:Create(obj, ti, {[propName] = newC}):Play()
+                            if fallbackPropName then
+                                pcall(function()
+                                    TweenService:Create(obj, ti, {[fallbackPropName] = newC}):Play()
+                                end)
+                            end
+                        end
+                    end)
+                end
+            end)
+        end
+
+        -- Filtros de los elementos del hub
+        local function _isTabBtn(obj)
+            if not (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("Frame")) then return false end
+            local n = tostring(obj.Name or ""):lower()
+            return n:sub(1,3) == "tab" or n:find("tabbtn") or n:find("tabbutton")
+                or n:find("pestana") or n:find("sidebar")
+                or obj:FindFirstChild("TAB_BTN_PROTECTED") ~= nil
+        end
+        local function _isTabText(obj)
+            if not obj:IsA("TextLabel") then return false end
+            local p = obj.Parent
+            if not p then return false end
+            return _isTabBtn(p)
+        end
+        local function _isCloseBtn(obj)
+            if not (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("Frame")) then return false end
+            local n = tostring(obj.Name or ""):lower()
+            if n:find("close") or n:find("cerrar") or n:find("exit") then return true end
+            if obj:IsA("TextButton") then
+                local t = tostring(obj.Text or "")
+                if t == "X" or t == "x" or t == "\u{2715}" or t == "\u{2716}" or t == "CERRAR" then return true end
+            end
+            return false
+        end
+        local function _isCloseBtnStroke(obj)
+            if not obj:IsA("UIStroke") then return false end
+            local p = obj.Parent
+            return p and _isCloseBtn(p)
+        end
+        local function _isMainBorder(obj)
+            if not obj:IsA("UIStroke") then return false end
+            -- El stroke del mainFrame o primer hijo
+            local p = obj.Parent
+            if not p then return false end
+            return p == mainFrame or p.Parent == mainFrame
+        end
+        local function _isSectionTitle(obj)
+            if not obj:IsA("TextLabel") then return false end
+            local n = tostring(obj.Name or ""):lower()
+            return n:find("title") or n:find("titulo") or n:find("header") or n:find("sectionlbl")
+        end
+        local function _isNotifFrame(sg)
+            return sg:IsA("ScreenGui") and tostring(sg.Name):sub(1, 14) == "OverdriveNotif"
+        end
+
+        -- Tabla de EXTRA_PARTS: label, clave en _ec, funcion de aplicado
+        local EXTRA_PARTS = {
+            {
+                label  = "Pestañas — Fondo",
+                ecKey  = "tabBg",
+                apply  = function(c)
+                    _ec.tabBg = c
+                    _extraApply(_isTabBtn, "BackgroundColor3", c)
+                end,
+            },
+            {
+                label  = "Pestañas — Texto",
+                ecKey  = "tabTxt",
+                apply  = function(c)
+                    _ec.tabTxt = c
+                    _extraApply(_isTabText, "TextColor3", c)
+                end,
+            },
+            {
+                label  = "Pestañas — Borde",
+                ecKey  = "tabStroke",
+                apply  = function(c)
+                    _ec.tabStroke = c
+                    -- stroke de los tab buttons
+                    pcall(function()
+                        if not mainFrame then return end
+                        local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        for _, obj in ipairs(mainFrame:GetDescendants()) do
+                            pcall(function()
+                                if obj:IsA("UIStroke") then
+                                    local p = obj.Parent
+                                    if p and _isTabBtn(p) then
+                                        TweenService:Create(obj, ti, {Color = c}):Play()
+                                    end
+                                end
+                            end)
+                        end
+                    end)
+                end,
+            },
+            {
+                label  = "Botón Cerrar — Fondo",
+                ecKey  = "closeBg",
+                apply  = function(c)
+                    _ec.closeBg = c
+                    _extraApply(_isCloseBtn, "BackgroundColor3", c)
+                end,
+            },
+            {
+                label  = "Botón Cerrar — Borde",
+                ecKey  = "closeStroke",
+                apply  = function(c)
+                    _ec.closeStroke = c
+                    _extraApply(_isCloseBtnStroke, "Color", c)
+                end,
+            },
+            {
+                label  = "Borde Exterior del Hub",
+                ecKey  = "hubBorder",
+                apply  = function(c)
+                    _ec.hubBorder = c
+                    _extraApply(_isMainBorder, "Color", c)
+                    pcall(function()
+                        if glowBorder and glowBorder.Parent then
+                            TweenService:Create(glowBorder, TweenInfo.new(0.3), {Color = c}):Play()
+                        end
+                    end)
+                end,
+            },
+            {
+                label  = "Títulos de Sección",
+                ecKey  = "sectionTitles",
+                apply  = function(c)
+                    _ec.sectionTitles = c
+                    _extraApply(_isSectionTitle, "TextColor3", c)
+                end,
+            },
+            {
+                label  = "Mensajes — Fondo",
+                ecKey  = "notifBg",
+                apply  = function(c)
+                    _ec.notifBg = c
+                    -- estilizar notifs vivas
+                    pcall(function()
+                        local function scan(parent)
+                            for _, ch in ipairs(parent:GetChildren()) do
+                                if _isNotifFrame(ch) then
+                                    pcall(function()
+                                        local frame = ch:FindFirstChildOfClass("Frame")
+                                        if frame then
+                                            TweenService:Create(frame, TweenInfo.new(0.25), {BackgroundColor3 = c}):Play()
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                        scan(_CG)
+                        local pg = _LP and _LP:FindFirstChildOfClass("PlayerGui")
+                        if pg then scan(pg) end
+                    end)
+                end,
+            },
+            {
+                label  = "Mensajes — Borde/Acento",
+                ecKey  = "notifAccent",
+                apply  = function(c)
+                    _ec.notifAccent = c
+                    pcall(function()
+                        local function scan(parent)
+                            for _, ch in ipairs(parent:GetChildren()) do
+                                if _isNotifFrame(ch) then
+                                    pcall(function()
+                                        local frame = ch:FindFirstChildOfClass("Frame")
+                                        if frame then
+                                            local st = frame:FindFirstChildOfClass("UIStroke")
+                                            if st then
+                                                TweenService:Create(st, TweenInfo.new(0.25), {Color = c}):Play()
+                                            end
+                                            -- badge circular
+                                            local badge = frame:FindFirstChild("ZQNotifOk")
+                                            if badge then
+                                                TweenService:Create(badge, TweenInfo.new(0.25), {BackgroundColor3 = c}):Play()
+                                            end
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                        scan(_CG)
+                        local pg = _LP and _LP:FindFirstChildOfClass("PlayerGui")
+                        if pg then scan(pg) end
+                    end)
+                end,
+            },
+            {
+                label  = "Mensajes — Texto Título",
+                ecKey  = "notifTitle",
+                apply  = function(c)
+                    _ec.notifTitle = c
+                    pcall(function()
+                        local function scan(parent)
+                            for _, ch in ipairs(parent:GetChildren()) do
+                                if _isNotifFrame(ch) then
+                                    pcall(function()
+                                        local frame = ch:FindFirstChildOfClass("Frame")
+                                        if frame then
+                                            -- el primer TextLabel (titulo)
+                                            local lbls = {}
+                                            for _, d in ipairs(frame:GetDescendants()) do
+                                                if d:IsA("TextLabel") then table.insert(lbls, d) end
+                                            end
+                                            table.sort(lbls, function(a,b) return a.Position.Y.Offset < b.Position.Y.Offset end)
+                                            if lbls[1] then
+                                                TweenService:Create(lbls[1], TweenInfo.new(0.25), {TextColor3 = c}):Play()
+                                            end
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                        scan(_CG)
+                        local pg = _LP and _LP:FindFirstChildOfClass("PlayerGui")
+                        if pg then scan(pg) end
+                    end)
+                end,
+            },
+            {
+                label  = "Dropdowns — Fondo",
+                ecKey  = "dropBg",
+                apply  = function(c)
+                    _ec.dropBg = c
+                    pcall(function()
+                        if not mainFrame then return end
+                        local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        for _, obj in ipairs(mainFrame:GetDescendants()) do
+                            pcall(function()
+                                local n = tostring(obj.Name or ""):lower()
+                                if (obj:IsA("Frame") or obj:IsA("ScrollingFrame"))
+                                   and (n:find("drop") or n:find("list") or n:find("selector") or n:find("menu")) then
+                                    TweenService:Create(obj, ti, {BackgroundColor3 = c}):Play()
+                                end
+                            end)
+                        end
+                    end)
+                end,
+            },
+            {
+                label  = "Botones — Fondo General",
+                ecKey  = "btnBg",
+                apply  = function(c)
+                    _ec.btnBg = c
+                    pcall(function()
+                        if not mainFrame then return end
+                        local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        for _, obj in ipairs(mainFrame:GetDescendants()) do
+                            pcall(function()
+                                if (obj:IsA("TextButton") or obj:IsA("ImageButton"))
+                                   and obj.BackgroundTransparency < 0.9
+                                   and not _isTabBtn(obj)
+                                   and not _isCloseBtn(obj) then
+                                    TweenService:Create(obj, ti, {BackgroundColor3 = c}):Play()
+                                end
+                            end)
+                        end
+                    end)
+                end,
+            },
+            {
+                label  = "Scrollbar / Sliders",
+                ecKey  = "sliderFill",
+                apply  = function(c)
+                    _ec.sliderFill = c
+                    pcall(function()
+                        if not mainFrame then return end
+                        local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        for _, obj in ipairs(mainFrame:GetDescendants()) do
+                            pcall(function()
+                                local n = tostring(obj.Name or ""):lower()
+                                if obj:IsA("Frame") and (n:find("trackfill") or n:find("thumb") or n:find("fill") or n:find("slider")) then
+                                    TweenService:Create(obj, ti, {BackgroundColor3 = c}):Play()
+                                end
+                            end)
+                        end
+                    end)
+                end,
+            },
+        }
+
+        -- Renderizar los EXTRA_PARTS como filas de color igual que HUB_PARTS
+        -- pero usando _ZQ_ColorRow con get/set custom
+        local _extraRows = {}
+        if _G._ZQ_ColorRow then
+            -- Separador visual
+            local extraTitle = Instance.new("TextLabel", matSec)
+            extraTitle.Size                   = UDim2.new(1, 0, 0, 20)
+            extraTitle.BackgroundTransparency = 1
+            extraTitle.Text                   = "── Partes Adicionales ──"
+            extraTitle.TextSize               = 10
+            extraTitle.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+            extraTitle.TextColor3             = ThemeColors.Primary
+            extraTitle.TextXAlignment         = Enum.TextXAlignment.Center
+            extraTitle.ZIndex                 = 22
+            extraTitle.LayoutOrder            = 99
+
+            for i, ep in ipairs(EXTRA_PARTS) do
+                local _startColor = _ec[ep.ecKey] or ThemeColors.Primary
+                local r = _G._ZQ_ColorRow(matSec, {
+                    label = ep.label,
+                    order = 100 + i,
+                    title = "HUB  //  " .. ep.label,
+                    get   = function() return _ec[ep.ecKey] or ThemeColors.Primary end,
+                    set   = function(c)
+                        _ec[ep.ecKey] = c
+                        pcall(ep.apply, c)
+                        local hx = string.format("#%02X%02X%02X",
+                            math.floor(c.R*255+0.5), math.floor(c.G*255+0.5), math.floor(c.B*255+0.5))
+                        CreateCustomNotification("COLOR APLICADO", ep.label .. " -> " .. hx, 2)
+                    end,
+                })
+                if r then table.insert(_extraRows, r) end
+            end
+        end
 
         -- v54: antes habia una grilla Material de 14x5 y botones para elegir
         -- "parte del hub". Ahora cada parte es una fila con su muestra y su
@@ -70699,6 +71079,196 @@ function CreateUseTab()
             return base, dark1, bright, pale
         end
 
+        -- ================================================================
+        -- v80: SELECTOR DE DESTINO para los colores HTML
+        -- Permite elegir QUE parte del hub recibe el color seleccionado
+        -- en la grilla (antes solo aplicaba al hub completo con tema).
+        -- ================================================================
+        local HTML_TARGETS = {
+            { label = "🎨 Todo el Hub (Tema)",     key = "__FULL__"        },
+            { label = "Color Principal",             key = "Primary"         },
+            { label = "Secundario",                  key = "Secondary"       },
+            { label = "Acento",                      key = "Accent"          },
+            { label = "Fondo Principal",             key = "Background"      },
+            { label = "Panel Oscuro",                key = "BackgroundLight" },
+            { label = "Texto Principal",             key = "TextPrimary"     },
+            { label = "Toggle Activo (Pill)",        key = "Aurora1"         },
+            { label = "Knob / Boton Activo",         key = "Aurora2"         },
+            { label = "Panel Medio",                 key = "Aurora3"         },
+            { label = "Sombra / Borde Suave",        key = "Aurora4"         },
+            { label = "Pestañas — Fondo",            key = "__tabBg__"       },
+            { label = "Pestañas — Texto",            key = "__tabTxt__"      },
+            { label = "Pestañas — Borde",            key = "__tabStroke__"   },
+            { label = "Botón Cerrar — Fondo",        key = "__closeBg__"     },
+            { label = "Borde Exterior del Hub",      key = "__hubBorder__"   },
+            { label = "Títulos de Sección",          key = "__sectionTitles__"},
+            { label = "Mensajes — Fondo",            key = "__notifBg__"     },
+            { label = "Mensajes — Borde/Acento",     key = "__notifAccent__" },
+            { label = "Mensajes — Texto Título",     key = "__notifTitle__"  },
+            { label = "Botones — Fondo General",     key = "__btnBg__"       },
+            { label = "Scrollbar / Sliders",         key = "__sliderFill__"  },
+        }
+        local _htmlTargetIdx = 1  -- por defecto: Todo el Hub
+
+        -- Selector desplegable de destino
+        local targetSelectorLabel = Instance.new("TextLabel", colorSec)
+        targetSelectorLabel.Size                   = UDim2.new(1, -8, 0, 18)
+        targetSelectorLabel.BackgroundTransparency = 1
+        targetSelectorLabel.Text                   = "Aplicar a:"
+        targetSelectorLabel.TextSize               = 10
+        targetSelectorLabel.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        targetSelectorLabel.TextColor3             = ThemeColors.TextPrimary
+        targetSelectorLabel.TextXAlignment         = Enum.TextXAlignment.Left
+        targetSelectorLabel.ZIndex                 = 23
+
+        -- Boton selector que abre un dropdown
+        local targetBtn = Instance.new("TextButton", colorSec)
+        targetBtn.Name                   = "HtmlTargetBtn"
+        targetBtn.Size                   = UDim2.new(1, -8, 0, 28)
+        targetBtn.BackgroundColor3       = ThemeColors.BackgroundLight
+        targetBtn.BackgroundTransparency = 0.3
+        targetBtn.BorderSizePixel        = 0
+        targetBtn.Text                   = HTML_TARGETS[1].label .. "  ▾"
+        targetBtn.TextSize               = 11
+        targetBtn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
+        targetBtn.TextColor3             = ThemeColors.TextPrimary
+        targetBtn.AutoButtonColor        = false
+        targetBtn.ZIndex                 = 23
+        Instance.new("UICorner", targetBtn).CornerRadius = UDim.new(0, 7)
+        local targetBtnStroke = Instance.new("UIStroke", targetBtn)
+        targetBtnStroke.Color           = ThemeColors.Primary
+        targetBtnStroke.Thickness       = 1.2
+        targetBtnStroke.Transparency    = 0.4
+        targetBtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        -- Dropdown flotante
+        local _htmlDropOpen = false
+        local _htmlDropFrame = nil
+
+        local function _closeHtmlDrop()
+            if _htmlDropFrame and _htmlDropFrame.Parent then
+                TweenService:Create(_htmlDropFrame, TweenInfo.new(0.12), {BackgroundTransparency = 1}):Play()
+                task.delay(0.13, function() pcall(function() if _htmlDropFrame then _htmlDropFrame:Destroy(); _htmlDropFrame = nil end end) end)
+            end
+            _htmlDropOpen = false
+        end
+
+        targetBtn.Activated:Connect(function()
+            if _htmlDropOpen then _closeHtmlDrop(); return end
+            _htmlDropOpen = true
+
+            local drop = Instance.new("Frame", colorSec)
+            drop.Name                   = "HtmlTargetDrop"
+            drop.Size                   = UDim2.new(1, -8, 0, math.min(#HTML_TARGETS, 8) * 24 + 6)
+            drop.BackgroundColor3       = ThemeColors.BackgroundLight
+            drop.BackgroundTransparency = 0.1
+            drop.BorderSizePixel        = 0
+            drop.ZIndex                 = 50
+            drop.LayoutOrder            = 998
+            Instance.new("UICorner", drop).CornerRadius = UDim.new(0, 7)
+            local dropStroke = Instance.new("UIStroke", drop)
+            dropStroke.Color = ThemeColors.Primary; dropStroke.Thickness = 1.2; dropStroke.Transparency = 0.3
+            local dropList = Instance.new("UIListLayout", drop)
+            dropList.Padding = UDim.new(0, 0)
+            dropList.SortOrder = Enum.SortOrder.LayoutOrder
+            local dropScroll = Instance.new("ScrollingFrame", drop)
+            dropScroll.Size                  = UDim2.new(1, 0, 1, 0)
+            dropScroll.BackgroundTransparency= 1
+            dropScroll.BorderSizePixel       = 0
+            dropScroll.ScrollBarThickness    = 3
+            dropScroll.CanvasSize            = UDim2.new(0, 0, 0, #HTML_TARGETS * 24)
+            dropScroll.ZIndex                = 51
+            local scrollList = Instance.new("UIListLayout", dropScroll)
+            scrollList.Padding = UDim.new(0, 0)
+
+            _htmlDropFrame = drop
+
+            for idx, tgt in ipairs(HTML_TARGETS) do
+                local item = Instance.new("TextButton", dropScroll)
+                item.Size                   = UDim2.new(1, 0, 0, 24)
+                item.BackgroundColor3       = (idx == _htmlTargetIdx) and ThemeColors.Aurora1 or ThemeColors.Background
+                item.BackgroundTransparency = (idx == _htmlTargetIdx) and 0.1 or 0.7
+                item.BorderSizePixel        = 0
+                item.Text                   = tgt.label
+                item.TextSize               = 10
+                item.FontFace               = Font.fromEnum(Enum.Font.Gotham)
+                item.TextColor3             = ThemeColors.TextPrimary
+                item.AutoButtonColor        = false
+                item.ZIndex                 = 52
+                item.LayoutOrder            = idx
+                local _capturedIdx = idx
+                item.Activated:Connect(function()
+                    _htmlTargetIdx = _capturedIdx
+                    targetBtn.Text = HTML_TARGETS[_capturedIdx].label .. "  ▾"
+                    _closeHtmlDrop()
+                end)
+            end
+        end)
+
+        -- Funcion que aplica el color HTML seleccionado al destino elegido
+        local function _applyHtmlToTarget(selColor)
+            local tgt = HTML_TARGETS[_htmlTargetIdx]
+            if not tgt then return end
+            local key = tgt.key
+            local hex  = string.format("#%02X%02X%02X",
+                math.floor(selColor.R*255+0.5), math.floor(selColor.G*255+0.5), math.floor(selColor.B*255+0.5))
+            local name = (_selectedHtmlName or "Color") .. " " .. hex
+
+            if key == "__FULL__" then
+                -- Aplica tema completo (comportamiento original)
+                local base2, dark1, bright, pale = _applyHubColor(selColor)
+                applyBtn.BackgroundColor3 = dark1
+                applyBtn.TextColor3       = pale
+                applyStroke.Color         = bright
+                CreateCustomNotification("HUB RECOLOREADO", name, 3)
+            elseif key:sub(1,2) == "__" then
+                -- Parte extra (_G._ZQExtraColors)
+                local ecKey = key:sub(3, -3)  -- quita __ de ambos lados
+                local _ec2 = _G._ZQExtraColors or {}
+                _G._ZQExtraColors = _ec2
+                _ec2[ecKey] = selColor
+                -- Llamar apply del EXTRA_PARTS correspondiente
+                for _, ep in ipairs(EXTRA_PARTS) do
+                    if ep.ecKey == ecKey then
+                        pcall(ep.apply, selColor)
+                        break
+                    end
+                end
+                CreateCustomNotification("COLOR APLICADO", tgt.label .. " -> " .. hex, 2)
+            else
+                -- Parte de ThemeColors
+                local oldC = ThemeColors[key]
+                if oldC then
+                    ThemeColors[key] = selColor
+                    local ti = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                    if mainFrame then
+                        for _, obj in ipairs(mainFrame:GetDescendants()) do
+                            pcall(function()
+                                if obj:IsA("Frame") or obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                                    local dr = math.abs(obj.BackgroundColor3.R - oldC.R)*255
+                                    local dg = math.abs(obj.BackgroundColor3.G - oldC.G)*255
+                                    local db = math.abs(obj.BackgroundColor3.B - oldC.B)*255
+                                    if dr+dg+db < 60 then TweenService:Create(obj, ti, {BackgroundColor3 = selColor}):Play() end
+                                elseif obj:IsA("TextLabel") or obj:IsA("TextBox") then
+                                    local dr = math.abs(obj.TextColor3.R - oldC.R)*255
+                                    local dg = math.abs(obj.TextColor3.G - oldC.G)*255
+                                    local db = math.abs(obj.TextColor3.B - oldC.B)*255
+                                    if dr+dg+db < 60 then TweenService:Create(obj, ti, {TextColor3 = selColor}):Play() end
+                                elseif obj:IsA("UIStroke") then
+                                    local dr = math.abs(obj.Color.R - oldC.R)*255
+                                    local dg = math.abs(obj.Color.G - oldC.G)*255
+                                    local db = math.abs(obj.Color.B - oldC.B)*255
+                                    if dr+dg+db < 60 then TweenService:Create(obj, ti, {Color = selColor}):Play() end
+                                end
+                            end)
+                        end
+                    end
+                    CreateCustomNotification("COLOR APLICADO", tgt.label .. " -> " .. hex, 2)
+                end
+            end
+        end
+
+        -- v80: boton APPLY ahora usa _applyHtmlToTarget (respeta el selector de destino)
         local applyBtn = Instance.new("TextButton", colorSec)
         applyBtn.Name                   = "ApplyColorBtn"
         applyBtn.Size                   = UDim2.new(1, -8, 0, 32)
@@ -70706,7 +71276,7 @@ function CreateUseTab()
         applyBtn.BackgroundColor3       = ThemeColors.Aurora1
         applyBtn.BackgroundTransparency = 0.15
         applyBtn.BorderSizePixel        = 0
-        applyBtn.Text                   = "APPLY COLOR AL HUB"
+        applyBtn.Text                   = "▶ APLICAR COLOR"
         applyBtn.TextSize               = 13
         applyBtn.FontFace               = Font.fromEnum(Enum.Font.GothamBold)
         applyBtn.TextColor3             = ThemeColors.TextPrimary
@@ -70729,19 +71299,8 @@ function CreateUseTab()
         end)
 
         applyBtn.Activated:Connect(function()
-            -- FIX v5: usar _selectedHtmlColor (color clickeado en la grilla),
-            -- no colorSwatch.BackgroundColor3 (que puede ser el hover)
             local selColor = _selectedHtmlColor or colorSwatch.BackgroundColor3
-            local base, dark1, bright, pale = _applyHubColor(selColor)
-            local r = math.floor(selColor.R * 255)
-            local g = math.floor(selColor.G * 255)
-            local b = math.floor(selColor.B * 255)
-            applyBtn.BackgroundColor3 = dark1
-            applyBtn.TextColor3       = pale
-            applyStroke.Color         = bright
-            local hex  = string.format("#%02X%02X%02X", r, g, b)
-            local name = _selectedHtmlName or colorInfoName.Text or "Color"
-            CreateCustomNotification("HUB RECOLOREADO", name .. " " .. hex, 3)
+            _applyHtmlToTarget(selColor)
         end)
 
         -- ================================================================
@@ -73701,12 +74260,15 @@ do
     end
 
     -- ---------------- Pintado de una notificacion -------------------
-    -- Forma de la imagen de referencia: tarjeta oscura redondeada, badge
-    -- circular con tilde blanco del color del hub, titulo en color del
-    -- hub, mensaje en blanco y barra de progreso del color del hub.
+    -- v80: estilo Roblox (imagen 2) — panel gris oscuro, badge verde circular
+    -- con tilde blanco a la izquierda, titulo blanco, mensaje gris claro.
+    -- Respeta los selectores de color extra de _G._ZQExtraColors.
     local function _styleNotif(sg, base)
         base = base or _baseColor()
-        local panel = Color3.fromRGB(13, 15, 19)
+        local _ec2    = _G._ZQExtraColors or {}
+        local panel   = _ec2.notifBg     or Color3.fromRGB(30, 32, 36)
+        local accent  = _ec2.notifAccent or base
+        local titleC  = _ec2.notifTitle  or Color3.fromRGB(255, 255, 255)
         pcall(function()
             local frame
             for _, ch in ipairs(sg:GetChildren()) do
@@ -73714,23 +74276,25 @@ do
             end
             if not frame then return end
 
+            -- Panel principal: gris oscuro estilo Roblox
             frame.BackgroundColor3       = panel
             frame.BackgroundTransparency = 0.08
             local c = frame:FindFirstChildOfClass("UICorner")
             if not c then c = Instance.new("UICorner", frame) end
-            c.CornerRadius = UDim.new(0, 14)
+            c.CornerRadius = UDim.new(0, 12)
 
+            -- Borde con color del hub
             local st = frame:FindFirstChildOfClass("UIStroke")
             if not st then st = Instance.new("UIStroke", frame) end
-            st.Color           = base
-            st.Thickness       = 1.4
-            st.Transparency    = 0.35
+            st.Color           = accent
+            st.Thickness       = 1.5
+            st.Transparency    = 0.25
             st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-            -- Badge circular del color del hub
+            -- Badge circular con color del hub (icono de OK)
             local badge = frame:FindFirstChild("ZQNotifOk")
             if badge then
-                badge.BackgroundColor3       = base
+                badge.BackgroundColor3       = accent
                 badge.BackgroundTransparency = 0
                 for _, tick in ipairs(badge:GetChildren()) do
                     if tick:IsA("Frame") then
@@ -73739,7 +74303,7 @@ do
                 end
             end
 
-            -- Textos: titulo del color del hub, mensaje en blanco
+            -- Textos: titulo blanco (negrita), mensaje gris claro
             local labels = {}
             for _, d in ipairs(frame:GetDescendants()) do
                 if d:IsA("TextLabel") then table.insert(labels, d) end
@@ -73748,32 +74312,31 @@ do
                 return a.Position.Y.Offset < b.Position.Y.Offset
             end)
             if labels[1] then
-                local raw = tostring(labels[1].Text or ""):gsub("<[^>]->", "")
-                labels[1].RichText   = true
-                labels[1].Text       = '<font color="' .. _hex(_lt(base, 0.30))
-                                       .. '">' .. raw .. '</font>'
-                labels[1].TextColor3 = _lt(base, 0.30)
+                labels[1].RichText   = false
+                labels[1].TextColor3 = titleC
+                labels[1].Font       = Enum.Font.GothamBold
             end
             for i = 2, #labels do
-                labels[i].TextColor3 = Color3.fromRGB(238, 240, 245)
+                labels[i].TextColor3 = Color3.fromRGB(200, 202, 210)
+                labels[i].Font       = Enum.Font.Gotham
             end
 
-            -- Barra de progreso del color del hub
+            -- Barra de progreso del color del hub (delgada, redondeada)
             for _, d in ipairs(frame:GetDescendants()) do
                 if d:IsA("Frame") and d ~= badge and d.Parent ~= badge then
                     local h = d.Size.Y.Offset
-                    if h > 0 and h <= 4 then
-                        d.BackgroundColor3 = base
+                    if h > 0 and h <= 5 then
+                        d.BackgroundColor3 = accent
                         local g = d:FindFirstChildOfClass("UIGradient")
                         if g then
-                            g.Color = ColorSequence.new(base, _lt(base, 0.45))
+                            g.Color = ColorSequence.new(accent, _lt(accent, 0.45))
                         end
                         for _, inner in ipairs(d:GetChildren()) do
                             if inner:IsA("Frame") then
-                                inner.BackgroundColor3 = base
+                                inner.BackgroundColor3 = accent
                                 local ig = inner:FindFirstChildOfClass("UIGradient")
                                 if ig then
-                                    ig.Color = ColorSequence.new(base, _lt(base, 0.45))
+                                    ig.Color = ColorSequence.new(accent, _lt(accent, 0.45))
                                 end
                             end
                         end
