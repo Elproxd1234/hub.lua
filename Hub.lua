@@ -3728,6 +3728,39 @@ _G._betweenRounds     = _G._betweenRounds     or false  -- TRUE durante transici
 _G._rolesCacheReady   = true  -- TRUE = cache listo para pintar. FALSE = repoblando (RoundStart en curso)
 _G._roundTimerRunning = _G._roundTimerRunning or false  -- TRUE mientras el contador de ronda (RoundTimerPart) esta activo; oculta NotifyRol
 
+-- FIX v82: STARTUP KICK - poblar _roleCache inmediatamente si el script
+-- se inyecta con una ronda ya en curso (RoundStart ya paso, cache vacio).
+-- Se lanzan dos intentos diferidos (0.5s y 2s) para cubrir tanto el caso
+-- de executor rapido como el de ReplicatedStorage con carga lenta.
+task.spawn(function()
+    task.wait(0.5)
+    if not (_roleCache.murderer or _roleCache.sheriff or _roleCache.hero) then
+        _roleCache.lastUpdate = 0
+        _roleCache._gpdLast   = 0
+        local ok = pcall(_refreshRoleCache)
+        if ok and (_roleCache.murderer or _roleCache.sheriff or _roleCache.hero) then
+            if _G._lastRoleCache then
+                for k in next, _G._lastRoleCache do _G._lastRoleCache[k] = nil end
+            end
+            _G._forceInstanceTick = true
+        else
+            -- Segundo intento si el primero fallo (ReplicatedStorage aun cargando)
+            task.wait(1.5)
+            if not (_roleCache.murderer or _roleCache.sheriff or _roleCache.hero) then
+                _roleCache.lastUpdate = 0
+                _roleCache._gpdLast   = 0
+                local ok2 = pcall(_refreshRoleCache)
+                if ok2 and (_roleCache.murderer or _roleCache.sheriff or _roleCache.hero) then
+                    if _G._lastRoleCache then
+                        for k in next, _G._lastRoleCache do _G._lastRoleCache[k] = nil end
+                    end
+                    _G._forceInstanceTick = true
+                end
+            end
+        end
+    end
+end)
+
 -- WATCHDOG: nunca dejar _betweenRounds=true o _rolesCacheReady=false por mas de 4s sin RoundStart
 task.spawn(function()
     local _lastBetweenTrue = 0
@@ -3755,6 +3788,48 @@ task.spawn(function()
             end
         else
             _lastCacheNotReady = 0
+        end
+    end
+end)
+
+-- ================================================================
+-- FIX ROLE CACHE v82: POLLING MID-ROUND
+-- Cubre el caso de script inyectado con ronda ya activa:
+-- RoundStart ya paso, _roleCache queda vacio, los visuals no pintan
+-- nada hasta el proximo RoundStart (~10s). Este loop detecta ese
+-- estado (cache vacio + no entre rondas) y fuerza un GetPlayerData
+-- cada segundo hasta que encuentra roles. Una vez con roles, pasa a
+-- 3s para no saturar el servidor. Se detiene solo cuando llega
+-- RoundStart (que ya repuebla el cache correctamente).
+-- ================================================================
+task.spawn(function()
+    local _pollFast = true  -- true = 1s (buscando roles), false = 3s (mantenimiento)
+    while true do
+        task.wait(_pollFast and 1 or 3)
+        -- Solo actuar si el cache esta habilitado y no en transicion de ronda
+        if _G._rolesCacheReady == false or _G._betweenRounds then
+            _pollFast = true
+            do end  -- noop: RoundStart ya va a repoblar
+        else
+            local hasRoles = _roleCache.murderer or _roleCache.sheriff or _roleCache.hero
+            if not hasRoles then
+                -- Cache vacio: forzar refresh inmediato saltando el throttle
+                _roleCache.lastUpdate = 0
+                _roleCache._gpdLast   = 0
+                local ok = pcall(_refreshRoleCache)
+                if ok and (_roleCache.murderer or _roleCache.sheriff or _roleCache.hero) then
+                    -- Roles encontrados: limpiar _lastRoleCache para forzar repintado
+                    if _G._lastRoleCache then
+                        for k in next, _G._lastRoleCache do _G._lastRoleCache[k] = nil end
+                    end
+                    _G._forceInstanceTick = true
+                    _pollFast = false  -- bajar frecuencia, ya tenemos roles
+                else
+                    _pollFast = true   -- seguir rapido hasta encontrar roles
+                end
+            else
+                _pollFast = false  -- hay roles, modo mantenimiento
+            end
         end
     end
 end)
@@ -7401,14 +7476,24 @@ _TK_ENABLED = false
 
 -- FIX COMBAT: wrapper unico para KnifeThrown. Evita firmas antiguas que mandaban
 -- CFrame en posiciones inesperadas y provocaban "argument #1 expects a string".
+-- FIX v80: activa _saBypassHook antes de FireServer para que el namecall hook
+-- deje pasar KnifeThrown sin re-interceptarlo (doble bypass: por nombre Y por flag).
 local function _safeKnifeThrown(remote, bladeCF, targetCF)
     if not remote then return false end
     if typeof(bladeCF) ~= "CFrame" or typeof(targetCF) ~= "CFrame" then
         return false
     end
-    return pcall(function()
+    -- Levantar bypass flag (CombatTabState puede no existir aun en este scope;
+    -- se usa _G como fallback seguro para no romper si se llama antes del hook).
+    local _cs = CombatTabState
+    if _cs then _cs._saBypassHook = true end
+    _G._saKnifeThrownBypass = true
+    local ok, err = pcall(function()
         remote:FireServer(bladeCF, targetCF)
     end)
+    _G._saKnifeThrownBypass = false
+    if _cs then _cs._saBypassHook = false end
+    return ok, err
 end
 
 -- Obtener KnifeThrown remote del knife en char o backpack
@@ -9075,199 +9160,18 @@ function _KnifeSA_setupKnife(knife)
     -- Reutiliza EXACTAMENTE el mismo codigo del throw de PC (que ya funciona):
     -- mismas variables locales (lastThrow, cooldown, knifeThrown, etc.)
     -- mismo calculo de targetCFrame/handleCF, mismas animaciones.
-    -- Diferencias: se dispara por TouchTapInWorld en vez de por el click, y
-    -- esta rama SI usa _waitThrowHold (ThrowHold entre ThrowCharge y
-    -- ThrowKnife) porque el boton de celu sostiene el brazo mientras el dedo
-    -- esta apoyado. En PC eso se saco en v57.
-    --
-    -- El bloque v18 (_runThrowSequence + _ttwConn de afuera) se mantiene
-    -- pero esta version tiene prioridad porque esta dentro del closure
-    -- correcto y tiene acceso a todos los upvalues del knife.
     -- ================================================================
-    addConn(UserInputService.TouchTapInWorld:Connect(function(tapPos, gameProcessed)
-        if gameProcessed then return end
-        if not equipped then return end
-        if not KnifeSAState.enabled then return end
-
-        -- Mismo cooldown que el RMB
-        local effectiveCooldown = cooldown
-        if KnifeSAState.instantThrow then
-            effectiveCooldown = 0
-        elseif KnifeSAState.fastThrow then
-            effectiveCooldown = cooldown * math.max(0.05, (KnifeSAState.fastThrowSpeed or 30) / 100)
-        end
-        if os.clock() - lastThrow < effectiveCooldown then return end
-        if os.clock() - lastStab  < 0.3 then return end
-
-        -- FIX IMAN MOBILE: si el sistema de botones (v6) ya esta manejando un
-        -- throw (CHARGING / HOLDING / THROWING), v19 NO debe correr su propia
-        -- secuencia en paralelo. Ambos sistemas escuchan taps de pantalla y se
-        -- disparan al mismo tiempo. El boton v6 tiene las 4 capas de proteccion
-        -- anti-iman; v19 no las tiene. Cuando v19 corre un FireServer paralelo
-        -- sin proteccion, el OnClientEvent del KnifeClient nativo (que persiste
-        -- aunque KC este Disabled) aplica AssemblyLinearVelocity al HRP
-        -- -> personaje sale volando. Si el boton ya tomo el control, cedemos.
-        local _mts = _G._mobileThrowState
-        if _mts and _mts ~= "IDLE" then return end
-
-        lastThrow = os.clock()
-
-        -- Registrar para bloquear slash post-throw
-        KnifeSAState._lastMobileThrowTime = os.clock()
-        _G._mobileKSALastThrow = os.clock()
-
-        task.spawn(function()
-            -- Weld para que el knife no desaparezca durante la animacion
-            local _knifeWeld = nil
-            if not KnifeSAState.instantThrow then
-                pcall(function()
-                    local myChar3  = LocalPlayer.Character
-                    local rightHand = myChar3 and (
-                        myChar3:FindFirstChild("RightHand") or myChar3:FindFirstChild("Right Arm")
-                    )
-                    local kHandle3 = knife:FindFirstChild("Handle")
-                    if rightHand and kHandle3 then
-                        _knifeWeld = Instance.new("WeldConstraint")
-                        _knifeWeld.Part0 = rightHand
-                        _knifeWeld.Part1 = kHandle3
-                        _knifeWeld.Parent = kHandle3
-                    end
-                end)
-
-                -- ThrowCharge: misma logica que RMB.
-                -- FIX CELU: aca se spawneaba la version GLOBAL de la anim de
-                -- throw, que es nil -> se tiraba error y moria este hilo antes
-                -- del FireServer, o sea el knife no se lanzaba nunca. Ahora se
-                -- llama a la funcion real de KnifeSAState, con pcall por si falta.
-                task.spawn(function()
-                    local fThrow = KnifeSAState._playThrowAnim
-                    if fThrow then pcall(fThrow) end
-                end)
-
-                local animFinished = false
-                local maxWait      = 0.5
-                pcall(function()
-                    local animator = _getAnimator()
-                    if not animator then return end
-                    task.wait(0.016)
-                    for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                        local n = t.Name:lower()
-                        if n == "throwcharge" or n == "throw_charge" or n == "charge" then
-                            local conn_anim
-                            conn_anim = t.Stopped:Connect(function()
-                                animFinished = true
-                                if conn_anim then conn_anim:Disconnect() end
-                            end)
-                            local len = t.Length
-                            if len and len > 0.05 then maxWait = len + 0.05 end
-                            break
-                        end
-                    end
-                end)
-                local t0 = os.clock()
-                while not animFinished and (os.clock() - t0) < maxWait do
-                    task.wait()
-                end
-
-                -- ThrowHold (si existe) -> ThrowKnife
-                if KnifeSAState._waitThrowHold then
-                    pcall(KnifeSAState._waitThrowHold)
-                end
-            else
-                -- Instant Throw: parar animaciones en curso
-                pcall(function()
-                    local animator = _getAnimator()
-                    if not animator then return end
-                    for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-                        local n = (t.Name or ""):lower()
-                        if n:find("throw") or n:find("charge") or n:find("hold") or n:find("knife") then
-                            pcall(function() t:Stop(0) end)
-                        end
-                    end
-                end)
-            end
-
-            -- Remover weld antes de lanzar
-            pcall(function()
-                if _knifeWeld and _knifeWeld.Parent then _knifeWeld:Destroy() end
-            end)
-
-            -- Calcular targetCFrame/handleCF con SA (mismo codigo que RMB)
-            local targetCFrame2, handleCF2
-            local myChar2 = LocalPlayer.Character
-            local myHRP   = myChar2 and myChar2:FindFirstChild("HumanoidRootPart")
-
-            if KnifeSAState.enabled then
-                local target = _KnifeSA_getBestTarget()
-                if target and target.Character then
-                    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-                    local tHum = target.Character:FindFirstChildOfClass("Humanoid")
-                    if tHRP and tHum and tHum.Health > 0 then
-                        local myOK = true
-                        if KnifeSAState.wallCheck and myHRP then
-                            local tChar2  = target.Character
-                            local tHead   = tChar2:FindFirstChild("Head")
-                            local losHRP  = wallCheckRaycast(myHRP.Position, tHRP.Position, tChar2)
-                            local losHead = not losHRP and tHead and wallCheckRaycast(myHRP.Position + Vector3.new(0,1.5,0), tHead.Position, tChar2)
-                            myOK = losHRP or losHead
-                        end
-                        if myOK and myHRP then
-                            local predictedPos = _KnifeSA_getPredictedPos(tHRP, target.Character)
-                            local throwOrigin  = myHRP.Position + Vector3.new(0, 1.5, 0)
-                            if throwOrigin.Y < 0.5 then throwOrigin = Vector3.new(throwOrigin.X, 0.5, throwOrigin.Z) end
-                            local minY = math.max(0.3, tHRP.Position.Y - 1.5)
-                            if predictedPos.Y < minY then predictedPos = Vector3.new(predictedPos.X, tHRP.Position.Y + 0.5, predictedPos.Z) end
-                            local aimVec = predictedPos - throwOrigin
-                            if aimVec.Magnitude < 0.01 then aimVec = myHRP.CFrame.LookVector end
-                            local aimDir = aimVec.Unit
-                            local heightDiff = throwOrigin.Y - tHRP.Position.Y
-                            local naturalDownward = math.atan(heightDiff / math.max((predictedPos - throwOrigin).Magnitude, 0.1))
-                            local aimAngleY = math.asin(math.clamp(aimDir.Y, -1, 1))
-                            if aimDir.Y < -0.5 and aimAngleY < naturalDownward - 0.15 then
-                                local torsoPos = tHRP.Position + Vector3.new(0, 1.0, 0)
-                                local av2 = torsoPos - throwOrigin
-                                if av2.Magnitude > 0.01 then aimDir = av2.Unit; predictedPos = torsoPos end
-                            end
-                            local backDir2 = throwOrigin - predictedPos
-                            if backDir2.Magnitude > 0.1 then
-                                targetCFrame2 = CFrame.new(predictedPos, predictedPos + backDir2.Unit)
-                            else
-                                targetCFrame2 = CFrame.new(predictedPos)
-                            end
-                            handleCF2 = CFrame.new(throwOrigin, throwOrigin + aimDir)
-                        end
-                    end
-                end
-            end
-
-            -- Fallback: apuntar al frente del personaje
-            if not targetCFrame2 then
-                if myHRP then
-                    local orig3   = myHRP.Position + Vector3.new(0, 1.5, 0)
-                    local dir3    = myHRP.CFrame.LookVector
-                    handleCF2     = CFrame.new(orig3, orig3 + dir3)
-                    local fwdPos  = orig3 + dir3 * 30
-                    local back3   = orig3 - fwdPos
-                    targetCFrame2 = back3.Magnitude > 0.1
-                        and CFrame.new(fwdPos, fwdPos + back3.Unit)
-                        or  CFrame.new(fwdPos)
-                else
-                    return
-                end
-            end
-
-            -- Bloquear ThrowHold replicado por servidor
-            if KnifeSAState._blockThrowHoldAfterThrow then
-                pcall(KnifeSAState._blockThrowHoldAfterThrow)
-            end
-
-            -- FireServer con la firma correcta (igual que RMB)
-            local fired2 = false
-            pcall(function()
-                fired2 = _safeKnifeThrown(knifeThrown, handleCF2, targetCFrame2)
-            end)
-        end) -- end task.spawn touch throw
-    end)) -- end TouchTapInWorld callback + addConn
+    -- FIX v81 BUG 1: el listener TouchTapInWorld v19 fue ELIMINADO.
+    -- Causaba que cualquier toque en pantalla (incluso fuera del boton Throw)
+    -- disparara la secuencia de animacion en paralelo con el sistema de botones
+    -- v6. El boton v6 ya tiene su propio UIS.TouchTap con posIsOnUI() que filtra
+    -- joystick y zona de botones, cubre el 100% del flujo mobile correctamente
+    -- con las 4 capas anti-iman. Mantener dos sistemas en paralelo causaba:
+    --   - Anim secuencia ejecutada sin tocar boton Throw
+    --   - Doble FireServer -> personaje sale volando (AssemblyLinearVelocity)
+    --   - Brazo repitiendo animaciones ultra-rapido (dos tracks compitiendo)
+    --   - Freno del personaje (WalkSpeed reseteado dos veces en tiempos distintos)
+    -- ================================================================
 
     -- -- STAB (RMB INVERTIDO) -- click DERECHO = golpe cuerpo a cuerpo (CLICKS INVERTIDOS) -------
     -- v78: LMB (MouseButton1) hace slash en desktop; RMB hace ThrowKnife.
@@ -9316,12 +9220,16 @@ function _KnifeSA_setupKnife(knife)
         if input.UserInputType == Enum.UserInputType.Touch then
             -- Solo si el toque fue corto (menos de 0.4s = tap, no drag)
             if os.clock() - stabPressTime > 0.4 then return end
-            -- No reproducir slash si KnifeSA esta lanzando (evita conflicto con throw)
-            if KnifeSAState.enabled then return end
-            -- FIX MOBILE v6: bloquear slash si el boton Throw esta en secuencia
-            -- (CHARGING / HOLDING / THROWING). _G._mobileThrowState lo setea el boton.
+            -- FIX v81 BUG 2: el guard "if KnifeSAState.enabled then return end"
+            -- bloqueaba el slash SIEMPRE que SA estaba activo, aunque el jugador
+            -- no estuviera en secuencia de throw. Ahora solo se bloquea si el
+            -- boton v6 esta activamente en CHARGING/HOLDING/THROWING, o si acaba
+            -- de lanzar (lastMobileThrowTime < 1s). El slash funciona normalmente
+            -- mientras THROW_STATE == "IDLE" aunque SA este encendido.
             local mts = _G._mobileThrowState
             if mts and mts ~= "IDLE" then return end
+            if KnifeSAState._lastMobileThrowTime
+                and (os.clock() - KnifeSAState._lastMobileThrowTime) < 1.2 then return end
             task.spawn(_doSlash)
         end
     end))
@@ -19060,7 +18968,8 @@ function CreateInfoPanel()
     local _isMobileInfo = pcall(function() return UserInputService.TouchEnabled end)
         and UserInputService.TouchEnabled
     local _vp        = workspace.CurrentCamera.ViewportSize
-    local _panelW    = _isMobileInfo and math.min(220, _vp.X - 16) or 380
+    -- v83: panel mas ancho en movil para que FPS y latencia entren bien (220 -> 280)
+    local _panelW    = _isMobileInfo and math.min(280, _vp.X - 16) or 380
     local _initPosX  = _isMobileInfo and math.max(0, _vp.X - _panelW - 8) or (_vp.X - _panelW - 20)
     local _initPosY  = _isMobileInfo and 60 or 20
 
@@ -29625,7 +29534,8 @@ VisualState = {
                  assassin=false, dead=false, survivor=false, zombie=false, knife=false },
     tracer   = { everyone=false, murderer=false, sheriff=false, hero=false,
                  assassin=false, dead=false, survivor=false, zombie=false,
-                 knife=false, gun=false, droppedknife=false, throwknife=false },
+                 knife=false, gun=false, droppedknife=false, throwknife=false,
+                 guntracer=false },
     coins    = { esp=false, cham=false },  -- FIX v62: cham=flag propio del Cham Coins
 }
 
@@ -29695,6 +29605,7 @@ do
         ["Head Tracer Survivor Only"] = {VisualState.tracer, "survivor"},
         ["Head Tracer Zombie Only"]   = {VisualState.tracer, "zombie"},
         ["Head Tracer Dead Only"]     = {VisualState.tracer, "dead"},
+        ["Head Tracer Gun Holder"]    = {VisualState.tracer, "guntracer"},
         -- Coins
         ["ESP Coins"]  = {VisualState.coins, "esp"},
         ["Cham Coins"] = {VisualState.coins, "cham"},  -- FIX v62: tambien se restaura
@@ -32573,6 +32484,16 @@ do
         for k in next, _tickRoles do _tickRoles[k] = nil end
         for k in next, _tickHum   do _tickHum[k]   = nil end
 
+        -- FIX v82: si el cache esta vacio (script inyectado mid-round, RoundStart ya paso)
+        -- intentar un refresh ligero aqui para no esperar al polling loop de 1s.
+        -- Solo corre si no hay ninguna fuente de rol conocida y no estamos entre rondas.
+        -- _refreshRoleCache tiene su propio throttle de 0.25s, asi que no satura.
+        if not (_roleCache.murderer or _roleCache.sheriff or _roleCache.hero)
+            and not _G._betweenRounds
+            and _G._rolesCacheReady ~= false then
+            pcall(_refreshRoleCache)
+        end
+
         -- OPT: cachear roleOf y Humanoid por tick -- evita GetChildren() 4x por jugador por tick
         local function _cachedRoleOf(p)
             if not _tickRoles[p] then _tickRoles[p] = roleOf(p) end
@@ -32752,6 +32673,10 @@ do
                                 else
                                     removeCham(player)
                                 end
+                                -- v83: forzar tick del ESP para que el Head Tracer
+                                -- actualice el color del circulo a gris inmediatamente
+                                _headTracerDirty[player] = true
+                                _G._forceInstanceTick = true
                             end)
                         end
                     end
@@ -33012,7 +32937,7 @@ _G._headTracerHBConn = RunService.Heartbeat:Connect(function()
     local vt = VisualState.tracer
     local anyTracer = vt.everyone or vt.murderer or vt.sheriff or vt.hero
         or vt.innocent or vt.assassin or vt.dead or vt.survivor or vt.zombie
-        or vt.knife or vt.droppedknife or vt.throwknife
+        or vt.knife or vt.droppedknife or vt.throwknife or vt.guntracer
     if not anyTracer then
         for player in pairs(_headTracerAvatars) do _headTracerDestroyAvatar(player) end
         return
@@ -33108,6 +33033,131 @@ _G._headTracerHBConn = RunService.Heartbeat:Connect(function()
             end
         end
     end
+
+    -- GUN HEAD TRACER (v83): circulo con imagen de la gun sobre la cabeza
+    -- Solo se muestra para jugadores que tienen una gun equipada (tool con GunClient o Shoot remote)
+    if vt.guntracer then
+        local pg = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            -- Cache de los GunTracerGui por player (para no recrear cada frame)
+            if not _G._gunTracerGuiCache then _G._gunTracerGuiCache = {} end
+            local _gtCache = _G._gunTracerGuiCache
+            local seenGT = {}
+
+            for _, player in ipairs(_cachedPlayers) do
+                if player ~= LocalPlayer and player.Character then
+                    local char = player.Character
+                    local head = char:FindFirstChild("Head")
+                    local hrp  = char:FindFirstChild("HumanoidRootPart")
+                    if head and hrp then
+                        -- Verificar si el jugador tiene una gun equipada
+                        local hasGun = false
+                        for _, tool in ipairs(char:GetChildren()) do
+                            if tool:IsA("Tool") and (
+                                tool:FindFirstChild("GunClient") or
+                                tool:FindFirstChild("Shoot") or
+                                tool:FindFirstChild("GunServer") or
+                                (tool.Name:lower():find("gun") ~= nil)
+                            ) then
+                                hasGun = true; break
+                            end
+                        end
+
+                        if hasGun then
+                            seenGT[player] = true
+                            local pack = _gtCache[player]
+                            -- Crear o recuperar la GUI del gun tracer
+                            if not (pack and pack.gui and pack.gui.Parent) then
+                                -- Destruir pack viejo si existe
+                                if pack then
+                                    pcall(function()
+                                        if pack.gui and pack.gui.Parent then pack.gui:Destroy() end
+                                    end)
+                                end
+                                -- Crear nueva BillboardGui con circulo + imagen gun
+                                local gui = Instance.new("BillboardGui")
+                                gui.Name = "ZQGunTracer_" .. tostring(player.UserId)
+                                gui.Adornee = head
+                                gui.AlwaysOnTop = true
+                                gui.LightInfluence = 0
+                                gui.Size = UDim2.fromOffset(46, 46)
+                                gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2, 0)
+                                gui.MaxDistance = 1500
+                                gui.Parent = pg
+
+                                local outer = Instance.new("Frame")
+                                outer.Name = "GunCircle"
+                                outer.Size = UDim2.fromScale(1, 1)
+                                outer.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+                                outer.BackgroundTransparency = 0.15
+                                outer.BorderSizePixel = 0
+                                outer.Parent = gui
+
+                                local corner = Instance.new("UICorner")
+                                corner.CornerRadius = UDim.new(1, 0)
+                                corner.Parent = outer
+
+                                local stroke = Instance.new("UIStroke")
+                                stroke.Thickness = 2.2
+                                stroke.Transparency = 0.05
+                                stroke.Color = Color3.fromRGB(255, 80, 80)
+                                stroke.Parent = outer
+
+                                -- Imagen de la gun (rbxassetid://85416999939950)
+                                local gunImg = Instance.new("ImageLabel")
+                                gunImg.Name = "GunImage"
+                                gunImg.BackgroundTransparency = 1
+                                gunImg.Size = UDim2.new(1, -6, 1, -6)
+                                gunImg.Position = UDim2.fromOffset(3, 3)
+                                gunImg.ScaleType = Enum.ScaleType.Fit
+                                gunImg.Image = "rbxassetid://85416999939950"
+                                gunImg.Parent = outer
+
+                                local imgCorner = Instance.new("UICorner")
+                                imgCorner.CornerRadius = UDim.new(1, 0)
+                                imgCorner.Parent = gunImg
+
+                                pack = { gui = gui, stroke = stroke, outer = outer }
+                                _gtCache[player] = pack
+                            else
+                                -- Mantener adornee actualizado
+                                if pack.gui.Adornee ~= head then pack.gui.Adornee = head end
+                            end
+
+                            -- Tracer line desde top-screen hacia la cabeza del jugador con gun
+                            local sp, onScreen = cam:WorldToViewportPoint(head.Position)
+                            if onScreen and sp.Z > 0 then
+                                local line = getLine()
+                                line.From = center
+                                line.To = Vector2.new(sp.X, sp.Y)
+                                line.Color = Color3.fromRGB(255, 80, 80)
+                                line.Thickness = 2.0
+                                line.Transparency = 1
+                                line.Visible = true
+                            end
+                        else
+                            -- Sin gun: limpiar tracer GUI si existia
+                            local pack = _gtCache[player]
+                            if pack and pack.gui and pack.gui.Parent then
+                                pcall(function() pack.gui:Destroy() end)
+                                _gtCache[player] = nil
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Limpiar GUIs de jugadores que ya no estan o no tienen gun
+            for player, pack in pairs(_gtCache) do
+                if not seenGT[player] then
+                    pcall(function()
+                        if pack and pack.gui and pack.gui.Parent then pack.gui:Destroy() end
+                    end)
+                    _gtCache[player] = nil
+                end
+            end
+        end
+    end
 end)
 
 -- FIX PARTICULAS RESIDUALES: limpia todos los efectos visuales del char viejo
@@ -33171,6 +33221,113 @@ function hookPlayer(player)
 end
 for _, p in ipairs(_cachedPlayers) do hookPlayer(p) end
 Players.PlayerAdded:Connect(hookPlayer)
+
+-- =================================================================
+-- v83: GLOBAL GREY-ON-DEATH WATCHER
+-- Detecta cuando cualquier jugador muere y lo pinta GRIS de forma
+-- instantanea, sin depender del toggle TIMER ni de ninguna otra
+-- casilla. Corre SIEMPRE mientras el hub este activo.
+-- Tambien detecta fin de ronda (timer detenido) para pintar a
+-- todos de gris automaticamente.
+-- =================================================================
+do
+    -- Cache de tokens de ronda por player para no repetir la marca
+    if not _G._v83GreyHookDone then _G._v83GreyHookDone = {} end
+    if not _G._v83GreyHookChar then _G._v83GreyHookChar = {} end
+
+    local function _v83GreyInstall(player)
+        if player == LocalPlayer then return end
+        local char = player.Character
+        if not char then return end
+        -- Si ya tenemos el hook para ESTE char, no reinstalar
+        if _G._v83GreyHookDone[player] and _G._v83GreyHookChar[player] == char then return end
+        _G._v83GreyHookDone[player] = true
+        _G._v83GreyHookChar[player] = char
+
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        local _tok = _G._sgRoundToken or 0
+        hum.Died:Connect(function()
+            -- Ignorar si ya es otra ronda
+            if (_G._sgRoundToken or 0) ~= _tok then return end
+            -- Ya marcado? salir
+            if _G._deadRoles and _G._deadRoles[player] then return end
+            -- Marcar como muerto (pone en _deadRoles/_zqDeadIds)
+            pcall(_zqMarkDeadPlayer, player)
+            -- Actualizar stroke del Head Tracer a gris si esta activo
+            if _G._headTracerAvatars then
+                local pack = _G._headTracerAvatars[player]
+                if pack and pack.stroke then
+                    pcall(function()
+                        pack.stroke.Color = _ZQ_GREY_COL or Color3.fromRGB(190, 190, 210)
+                    end)
+                end
+            end
+            -- Limpiar gun tracer GUI del muerto
+            if _G._gunTracerGuiCache then
+                local gpack = _G._gunTracerGuiCache[player]
+                if gpack and gpack.gui and gpack.gui.Parent then
+                    pcall(function() gpack.gui:Destroy() end)
+                    _G._gunTracerGuiCache[player] = nil
+                end
+            end
+            _G._forceInstanceTick = true
+        end)
+    end
+
+    -- Instalar para todos los jugadores actuales
+    for _, p in ipairs(_cachedPlayers) do
+        if p ~= LocalPlayer and p.Character then
+            _v83GreyInstall(p)
+        end
+    end
+
+    -- Re-instalar cuando un jugador spawnea nuevo char
+    Players.PlayerAdded:Connect(function(p)
+        p.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            _v83GreyInstall(p)
+        end)
+    end)
+    for _, p in ipairs(_cachedPlayers) do
+        if p ~= LocalPlayer then
+            p.CharacterAdded:Connect(function()
+                _G._v83GreyHookDone[p] = nil
+                _G._v83GreyHookChar[p] = nil
+                task.wait(0.5)
+                _v83GreyInstall(p)
+            end)
+        end
+    end
+
+    -- Watcher de fin de ronda por timer frenado (independiente del toggle TIMER)
+    -- Detecta cuando RoundTimerPart desaparece o su atributo Time llega a 0
+    local function _v83WatchRoundTimer()
+        local tp = workspace:FindFirstChild("RoundTimerPart")
+        if not tp then return end
+        -- Atributo Time -> 0: ronda terminada
+        tp.AttributeChanged:Connect(function(attr)
+            if attr ~= "Time" then return end
+            local v = tp:GetAttribute("Time")
+            if type(v) == "number" and v <= 0 and not _G._zqAllGrey then
+                pcall(_zqTimerStallGrey)
+            end
+        end)
+        -- Timer desaparecio: ronda terminada
+        tp.AncestryChanged:Connect(function()
+            if tp.Parent == nil and not _G._zqAllGrey then
+                pcall(_zqTimerStallGrey)
+            end
+        end)
+    end
+    _v83WatchRoundTimer()
+    workspace.ChildAdded:Connect(function(obj)
+        if obj.Name == "RoundTimerPart" then
+            task.wait(0.1)
+            _v83WatchRoundTimer()
+        end
+    end)
+end
 
 
 function CreateVisualCard(parent, icon, title, accentColor)
@@ -35420,6 +35577,28 @@ end, _G._chamDropGun or false)
         CreateAuroraToggle(inner, "Head Tracer Top-Screen To Head", function(v)
             _G._tracerFromHead = true
         end, true)
+    end
+
+    -- ===============================================================
+    -- HEAD TRACER GUN (v83) -- Circulo con imagen de la gun sobre
+    -- la cabeza de jugadores que tienen una gun equipada
+    -- ===============================================================
+    do
+        local gtInner = CreateVisualCard(rightColumn, "", "HEAD TRACER GUN", ThemeColors.Aurora3)
+        local vt = VisualState.tracer
+        MiniHeader(gtInner, "GUN ESP", Color3.fromRGB(255, 80, 80))
+        CreateAuroraToggle(gtInner, "Head Tracer Gun Holder", function(v)
+            vt.guntracer = v
+            -- Limpiar GUIs al desactivar
+            if not v and _G._gunTracerGuiCache then
+                for player, pack in pairs(_G._gunTracerGuiCache) do
+                    pcall(function()
+                        if pack and pack.gui and pack.gui.Parent then pack.gui:Destroy() end
+                    end)
+                end
+                _G._gunTracerGuiCache = {}
+            end
+        end, vt.guntracer or false)
     end
 
     -- ===============================================================
@@ -50973,6 +51152,18 @@ function CreateCombatTab()
                 return _orig(self, ...)
             end
 
+            -- FIX v80: KnifeThrown es disparado DIRECTAMENTE por _safeKnifeThrown con
+            -- CFrames ya calculados. Si el hook lo vuelve a interceptar, puede reordenar
+            -- o corromper los args y el servidor recibe un tipo inesperado -> error
+            -- "argument #1 expects a string, but CFrame was passed".
+            -- Doble bypass:
+            --   1) por nombre: "KnifeThrown" nunca entra en SA gun logic
+            --   2) por flag global: _safeKnifeThrown levanta _G._saKnifeThrownBypass
+            --      por si el servidor renombra el remote (edge case servidores custom).
+            if selfName == "KnifeThrown" or _G._saKnifeThrownBypass then
+                return _orig(self, ...)
+            end
+
             -- FIX desync: check rapido SOLO por nombre del remote (sin loops)
             -- No usar IsDescendantOf ni GetChildren porque corre en CADA __namecall (cientos/seg)
             -- FIX #6: removidos GunKill y FakeShoot - son eventos de resultado gameplay (server->client),
@@ -53686,17 +53877,21 @@ function CreateCombatTab()
             local replaced = false
 
             -- Firma 1: FireServer(originCF, targetCF)  -> args[1]=CFrame, args[2]=CFrame
+            -- FIX v82: NUNCA tocar args[1] (WorldCFrame del GunRaycastAttachment).
+            -- El servidor valida que sea el CFrame real del attachment del personaje.
+            -- Solo reemplazar args[2] (targetCF = el punto de impacto predicho).
             if typeof(args[1]) == "CFrame" and (typeof(args[2]) == "CFrame" or args[2] == nil) then
-                -- GunClient 1: usar graCF y targetCF precalculados si estn disponibles
-                local _gc1gra = CombatTabState._gc1_graCF
-                local _gc1tgt = CombatTabState._gc1_targetCF
-                if pm == "Level" and _gc1gra and _gc1tgt then
-                    args[1] = _gc1gra
-                    args[2] = _gc1tgt
-                else
-                    local dir = (predictedPos - args[1].Position).Unit
-                    args[2] = CFrame.new(predictedPos, predictedPos + dir)
-                end
+                -- Solo modificar el target (args[2]), dejar el origen intacto
+                local myChar3 = LocalPlayer.Character
+                local myHRP3  = myChar3 and myChar3:FindFirstChild("HumanoidRootPart")
+                local gra3    = myHRP3 and myHRP3:FindFirstChild("GunRaycastAttachment")
+                local origin3 = (gra3 and gra3.WorldCFrame.Position)
+                             or (myHRP3 and myHRP3.Position + Vector3.new(0, 1.5, 0))
+                             or args[1].Position
+                local backDir3 = origin3 - predictedPos
+                local backU3   = backDir3.Magnitude > 0.01 and backDir3.Unit or Vector3.new(0,0,-1)
+                local bkUp3    = math.abs(backU3.Y) > 0.98 and Vector3.xAxis or Vector3.yAxis
+                args[2] = CFrame.lookAt(predictedPos, predictedPos + backU3, bkUp3)
                 replaced = true
             -- Firma 2: FireServer(1, Vector3)  -> args[1]=number, args[2]=Vector3
             elseif typeof(args[1]) == "number" and typeof(args[2]) == "Vector3" then
@@ -53706,7 +53901,7 @@ function CreateCombatTab()
             elseif typeof(args[1]) == "Vector3" then
                 args[1] = predictedPos
                 replaced = true
-            -- Firma 4: FireServer(CFrame) sola -> args[1]=CFrame target
+            -- Firma 4: FireServer(CFrame) sola -> args[1]=CFrame target (sin origin)
             elseif typeof(args[1]) == "CFrame" and #args == 1 then
                 local dir = Vector3.new(0, 0, -1)
                 args[1] = CFrame.new(predictedPos, predictedPos + dir)
@@ -53807,12 +54002,17 @@ function CreateCombatTab()
         local dir    = (predictedPos - origin)
         if dir.Magnitude < 0.01 then return nil end
         local dirU   = dir.Unit
-        local upV    = math.abs(dirU.Y) > 0.98 and Vector3.xAxis or Vector3.yAxis
-        local graCF  = CFrame.new(origin) * CFrame.lookAt(Vector3.zero, dirU, upV)
         local backDir = (origin - predictedPos)
         local backU   = backDir.Magnitude > 0.01 and backDir.Unit or -dirU
         local bkUp    = math.abs(backU.Y) > 0.98 and Vector3.xAxis or Vector3.yAxis
         local tgtCF   = CFrame.lookAt(predictedPos, predictedPos + backU, bkUp)
+
+        -- FIX v82: NO reorientar graCF hacia el target. El servidor valida que
+        -- args[1] sea el WorldCFrame real del GunRaycastAttachment (igual que hace
+        -- el GunClient original). Mandarlo sintetico (lookAt al target) hace que
+        -- el servidor rechace el disparo silenciosamente.
+        -- graCF = WorldCFrame real del attachment, sin modificar la orientacion.
+        local graCF = gra.WorldCFrame
 
         return graCF, tgtCF, predictedPos
     end
@@ -53860,14 +54060,16 @@ function CreateCombatTab()
                 local graCF, tgtCF, predictedPos = _gcGetTargetCFrame(pm)
                 if not graCF or not tgtCF then return _origFS(self, ...) end
                 local args = {...}
-                -- Detectar firma y reemplazar
-                if typeof(args[1]) == "CFrame" then
-                    args[1] = graCF
-                    if typeof(args[2]) == "CFrame" or args[2] == nil then
-                        args[2] = tgtCF
-                    end
+                -- FIX v82: NUNCA reemplazar args[1] (WorldCFrame del GunRaycastAttachment).
+                -- El servidor valida que venga del attachment real del personaje.
+                -- Solo reemplazar args[2] (targetCF = donde apunta el disparo).
+                -- Detectar firma y reemplazar SOLO el target
+                if typeof(args[1]) == "CFrame" and (typeof(args[2]) == "CFrame" or args[2] == nil) then
+                    -- Firma estandar: FireServer(originCF, targetCF) -> solo tocar targetCF
+                    args[2] = tgtCF
                     return _origFS(self, table.unpack(args))
                 elseif typeof(args[1]) == "Vector3" then
+                    -- Firma alternativa: FireServer(Vector3) -> reemplazar posicion
                     args[1] = predictedPos
                     return _origFS(self, table.unpack(args))
                 end
@@ -59585,6 +59787,13 @@ function CreateCombatTab()
         local _pCooldown    = 0.25
         local _pLastShot    = 0
         local _pCachedR     = nil
+        -- FIX v82: firma real del Shoot:FireServer detectada en runtime.
+        -- MM2 standard: {CFrame, CFrame}
+        -- Servidores custom (ej. baneado2003): {string boneName, CFrame targetCF}
+        -- Se captura la primera vez que el GunClient original dispara
+        -- y se reutiliza en _doPierce para no mandar la firma equivocada.
+        local _pArgSig      = nil  -- nil = no capturado aun; tabla = tipos de args snapshot
+        local _pSigHooked   = false
 
         local function _pGetGun()
             local char = LocalPlayer.Character; if not char then return nil end
@@ -59597,12 +59806,49 @@ function CreateCombatTab()
         local function _pGetRemote(gun)
             if _pCachedR and _pCachedR.Parent and _pCachedR:IsDescendantOf(gun) then return _pCachedR end
             _pCachedR = nil; if not gun then return nil end
-            local d = gun:FindFirstChild("Shoot"); if d and d:IsA("RemoteEvent") then _pCachedR=d; return d end
-            for _, v in ipairs(gun:GetDescendants()) do
-                if v:IsA("RemoteEvent") then local n=v.Name:lower()
-                    if n=="shoot" or n:find("shoot") or n:find("fire") then _pCachedR=v; return v end
+            local d = gun:FindFirstChild("Shoot"); if d and d:IsA("RemoteEvent") then _pCachedR=d end
+            if not _pCachedR then
+                for _, v in ipairs(gun:GetDescendants()) do
+                    if v:IsA("RemoteEvent") then local n=v.Name:lower()
+                        if n=="shoot" or n:find("shoot") or n:find("fire") then _pCachedR=v; break end
+                    end
                 end
             end
+            -- FIX v82: al encontrar el remote por primera vez, instalar un hook
+            -- temporal __namecall para capturar la firma real del GunClient original.
+            -- El hook se auto-destruye despues del primer disparo valido.
+            if _pCachedR and not _pSigHooked then
+                _pSigHooked = true
+                pcall(function()
+                    local mt = getrawmetatable and getrawmetatable(game)
+                    if not mt then return end
+                    local _origNC2 = mt.__namecall
+                    if not _origNC2 then return end
+                    local _rem = _pCachedR
+                    setreadonly(mt, false)
+                    local _prevNC = mt.__namecall
+                    mt.__namecall = newcclosure(function(self, ...)
+                        local m; pcall(function() m = getnamecallmethod() end)
+                        if m == "FireServer" and self == _rem and not _pArgSig then
+                            -- Capturar tipos de los argumentos
+                            local a = {...}
+                            local sig = {}
+                            for i = 1, #a do sig[i] = typeof(a[i]) end
+                            _pArgSig = sig
+                            -- Restaurar namecall original del hook de captura
+                            -- (el SA hook puede estar activo; restaurar al que habia)
+                            pcall(function()
+                                setreadonly(mt, false)
+                                mt.__namecall = _prevNC
+                                setreadonly(mt, true)
+                            end)
+                        end
+                        return _prevNC(self, ...)
+                    end)
+                    setreadonly(mt, true)
+                end)
+            end
+            return _pCachedR
         end
 
         local function _pGetOrigin(myHRP)
@@ -59668,7 +59914,34 @@ function CreateCombatTab()
                     local aimPos    = hp.Position
                     local originPos = aimPos + Vector3.new(0, 0.1, 0)
                     local graCF, targetCF = _pBuildCF(originPos, aimPos)
-                    if graCF then pcall(function() shootR:FireServer(graCF, targetCF) end) end
+                    if graCF then
+                        -- FIX v82: usar la firma real capturada del GunClient.
+                        -- Si el servidor espera (string, CFrame) en vez de (CFrame, CFrame),
+                        -- adaptar automaticamente. La firma se captura la primera vez que
+                        -- el GunClient original dispara (hook en _pGetRemote).
+                        pcall(function()
+                            local sig = _pArgSig
+                            if sig and sig[1] == "string" then
+                                -- Firma (string boneName, CFrame targetCF)
+                                -- Servidor baneado2003 / custom: bone name + targetCF
+                                local boneName = hp.Name or "HumanoidRootPart"
+                                shootR:FireServer(boneName, targetCF)
+                            elseif sig and sig[1] == "CFrame" and sig[2] == "CFrame" then
+                                -- Firma estandar MM2 (CFrame origin, CFrame target)
+                                shootR:FireServer(graCF, targetCF)
+                            else
+                                -- FIX v83: firma no capturada aun -- probar AMBAS firmas.
+                                -- Primero string+CFrame (baneado2003 / servidores custom Battle tab).
+                                -- Si el servidor espera CFrame,CFrame el pcall interior absorbe el error.
+                                -- Segundo intento: firma estandar MM2 (CFrame, CFrame).
+                                local boneName = hp.Name or "HumanoidRootPart"
+                                local ok1 = pcall(function() shootR:FireServer(boneName, targetCF) end)
+                                if not ok1 then
+                                    pcall(function() shootR:FireServer(graCF, targetCF) end)
+                                end
+                            end
+                        end)
+                    end
                 end
                 if i < _pPens then _w(0.016) end
             end
@@ -60195,7 +60468,25 @@ function CreateCombatTab()
                             local originPos = (barrelAtt and barrelAtt.WorldPosition)
                                           or (myHRP.Position + Vector3.new(0, 1.5, 0))
                             local graCF, targetCF = _pBuildCF(originPos, aimPos)
-                            if graCF then pcall(function() shootR:FireServer(graCF, targetCF) end) end
+                            if graCF then
+                                -- FIX v83: usar firma real capturada. Si no capturada aun, probar ambas.
+                                pcall(function()
+                                    local sig = _pArgSig
+                                    if sig and sig[1] == "string" then
+                                        local boneName = hp.Name or "HumanoidRootPart"
+                                        shootR:FireServer(boneName, targetCF)
+                                    elseif sig and sig[1] == "CFrame" then
+                                        shootR:FireServer(graCF, targetCF)
+                                    else
+                                        -- Sin firma: probar string+CFrame primero (baneado2003/Battle)
+                                        local boneName = hp.Name or "HumanoidRootPart"
+                                        local ok1 = pcall(function() shootR:FireServer(boneName, targetCF) end)
+                                        if not ok1 then
+                                            pcall(function() shootR:FireServer(graCF, targetCF) end)
+                                        end
+                                    end
+                                end)
+                            end
                         end
                         if i < _pPens then _w(0.016) end
                     end
@@ -64925,24 +65216,19 @@ _getTargetScale = function()
         local _uis = UserInputService
         _isMobileNow = _uis.TouchEnabled and not _uis.KeyboardEnabled
     end)
-    -- DEBUG: imprimir valores reales para diagnosticar
     _log("SCALE DEBUG VP=", tostring(_vpNow.X), "x", tostring(_vpNow.Y), "isMobile=", tostring(_isMobileNow))
     if _isMobileNow then
-        -- Calcular escala exacta para que el frame entre en pantalla con margen reducido
-        -- MODIFICADO: divisores mas grandes y clamp menor para que ocupe menos pantalla en celu
-        -- Base movil 1080x500: mas ancha, pero con menor altura visual.
-        local _scaleByW = (_vpNow.X - 20) / 1080
-        local _scaleByH = (_vpNow.Y - 36) / 560
-        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.20, 0.54)
+        -- v83: escala movil recalculada para ocupar mejor la pantalla del celu.
+        -- Base 1080x500: dividir por el ancho real de pantalla con margen minimo.
+        -- Clamp subido a 0.72 (antes 0.54) para que en pantallas grandes entre bien.
+        local _scaleByW = (_vpNow.X - 8) / 1080
+        local _scaleByH = (_vpNow.Y - 16) / 500
+        local _final = math.clamp(math.min(_scaleByW, _scaleByH), 0.25, 0.72)
         _log("SCALE DEBUG mobile -> final=", tostring(_final))
         return _final
     else
-        -- v60: la gui bajo un poco de tamanio (pedido "achica un poco la
-        -- gui"). Se toca SOLO aca: mainFrame sigue midiendo 950x555 y todo
-        -- lo demas (el marco, Settings, las reaperturas) lee esta funcion,
-        -- asi que el layout interno no se mueve ni un pixel. El celu no se
-        -- toca: tiene su propio calculo mas arriba.
-        return 0.92
+        -- PC: 0.80 (antes 0.92 - un poco mas chico para que no tape la pantalla)
+        return 0.80
     end
 end
 -- FIX v24: registrar en _G para que el guard de re-ejecucion la encuentre
@@ -72503,8 +72789,14 @@ task.spawn(function()
                                 return
                             end
                             local n = (track.Name or track.Animation and track.Animation.Name or ""):lower()
-                            -- Cancelar CUALQUIER anim de throw/hold que llegue del servidor
-                            if n:find("throw") or n:find("hold") or n:find("charge") then
+                            -- FIX v81 BUG ANIM LOOP: excluir "throwknife" del bloqueo.
+                            -- Antes se cancelaba CUALQUIER anim con "throw" en el nombre,
+                            -- incluyendo el ThrowKnife que nosotros mismos spawneamos.
+                            -- waitForTrack lo veia muerto al instante -> loadAndPlay de nuevo
+                            -- -> brazo repitiendo la anim ultra-rapido en bucle.
+                            -- Solo bloquear anims del servidor: ThrowHold, ThrowCharge, Throw.
+                            local _isOurThrowKnife = n == "throwknife" or n == "throw_knife"
+                            if not _isOurThrowKnife and (n:find("throw") or n:find("hold") or n:find("charge")) then
                                 task.defer(function()
                                     pcall(function()
                                         if track and track.IsPlaying then
@@ -72544,34 +72836,45 @@ task.spawn(function()
                     end
                 end)
 
-                -- CAPA 4: BodyVelocity anchor corto (0.15s) solo en X/Z
-                local _anchor = nil
+                -- CAPA 4 v81 FIX BUG 3 + BUG 4:
+                -- ANTES: BodyVelocity anchor MaxForce X/Z -> frenaba al personaje corriendo
+                --   porque zeroa la velocidad entera del HRP incluyendo el input del jugador.
+                -- AHORA: Heartbeat corto (0.5s) que solo zeroa AssemblyLinearVelocity
+                --   cuando supera 30 studs/s en X/Z (umbral de iman, nunca movimiento normal).
+                --   Esto tambien mata Bug 4 (personaje vuela con el knife): el KnifeClient
+                --   nativo aplica ALV directamente al HRP post-FireServer. El Heartbeat
+                --   lo detecta y zeroa X/Z en el mismo frame antes de que se replique.
+                local _impulseKillConn = nil
+                local _impulseKillEnd  = os.clock() + 0.5
                 pcall(function()
                     local c   = getChar()
                     local hrp = c and c:FindFirstChild("HumanoidRootPart")
                     if hrp then
-                        _anchor          = Instance.new("BodyVelocity")
-                        _anchor.Velocity = Vector3.zero
-                        _anchor.MaxForce = Vector3.new(4e4, 0, 4e4)  -- X/Z solo, Y libre
-                        _anchor.P        = 8e3
-                        _anchor.Parent   = hrp
+                        _impulseKillConn = RunService.Heartbeat:Connect(function()
+                            if os.clock() > _impulseKillEnd then
+                                pcall(function() if _impulseKillConn then _impulseKillConn:Disconnect() end end)
+                                return
+                            end
+                            pcall(function()
+                                if not hrp or not hrp.Parent then return end
+                                local vel = hrp.AssemblyLinearVelocity
+                                local xzMag = Vector3.new(vel.X, 0, vel.Z).Magnitude
+                                if xzMag > 30 then
+                                    hrp.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0)
+                                end
+                            end)
+                        end)
                     end
                 end)
 
-                -- FIX IMÁN RAÍZ: KnifeClient se mantiene SIEMPRE deshabilitado durante el throw.
-                -- El servidor spawnea el ThrowingKnife en workspace basándose en el FireServer
-                -- que recibe, sin importar si KnifeClient está activo en el cliente.
-                -- Habilitar KnifeClient antes del FireServer era la causa raíz del imán:
-                -- el LocalScript de MM2 detecta el throw y aplica AssemblyLinearVelocity
-                -- al HRP hacia el target, sacando al personaje volando.
+                -- FIX IMAN RAIZ: KnifeClient se mantiene SIEMPRE deshabilitado durante el throw.
                 -- El kc2.Disabled = false fue eliminado intencionalmente.
 
                 -- Disparar con KnifeClient SIEMPRE deshabilitado
                 local fired = false
                 pcall(function() _safeKnifeThrown(knifeThrown, handleCF, targetCF); fired = true end)
-                
 
-                -- Restaurar WalkSpeed inmediatamente
+                -- Restaurar WalkSpeed inmediatamente post-FireServer
                 pcall(function()
                     local hum = getHum()
                     if hum then
@@ -72581,10 +72884,10 @@ task.spawn(function()
                     end
                 end)
 
-                -- Soltar anchor después de 0.15s
-                task.delay(0.15, function()
+                -- Limpiar impulseKill y restaurar speeds despues de 0.5s
+                task.delay(0.5, function()
                     pcall(function()
-                        if _anchor and _anchor.Parent then _anchor:Destroy() end
+                        if _impulseKillConn then _impulseKillConn:Disconnect() end
                     end)
                     pcall(function()
                         local hum = getHum()
@@ -72596,7 +72899,7 @@ task.spawn(function()
                     end)
                 end)
 
-                -- Limpiar el interceptor de AnimationPlayed después de 2s
+                -- Limpiar el interceptor de AnimationPlayed despues de 2s
                 task.delay(2.0, function()
                     pcall(function()
                         if _magnetBlockConn then _magnetBlockConn:Disconnect() end
@@ -73266,5 +73569,335 @@ do
             for _,p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
             Players.PlayerAdded:Connect(hookPlayer)
         end)
+    end)
+end
+
+-- ==================================================================
+-- == v84 : PINTADO GLOBAL DEL HUB + NOTIFS CON FORMA DE REFERENCIA
+-- El selector de paleta (HTML Colors / Material / Color Picker) ahora
+-- repinta TODO: pestanas, boton de cierre, botones clickeables,
+-- mensajes/notificaciones del hub, strokes, gradientes y sub-GUIs.
+-- ==================================================================
+do
+    local _TS  = game:GetService("TweenService")
+    local _CG  = game:GetService("CoreGui")
+    local _PS  = game:GetService("Players")
+    local _LP  = _PS.LocalPlayer
+
+    local function _c255(n) return math.clamp(math.floor(n), 0, 255) end
+    local function _dk(c, f)
+        return Color3.fromRGB(_c255(c.R*255*f), _c255(c.G*255*f), _c255(c.B*255*f))
+    end
+    local function _lt(c, f)
+        return Color3.fromRGB(
+            _c255(c.R*255 + (255 - c.R*255)*f),
+            _c255(c.G*255 + (255 - c.G*255)*f),
+            _c255(c.B*255 + (255 - c.B*255)*f))
+    end
+    local function _hex(c)
+        return string.format("#%02X%02X%02X",
+            _c255(c.R*255), _c255(c.G*255), _c255(c.B*255))
+    end
+
+    -- Color base actual del hub (lo usa todo el pintado)
+    local function _baseColor()
+        local ok, c = pcall(function() return ThemeColors.Primary end)
+        if ok and typeof(c) == "Color3" then return c end
+        return Color3.fromRGB(72, 140, 68)
+    end
+    _G._ZQ_BaseColor = _baseColor
+
+    -- ---------------- GUIs del hub (raices a repintar) -------------
+    local _PAINT_PREFIX = {
+        "Overdrive", "Zerqon", "ZQ", "BYPAS", "Hub", "HUB", "Notif",
+        "Bind", "Bomb", "Fly", "Tp", "Fake", "Info", "Steal", "Orbit",
+        "Anim", "Custom", "Knife", "Capy", "SL", "Jb", "Lay", "Float",
+        "AutoJump", "Esquivar", "Selector", "Theme", "Roulette", "ESP",
+    }
+    local function _isHubGui(sg)
+        local n = tostring(sg.Name or "")
+        for _, p in ipairs(_PAINT_PREFIX) do
+            if n:sub(1, #p) == p or n:find(p, 1, true) then return true end
+        end
+        return false
+    end
+    local function _paintRoots()
+        local roots = {}
+        pcall(function()
+            for _, ch in ipairs(_CG:GetChildren()) do
+                if ch:IsA("ScreenGui") and _isHubGui(ch) then table.insert(roots, ch) end
+            end
+        end)
+        pcall(function()
+            local pg = _LP and _LP:FindFirstChildOfClass("PlayerGui")
+            if pg then
+                for _, ch in ipairs(pg:GetChildren()) do
+                    if ch:IsA("ScreenGui") and _isHubGui(ch) then table.insert(roots, ch) end
+                end
+            end
+        end)
+        -- El frame principal del hub siempre entra
+        pcall(function()
+            if mainFrame and mainFrame.Parent then table.insert(roots, mainFrame) end
+        end)
+        return roots
+    end
+
+    -- ---------------- Filtros de seguridad --------------------------
+    -- No tocar toggles (tienen su propia logica) ni swatches de color
+    -- (si los pintaramos, el selector de paleta perderia sus colores).
+    local _SKIP_NAMES = {
+        Knob = true, ToggleBackground = true,
+        TOGGLE_ROW_TAG = true, TOGGLE_STROKE_PROTECTED = true,
+        TOGGLE_TRACK_STROKE = true, HubBackground = true,
+        ZQTickShort = true, ZQTickLong = true,
+    }
+    local function _isProtected(obj)
+        local n = tostring(obj.Name or "")
+        if _SKIP_NAMES[n] then return true end
+        if n:sub(1, 16) == "AuroraToggleRow_" then return true end
+        if obj:GetAttribute("ZQNoPaint") then return true end
+        local p = obj.Parent
+        local hops = 0
+        while p and hops < 6 do
+            local pn = tostring(p.Name or "")
+            if _SKIP_NAMES[pn] or pn:sub(1, 16) == "AuroraToggleRow_" then return true end
+            if p.GetAttribute and p:GetAttribute("ZQNoPaint") then return true end
+            p = p.Parent
+            hops = hops + 1
+        end
+        return false
+    end
+    -- Swatch / celda de paleta: cuadradito chico y opaco -> conserva su color
+    local function _isSwatch(obj)
+        if not (obj:IsA("TextButton") or obj:IsA("Frame")) then return false end
+        local ok, res = pcall(function()
+            local s = obj.AbsoluteSize
+            return (s.X > 0 and s.X <= 34 and s.Y > 0 and s.Y <= 34)
+        end)
+        return ok and res == true
+    end
+    local function _isCloseish(obj)
+        local n = tostring(obj.Name or ""):lower()
+        if n:find("close") or n:find("cerrar") or n:find("exit") or n:find("minimi") then
+            return true
+        end
+        if obj:IsA("TextButton") then
+            local t = tostring(obj.Text or "")
+            if t == "X" or t == "x" or t == "\u{2715}" or t == "\u{2716}"
+               or t == "CERRAR" or t == "-" then return true end
+        end
+        return false
+    end
+    local function _isTabish(obj)
+        local n = tostring(obj.Name or ""):lower()
+        if n:sub(1, 3) == "tab" or n:find("tab_") or n:find("tabbtn")
+           or n:find("tabbutton") or n:find("pestana") then return true end
+        local pn = obj.Parent and tostring(obj.Parent.Name or ""):lower() or ""
+        if pn:find("tabrow") or pn:find("tabbar") or pn:find("tabcontainer")
+           or pn:find("sidebar") then return true end
+        if obj:FindFirstChild("TAB_BTN_PROTECTED") then return true end
+        return false
+    end
+
+    -- ---------------- Pintado de una notificacion -------------------
+    -- Forma de la imagen de referencia: tarjeta oscura redondeada, badge
+    -- circular con tilde blanco del color del hub, titulo en color del
+    -- hub, mensaje en blanco y barra de progreso del color del hub.
+    local function _styleNotif(sg, base)
+        base = base or _baseColor()
+        local panel = Color3.fromRGB(13, 15, 19)
+        pcall(function()
+            local frame
+            for _, ch in ipairs(sg:GetChildren()) do
+                if ch:IsA("Frame") then frame = ch; break end
+            end
+            if not frame then return end
+
+            frame.BackgroundColor3       = panel
+            frame.BackgroundTransparency = 0.08
+            local c = frame:FindFirstChildOfClass("UICorner")
+            if not c then c = Instance.new("UICorner", frame) end
+            c.CornerRadius = UDim.new(0, 14)
+
+            local st = frame:FindFirstChildOfClass("UIStroke")
+            if not st then st = Instance.new("UIStroke", frame) end
+            st.Color           = base
+            st.Thickness       = 1.4
+            st.Transparency    = 0.35
+            st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+            -- Badge circular del color del hub
+            local badge = frame:FindFirstChild("ZQNotifOk")
+            if badge then
+                badge.BackgroundColor3       = base
+                badge.BackgroundTransparency = 0
+                for _, tick in ipairs(badge:GetChildren()) do
+                    if tick:IsA("Frame") then
+                        tick.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+                    end
+                end
+            end
+
+            -- Textos: titulo del color del hub, mensaje en blanco
+            local labels = {}
+            for _, d in ipairs(frame:GetDescendants()) do
+                if d:IsA("TextLabel") then table.insert(labels, d) end
+            end
+            table.sort(labels, function(a, b)
+                return a.Position.Y.Offset < b.Position.Y.Offset
+            end)
+            if labels[1] then
+                local raw = tostring(labels[1].Text or ""):gsub("<[^>]->", "")
+                labels[1].RichText   = true
+                labels[1].Text       = '<font color="' .. _hex(_lt(base, 0.30))
+                                       .. '">' .. raw .. '</font>'
+                labels[1].TextColor3 = _lt(base, 0.30)
+            end
+            for i = 2, #labels do
+                labels[i].TextColor3 = Color3.fromRGB(238, 240, 245)
+            end
+
+            -- Barra de progreso del color del hub
+            for _, d in ipairs(frame:GetDescendants()) do
+                if d:IsA("Frame") and d ~= badge and d.Parent ~= badge then
+                    local h = d.Size.Y.Offset
+                    if h > 0 and h <= 4 then
+                        d.BackgroundColor3 = base
+                        local g = d:FindFirstChildOfClass("UIGradient")
+                        if g then
+                            g.Color = ColorSequence.new(base, _lt(base, 0.45))
+                        end
+                        for _, inner in ipairs(d:GetChildren()) do
+                            if inner:IsA("Frame") then
+                                inner.BackgroundColor3 = base
+                                local ig = inner:FindFirstChildOfClass("UIGradient")
+                                if ig then
+                                    ig.Color = ColorSequence.new(base, _lt(base, 0.45))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    _G._ZQ_StyleNotif = _styleNotif
+
+    local function _styleAllNotifs(base)
+        local function scan(parent)
+            pcall(function()
+                for _, ch in ipairs(parent:GetChildren()) do
+                    if ch:IsA("ScreenGui") and tostring(ch.Name):sub(1, 14) == "OverdriveNotif" then
+                        _styleNotif(ch, base)
+                    end
+                end
+            end)
+        end
+        scan(_CG)
+        local pg = _LP and _LP:FindFirstChildOfClass("PlayerGui")
+        if pg then scan(pg) end
+    end
+
+    -- Notifs nuevas: se estilizan al crearse
+    local function _hookNotifParent(parent)
+        pcall(function()
+            parent.ChildAdded:Connect(function(ch)
+                if ch:IsA("ScreenGui") and tostring(ch.Name):sub(1, 14) == "OverdriveNotif" then
+                    task.defer(function() _styleNotif(ch, _baseColor()) end)
+                end
+            end)
+        end)
+    end
+    _hookNotifParent(_CG)
+    pcall(function()
+        local pg = _LP and _LP:FindFirstChildOfClass("PlayerGui")
+        if pg then _hookNotifParent(pg) end
+    end)
+
+    -- ---------------- Pintado global -------------------------------
+    function _G._ZQ_PaintHub(base)
+        base = base or _baseColor()
+        local btnBg   = _dk(base, 0.34)
+        local btnTxt  = _lt(base, 0.80)
+        local tabBg   = base
+        local closeBg = _dk(base, 0.28)
+        local ti      = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+        for _, root in ipairs(_paintRoots()) do
+            pcall(function()
+                for _, obj in ipairs(root:GetDescendants()) do
+                    pcall(function()
+                        if _isProtected(obj) then return end
+
+                        if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                            if _isSwatch(obj) then return end
+                            if obj.BackgroundTransparency >= 0.95 then
+                                -- boton invisible (hitbox): solo el texto
+                                if obj:IsA("TextButton") and obj.Text ~= "" then
+                                    obj.TextColor3 = btnTxt
+                                end
+                                return
+                            end
+                            local target = btnBg
+                            if _isCloseish(obj) then target = closeBg
+                            elseif _isTabish(obj) then target = tabBg end
+                            _TS:Create(obj, ti, {BackgroundColor3 = target}):Play()
+                            if obj:IsA("TextButton") then
+                                obj.TextColor3 = _isTabish(obj)
+                                    and Color3.fromRGB(255, 255, 255) or btnTxt
+                            end
+                            local s = obj:FindFirstChildOfClass("UIStroke")
+                            if s then _TS:Create(s, ti, {Color = base}):Play() end
+
+                        elseif obj:IsA("UIStroke") then
+                            _TS:Create(obj, ti, {Color = base}):Play()
+
+                        elseif obj:IsA("UIGradient") then
+                            local p = obj.Parent
+                            if p and not _isSwatch(p) then
+                                obj.Color = ColorSequence.new(_dk(base, 0.35), base)
+                            end
+
+                        elseif obj:IsA("Frame") then
+                            if _isTabish(obj) and not _isSwatch(obj) then
+                                _TS:Create(obj, ti, {BackgroundColor3 = tabBg}):Play()
+                            end
+                        end
+                    end)
+                end
+            end)
+        end
+
+        -- Glow / borde exterior del hub
+        pcall(function()
+            if glowBorder and glowBorder.Parent then
+                _TS:Create(glowBorder, ti, {Color = base}):Play()
+            end
+        end)
+
+        -- Notificaciones vivas
+        _styleAllNotifs(base)
+    end
+
+    -- ---------------- Hook de ApplyTheme ---------------------------
+    pcall(function()
+        if type(ApplyTheme) == "function" and not _G._ZQ_PaintHooked then
+            local _origApplyTheme = ApplyTheme
+            _G._ZQ_PaintHooked = true
+            ApplyTheme = function(name)
+                local ok, err = pcall(_origApplyTheme, name)
+                task.defer(function()
+                    pcall(function() _G._ZQ_PaintHub(_baseColor()) end)
+                end)
+                if not ok then return nil, err end
+                return true
+            end
+        end
+    end)
+
+    -- Pintado inicial (por si ya hay un tema custom guardado)
+    task.defer(function()
+        pcall(function() _G._ZQ_PaintHub(_baseColor()) end)
     end)
 end
